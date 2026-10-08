@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -20,8 +18,9 @@ import (
 // este mismo corpus: el candado de fronteras impide importarlo desde aquí.
 //
 // Ningún test de este fichero toca una base ni afirma que el dueño reciba nada: el
-// plazo AVISA Y NO MATA, y el emisor de hoy es una traza (T-8). Los candados de
-// invariante del plazo (R-06) no viven aquí todavía: llegan con su propia tarea.
+// plazo AVISA Y NO MATA, y el emisor de hoy es una traza (T-8). Los dos candados de
+// invariante del plazo (R-06, R6.2.c) cierran el fichero; sus barridos, por tamaño,
+// están en vencimiento_lock_test.go.
 
 const (
 	expiryTenant = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -457,4 +456,82 @@ func TestLogOwnerNotice_IsATraceNotTheRealChannel(t *testing.T) {
 	var missing *LogOwnerNotice
 	missing.RemindOwner(context.Background(), expiryTenant, expiryWaiting(expiryIntake, 72*time.Hour))
 	NewLogOwnerNotice(nil).RemindOwner(context.Background(), expiryTenant, expiryWaiting(expiryIntake, 72*time.Hour))
+}
+
+// --- los candados del plazo (R-06, R6.2.c) ------------------------------------
+
+// TestDeadlineCutoff_IsOverdueSeenFromTheStore: el corte que el compare-and-swap compara
+// contra updated_at es la MISMA desigualdad que Overdue, despejada al revés. Un signo
+// invertido haría que el store aceptase casi cualquier fila sin que el camino normal lo
+// delatara (el pre-filtro la habría descartado antes).
+func TestDeadlineCutoff_IsOverdueSeenFromTheStore(t *testing.T) {
+	t.Parallel()
+	if got, want := deadlineCutoff(expiryNow), expiryNow.Add(-24*time.Hour); !got.Equal(want) {
+		t.Fatalf("deadlineCutoff(%v) = %v, quería %v", expiryNow, got, want)
+	}
+	for _, age := range []time.Duration{0, 24*time.Hour - time.Nanosecond, 24 * time.Hour, 72 * time.Hour} {
+		in := expiryWaiting(expiryIntake, age)
+		if fromStore := !in.UpdatedAt.After(deadlineCutoff(expiryNow)); fromStore != Overdue(in, expiryNow) {
+			t.Errorf("tras %v: el corte dice vencido=%v y Overdue dice %v", age, fromStore, Overdue(in, expiryNow))
+		}
+	}
+}
+
+// TestCandado_ElEventoDelVencimientoNoExisteEnNingunaRuta: el repo ENTERO no contiene el
+// nombre del evento de telemetría del vencimiento. Se comprueba algo más fuerte que «no se
+// emite»: eso solo se puede mirar sobre los caminos que uno se acuerda de mirar, y el que se
+// olvide es justo por donde pasará. «No existe» se comprueba entero.
+func TestCandado_ElEventoDelVencimientoNoExisteEnNingunaRuta(t *testing.T) {
+	forbidden, positive, read := sweepText(t, repoRoot, forbiddenEvent, positiveControlText)
+
+	// (1) Control POSITIVO y anti-hueco. Van primero: si el barrido no leyó ficheros, o no
+	// encontró el literal que SÍ está, ninguna de sus ausencias significa nada.
+	if read == 0 {
+		t.Fatalf("el barrido no leyó ni un fichero bajo %s: no está mirando nada, así que su "+
+			"silencio no prueba nada. ¿Se movió el paquete o se rompió el filtro de extensiones?", repoRoot)
+	}
+	if len(positive) == 0 {
+		t.Fatalf("el barrido leyó %d ficheros y no encontró %q, que está en el repo desde la "+
+			"migración 0045. El barrido está roto: arréglalo ANTES de fiarte de su verde",
+			read, positiveControlText)
+	}
+
+	// (2) La invariante.
+	if len(forbidden) > 0 {
+		t.Errorf("🔴 el evento del vencimiento aparece en %d sitio(s): %s\n\n"+
+			"R-06 lo prohíbe, y no es una preferencia de nombres: un presupuesto pasado de plazo "+
+			"se MARCA y sigue en pending_approval. Emitir que algo expiró es afirmar que murió, y "+
+			"aquí nada muere por tiempo (ADR-0029 Enmienda 2, D-041.16). Si de verdad hace falta "+
+			"telemetría del vencimiento, la decisión es de producto y va escrita antes que el código",
+			len(forbidden), strings.Join(forbidden, ", "))
+	}
+}
+
+// TestCandado_ElPlazoNoObedeceAlTTLDerogado: el paquete no lee
+// `tenant_settings.order_ttl_seconds`. La columna existe y hasta se lee en otro sitio, pero
+// su migración afirma que ningún código actúa sobre ella desde que D-041.16 la derogó como
+// causa de muerte, y esa afirmación hoy es CIERTA. Mira el AST y no el texto: el comentario
+// de vencimiento.go que explica por qué NO se usa es justo lo que hay que conservar.
+func TestCandado_ElPlazoNoObedeceAlTTLDerogado(t *testing.T) {
+	const domain = "." // el paquete donde vive el plazo
+	derogated, positive, read := sweepAST(t, domain, []string{"order_ttl", "OrderTTL"}, "QuoteDeadline")
+
+	if read == 0 {
+		t.Fatalf("el barrido no leyó ni un fichero de producción de %s: no está mirando nada", domain)
+	}
+	if len(positive) == 0 {
+		t.Fatal("el barrido no encontró QuoteDeadline en el propio paquete del plazo. O la " +
+			"constante se renombró —y entonces este candado y su decisión (D-044.50 §1) hay que " +
+			"revisarlos— o el barrido está roto")
+	}
+	if len(derogated) > 0 {
+		t.Errorf("🔴 el dominio de las solicitudes usa order_ttl en %s.\n\n"+
+			"D-044.50 §1: el plazo del presupuesto es una CONSTANTE DE PLATAFORMA "+
+			"(intakes.QuoteDeadline) y NO se lee de tenant_settings.order_ttl_seconds. Obedecer esa "+
+			"columna convertiría en FALSA una afirmación del esquema que hoy es cierta y reabriría "+
+			"como plazo lo que D-041.16 derogó como causa de muerte. Si el plazo tiene que ser "+
+			"configurable, la salida escrita es una columna NUEVA con esta constante de DEFAULT, no "+
+			"reciclar la derogada",
+			strings.Join(derogated, ", "))
+	}
 }

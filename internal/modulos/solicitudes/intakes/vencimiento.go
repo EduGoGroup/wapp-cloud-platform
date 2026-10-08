@@ -43,8 +43,6 @@ import (
 	"time"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // QuoteDeadline es EL PLAZO: cuánto puede esperar un presupuesto en
@@ -91,8 +89,57 @@ const QuoteDeadline = 24 * time.Hour
 //   - NO mira ExpiryRemindedAt: la marca dice «lleva demasiado esperando», y eso no
 //     deja de ser verdad porque ya se haya avisado una vez.
 func Overdue(in Intake, at time.Time) bool {
-	panic(pendiente.Implementar("intakes.Overdue"))
+	deadline, ok := quoteDeadlineOf(in)
+	if !ok {
+		return false
+	}
+	return !deadline.After(at)
 }
+
+// quoteDeadlineOf devuelve el instante a partir del cual la solicitud está
+// vencida, y si la pregunta tiene sentido siquiera.
+//
+// SE DESCARTÓ la base más exacta —el created_at de la última revisión, o sea
+// «cuándo se produjo este presupuesto»— porque no está disponible en el camino de
+// la BANDEJA: Detail trae revisiones, Intake no, y solo Get las puebla. Con esa
+// base, la lista y el detalle podrían marcar cosas distintas sobre la misma fila,
+// que es peor que una base aproximada pero igual en los dos caminos.
+//
+// CreatedAt es el suplente para filas que llegan sin UpdatedAt (dobles de test,
+// proyecciones parciales). Sin ninguna de las dos NO se marca: «no sé desde cuándo
+// espera» se contesta callando, no marcando todo lo que tenga la fecha en cero —
+// que es lo que haría una resta contra el tiempo cero.
+func quoteDeadlineOf(in Intake) (time.Time, bool) {
+	if NormalizeStatus(in.Status) != StatusPendingApproval {
+		return time.Time{}, false
+	}
+	base := in.UpdatedAt
+	if base.IsZero() {
+		base = in.CreatedAt
+	}
+	if base.IsZero() {
+		return time.Time{}, false
+	}
+	return base.Add(QuoteDeadline), true
+}
+
+// deadlineCutoff traduce el reloj del llamante al CORTE que la consulta SQL compara
+// contra `updated_at`: «la fecha a partir de la cual una solicitud tocada lleva
+// demasiado esperando». Era cutoffDelPlazo en el viejo.
+//
+// 🔴 EXISTE PARA QUE LA REGLA TENGA UN SOLO DUEÑO EN LOS DOS LADOS. El pre-filtro de
+// Go pregunta hacia delante —`updated_at + plazo <= at`— y el WHERE del
+// compare-and-swap pregunta hacia atrás —`updated_at <= at - plazo`—: son la misma
+// desigualdad despejada de dos maneras, y por eso pueden divergir en el signo sin que
+// nada se queje. Con el corte en una función con nombre, esa equivalencia se puede
+// AFIRMAR en un test en vez de confiarla a que quien lea las dos expresiones haga la
+// resta de cabeza.
+//
+// Un signo invertido aquí sería especialmente traicionero: `updated_at <= at + plazo`
+// es cierto para casi cualquier fila, así que el CAS aceptaría todo — y en el camino
+// normal NO SE VERÍA, porque el pre-filtro de RemindOverdue ya habría descartado lo
+// que no toca. Solo se notaría en un llamante que fuera directo al store.
+func deadlineCutoff(at time.Time) time.Time { return at.Add(-QuoteDeadline) }
 
 // ExpiryStore es lo que el recordatorio del plazo necesita de la persistencia, y
 // solo eso (ISP): no ve el listado, ni el export, ni las transiciones. Lo satisfacen
@@ -142,7 +189,12 @@ type OwnerNotice interface {
 // ExpiryReminder evalúa y emite el recordatorio del plazo. Es seguro para uso
 // concurrente (no guarda estado propio). Satisface el puerto ExpiryTouch del
 // Service (RemindOverdue).
-type ExpiryReminder struct{}
+type ExpiryReminder struct {
+	notice OwnerNotice
+	store  ExpiryStore
+	log    logger.Logger
+	now    func() time.Time
+}
 
 // ExpiryOption configura el ExpiryReminder al construirlo. Es un tipo APARTE de
 // ReminderOption (deposit.go) a propósito: son dos recordatorios con dos relojes y
@@ -157,7 +209,11 @@ type ExpiryOption func(*ExpiryReminder)
 // instante que decide el vencimiento y el que se le pasa al store para escribir
 // expiry_reminded_at), así que un test no puede quedarse con medio tiempo falso.
 func WithExpiryClock(now func() time.Time) ExpiryOption {
-	panic(pendiente.Implementar("intakes.WithExpiryClock"))
+	return func(r *ExpiryReminder) {
+		if now != nil {
+			r.now = now
+		}
+	}
 }
 
 // NewExpiryReminder construye el recordatorio del plazo y aplica las opciones en
@@ -166,7 +222,11 @@ func WithExpiryClock(now func() time.Time) ExpiryOption {
 // desaparecería sin dejar rastro—, pero construirlo con alguna a `nil` NO falla:
 // devuelve un recordatorio que se calla (ver RemindOverdue).
 func NewExpiryReminder(notice OwnerNotice, store ExpiryStore, log logger.Logger, opts ...ExpiryOption) *ExpiryReminder {
-	panic(pendiente.Implementar("intakes.NewExpiryReminder"))
+	r := &ExpiryReminder{notice: notice, store: store, log: log, now: time.Now}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // RemindOverdue evalúa el recordatorio sobre solicitudes YA LEÍDAS: es el toque del
@@ -206,7 +266,72 @@ func NewExpiryReminder(notice OwnerNotice, store ExpiryStore, log logger.Logger,
 //
 // 🔴 NO cambia el estado de nada: el plazo avisa y no mata.
 func (r *ExpiryReminder) RemindOverdue(ctx context.Context, tenantID string, touched []Intake) {
-	panic(pendiente.Implementar("intakes.ExpiryReminder.RemindOverdue"))
+	if !r.usable() {
+		return
+	}
+	defer r.containPanic("recordatorio de plazo sobre solicitudes ya leídas")
+
+	at := r.now()
+	sent := 0
+	for _, in := range touched {
+		if !Overdue(in, at) || alreadyNotified(in) {
+			continue
+		}
+		if r.remindOwnerOnce(ctx, tenantID, in.ID, at) {
+			sent++
+		}
+		if sent >= maxRemindersPerTouch {
+			return
+		}
+	}
+}
+
+// alreadyNotified es la otra mitad del pre-filtro: esta solicitud ya gastó su
+// recordatorio. Zero = nunca se avisó, igual que las dos marcas de la seña. Era
+// yaAvisado en el viejo.
+func alreadyNotified(in Intake) bool {
+	return !in.ExpiryRemindedAt.IsZero()
+}
+
+// usable dice si el recordatorio puede operar. Uno a medias no avisa, pero tampoco
+// rompe al que lo invocó (mismo criterio que NotifyStatus).
+func (r *ExpiryReminder) usable() bool {
+	return r != nil && r.store != nil && r.notice != nil && r.log != nil
+}
+
+// containPanic hace ESTRUCTURAL la promesa de que tocar una solicitud no puede
+// reventar por culpa del recordatorio: sin esto, un pánico en el store o en el
+// emisor subiría por la pila hasta el handler y convertiría el LISTADO del dueño en
+// un 500 — un listado que ni siquiera pidió mandar avisos. Se registra entero; lo
+// que se contiene es el alcance. Era contenerPánico en el viejo.
+func (r *ExpiryReminder) containPanic(where string) {
+	rec := recover()
+	if rec == nil {
+		return
+	}
+	r.log.Error("recordatorio de plazo: pánico contenido; el toque de la solicitud sigue su curso",
+		"donde", where, "panic", rec)
+}
+
+// remindOwnerOnce intenta recordar UNA solicitud y dice si lo hizo: gana la marca
+// (compare-and-swap) y, solo entonces, emite con la fila que devolvió el store.
+func (r *ExpiryReminder) remindOwnerOnce(ctx context.Context, tenantID, intakeID string, at time.Time) bool {
+	log := r.log.With("intake_id", intakeID, "tenant_id", tenantID)
+
+	marked, won, err := r.store.MarkExpiryReminded(ctx, tenantID, intakeID, at)
+	if err != nil {
+		log.Error("recordatorio de plazo: no se pudo marcar la solicitud; no se avisa", "error", err)
+		return false
+	}
+	if !won {
+		// Lo normal: ya se avisó, el plazo no venció, o el dueño ya decidió. No es
+		// una avería y no merece más que un debug.
+		log.Debug("recordatorio de plazo: no procedía (ya avisado, no vencido o ya decidido)")
+		return false
+	}
+
+	r.notice.RemindOwner(ctx, tenantID, marked)
+	return true
 }
 
 // LogOwnerNotice es el emisor PROVISIONAL del recordatorio al dueño: deja traza en
@@ -219,12 +344,12 @@ func (r *ExpiryReminder) RemindOverdue(ctx context.Context, tenantID string, tou
 // a sabiendas —una marca por un aviso que hoy no llega a ninguna persona—, y es
 // también lo que hace que el día que exista el emisor real no haya que reconstruir
 // la idempotencia.
-type LogOwnerNotice struct{}
+type LogOwnerNotice struct{ log logger.Logger }
 
 // NewLogOwnerNotice construye el sumidero de traza sobre el log dado. Con un log
 // `nil` no falla: devuelve un sumidero que no hace nada.
 func NewLogOwnerNotice(log logger.Logger) *LogOwnerNotice {
-	panic(pendiente.Implementar("intakes.NewLogOwnerNotice"))
+	return &LogOwnerNotice{log: log}
 }
 
 // RemindOwner implementa OwnerNotice dejando UNA traza de nivel INFO, con el mensaje
@@ -238,6 +363,14 @@ func NewLogOwnerNotice(log logger.Logger) *LogOwnerNotice {
 //
 // No hace nada —y no revienta— con el receptor `nil` o construido sin log. El
 // contexto no se usa: no hay a quién llamar todavía.
-func (s *LogOwnerNotice) RemindOwner(ctx context.Context, tenantID string, in Intake) {
-	panic(pendiente.Implementar("intakes.LogOwnerNotice.RemindOwner"))
+func (s *LogOwnerNotice) RemindOwner(_ context.Context, tenantID string, in Intake) {
+	if s == nil || s.log == nil {
+		return
+	}
+	s.log.Info("recordatorio de plazo: el presupuesto lleva más del plazo esperando al dueño",
+		"intake_id", in.ID,
+		"tenant_id", tenantID,
+		"plazo_horas", int64(QuoteDeadline/time.Hour),
+		"emisor", "traza",
+		"pendiente", "el canal real es el push del Plan 045; hoy nadie recibe esto")
 }
