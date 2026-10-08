@@ -8,7 +8,7 @@
 | Duración objetivo | 45–90 min |
 | Tareas | T6.27–T6.29 |
 | Depende de | F6-05 |
-| Decisiones | D-F9-1, D-F6-7 y la pregunta abierta D-F9-10 (en [`../DECISIONES.md`](../DECISIONES.md)) |
+| Decisiones | D-F9-1, D-F6-7 y D-F9-10 (✅ decidida el 2026-10-08) (en [`../DECISIONES.md`](../DECISIONES.md)) |
 | Se para cuando | suites `intakeshelpertest`, `integrationshelpertest` y `tenantvarshelpertest` verdes en memoria **y** contra Postgres (testcontainers) · P5 y P6 verdes con `WAPP_PROCESOS_BINARIO=viejo` y `=nuevo`, 0 SKIP · `make test-procesos` rc=0 leído del log · PR a `dev` abierto desde la rama de la sesión |
 
 ## Antes de pegar el prompt (Jhoan)

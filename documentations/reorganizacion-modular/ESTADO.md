@@ -213,7 +213,7 @@ a las specs de F2–F10 y FX, al marco (`plan/00-marco/`), a los dos protocolos 
   segundas instancias viejas frente a P5, `Conmutados` sin adaptador, el prefijo de commit del nivel simple y el tamaño
   de sesión, que está **sin medir**).
 - ✎ **F1-06 lo cambió el mismo día** (bloque siguiente): `make cobertura-ficheros` ya es informe.
-- ✎ **D-R-1…D-R-6 decididas el 2026-10-03** (Jhoan: se aplica la recomendación de cada una; un commit por decisión en `dev`). D-R-5 ya no bloquea F2-01, ni D-R-1 a F2-03. Siguen abiertas D-F9-9 y D-F9-10, que no tienen recomendación firme.
+- ✎ **D-R-1…D-R-6 decididas el 2026-10-03** (Jhoan: se aplica la recomendación de cada una; un commit por decisión en `dev`). D-R-5 ya no bloquea F2-01, ni D-R-1 a F2-03. Siguen abiertas D-F9-9 y D-F9-10, que no tienen recomendación firme. ✎ 2026-10-08: **D-F9-10 decidida** (Jhoan): salidas (a) + (c), fila en `plan/DECISIONES.md` §4.
 
 **F1-06 · ajustes de código previos a F2 (2026-10-03, 💻, sobre `dev` @ `3e181f6`).** Seis commits, uno por ajuste:
 

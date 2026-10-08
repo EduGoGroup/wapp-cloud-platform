@@ -121,7 +121,8 @@ el servidor: tras el SIGTERM, el *webhook worker* puede loguear dos `ERROR` de c
 (H-1, contradicción 19 del README; diferida a F6, D-F6-7). P0, que comprueba también la parada, es el único expuesto hoy.
 ⚠️ Revisión independiente (2026-10-01): no es solo el *webhook worker*; el mismo patrón está, sin haberse observado, en otras tres
 goroutines de fondo (colector de `platform`, agregador de `flujos/runtime`, pipeline de `intake`), que F6 no reconstruye: nota de
-revisión de la contradicción 19 y D-F9-10 del README.
+revisión de la contradicción 19 y D-F9-10 del README. ✎ 2026-10-08, D-F9-10 decidida: P0 **tolera** esos `ERROR` de cancelación si son
+posteriores a la señal de parada (`p0CountedErrors`); los demás procesos siguen comprobando antes de parar.
 
 **Casos adversarios** (hallazgo 40 de F1): la tabla de entradas de cada proceso lleva, además de los casos felices,
 separadores repetidos (`a@@b`), dígitos no ASCII y espacios Unicode allí donde el proceso mete un identificador o un
