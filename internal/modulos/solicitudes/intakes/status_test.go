@@ -238,10 +238,11 @@ func TestCanTransition_ConfirmedCanGoBackToPendingApproval(t *testing.T) {
 // vacía —no nil— para terminales y desconocidas.
 func TestAllowedTransitions_SortedCanonicalAndNeverNil(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
+	type transitionCase struct {
 		from string
 		want []string
-	}{
+	}
+	known := []transitionCase{
 		{"open", []string{"abandoned", "cancelled", "confirmed", "pending_approval"}},
 		{"pending_approval", []string{"cancelled", "confirmed", "needs_info", "rejected"}},
 		{"confirmed", []string{"cancelled", "deposit_requested", "pending_approval", "settled"}},
@@ -255,11 +256,10 @@ func TestAllowedTransitions_SortedCanonicalAndNeverNil(t *testing.T) {
 		{"abandoned", []string{}},
 		{"rejected", []string{}},
 	}
+	cases := make([]transitionCase, 0, len(known)+len(adversarialKeys))
+	cases = append(cases, known...)
 	for _, key := range adversarialKeys {
-		cases = append(cases, struct {
-			from string
-			want []string
-		}{key, []string{}})
+		cases = append(cases, transitionCase{key, []string{}})
 	}
 	for _, c := range cases {
 		got := AllowedTransitions(c.from)

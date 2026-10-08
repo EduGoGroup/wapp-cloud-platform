@@ -107,7 +107,9 @@ func TestBuildSummary_ByStatusNormalizesWithoutValidating(t *testing.T) {
 		{Intake: Intake{Status: "confirmed"}},
 	}, Filter{}, summaryDay(9))
 
-	want := map[string]int{"": 1, " closed": 1, "CLOSED": 1, "confirmed": 2, "en_camino": 1, "expired": 1}
+	// La clave con el espacio delante va en una variable: es un caso adversario a propósito.
+	spacedClosed := " closed"
+	want := map[string]int{"": 1, spacedClosed: 1, "CLOSED": 1, "confirmed": 2, "en_camino": 1, "expired": 1}
 	if !maps.Equal(sum.ByStatus, want) {
 		t.Errorf("ByStatus = %v, quería %v", sum.ByStatus, want)
 	}
