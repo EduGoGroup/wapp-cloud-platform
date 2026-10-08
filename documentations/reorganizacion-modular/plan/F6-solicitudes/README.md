@@ -161,3 +161,21 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
    de los 14 tests de `cart/notes_test.go` solo 2 son de `SanitizeNote`.
 6. **`bridge_contact` solo ofrece el resolver envuelto.** `newContactResolver` devuelve hoy el `contactBridge`; el
    notificador nuevo necesitará el resolver de `nucleo/contact` sin envolver. Lo resuelve T6.24 (F6-05).
+7. **No había en el repo un driver `database/sql` falso con transacciones.** Los tres modelos (`receipts`,
+   `entitlements`, `degradation`) responden «sin transacciones» a `Begin`. `tenantvars/postgres_fakedb_test.go`
+   (`8c7ce8b`, `177f529`) es el primero que las soporta (`Begin`, `CheckNamedValue` para los `[]string` y marca `inTx`
+   por conexión): es el modelo para los `WithTx` de `intakes/postgres*.go` (F6-03).
+8. **El orden de `List` puede divergir entre memoria y Postgres.** La memoria ordena byte a byte y Postgres con la
+   colación de la base; con mayúsculas, signos o acentos en la clave no tienen por qué coincidir. El viejo ya era así.
+   La suite solo usa claves en minúsculas ASCII y lo dice; no se «arregla» (sería cambiar lo observable). 🟡 Si F6-06
+   lo ve divergir contra Postgres con claves reales, es decisión de Jhoan.
+9. **La suite de `tenantvars` no depende del reloj de pared.** `Montaje.Advance` adelanta el reloj inyectado en memoria
+   y, contra Postgres, lee `clock_timestamp()` hasta que avanza (sin `Sleep`); el test viejo confiaba en que dos
+   transacciones seguidas caen en microsegundos distintos. La semántica real de `IS DISTINCT FROM` solo la prueba esa
+   suite contra Postgres (`test/procesos/tenantvars_contrato_test.go`, `8cb2129`), **escrita y compilada, no corrida**:
+   la corre T6.27 (F6-06).
+10. **Comportamientos del viejo fijados con vectores literales** (el árbol nuevo no puede importar lo viejo): `Verify`
+    acepta hex en mayúsculas y rechaza el prefijo `v1=`; `SanitizeNote` quita el ZWJ (U+200D: un emoji compuesto sale
+    descompuesto), convierte U+00A0 y U+3000 en espacio corriente, **deja pasar** U+2060, U+00AD, U+2065, U+206A y
+    U+FEFE, y cuenta un U+FFFD por byte malformado; `NoteTooLongError.Runes` es el largo **saneado**. Mutante
+    equivalente: quitar U+2029 de `isLayoutRune` no cambia nada (`strings.Fields` ya lo trata como espacio).

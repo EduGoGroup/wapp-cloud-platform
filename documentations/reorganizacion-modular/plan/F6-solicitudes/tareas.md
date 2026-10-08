@@ -25,21 +25,21 @@
 ## Bloque F6-01 · inventario E-12 y hojas · 🌐 · T6.1–T6.5, T6.14
 Para cuando: tabla del inventario E-12 **aprobada por Jhoan** · `sigv1` y `tenantvars` en verde (suite de `tenantvars` verde en memoria) · `note.go` con contrato y test · `ci-local` rc=0 con 0 SKIP · PR.
 
-- [ ] **T6.1 · Inventario E-12** · 🌐 · dep. F5 cerrado · cumple R6.1.a
+- [x] **T6.1 · Inventario E-12** — `27a7924` (aprobado por Jhoan el 2026-10-07) · 🌐 · dep. F5 cerrado · cumple R6.1.a
   - **Ficheros**: `plan/F6-solicitudes/README.md` (estado, SHA), `diseno.md` §1, §1.1 y §5 si difieren
   - **Produce**: (1) las 5 entradas del README comprobadas y ficheros/líneas/exportados/tests recontados con los comandos de `diseno.md` §1; (2) la tabla `archivo · estado en memoria · concurrencia · BD/transacciones · nº de consumidores · nivel (simple/medio/complejo)` de los 41 ficheros (parte de la clasificación provisional de `diseno.md` §1.1; si un archivo sale peor, sube de nivel); (3) la **lista de adaptadores `bridge_<x>.go`** que F6 crea y los que retira (`arquitectura.md` §4.1), con la pregunta abierta D-F6-1 ↔ P5 a la vista; (4) el inventario de textos observables (`grep -rn 'errors.New("\|fmt.Errorf("' V`) anotado en `diseno.md` §5
   - **Hecho cuando**: **Jhoan aprueba la tabla. Antes de eso no se escribe código.**
   - **Gate**: `make ci-local` rc=0 · **Commit**: `docs(reorganizacion-modular): F6 arranca — inventario E-12 aprobado`
-- [ ] **T6.2 · rojo(solicitudes): contrato de `integrations/sigv1`** · 🌐 · dep. T6.1 · cumple R6.4.c
+- [x] **T6.2 · rojo(solicitudes): contrato de `integrations/sigv1`** — `98f9220` (simple, una pasada) · 🌐 · dep. T6.1 · cumple R6.4.c
   - **Ficheros**: `S/integrations/sigv1/sigv1.go`, `sigv1_test.go` · **Hecho cuando**: 3 exportados con promesa (tiempo constante, cuerpo crudo, timestamp por parámetro; ✎ 2026-10-07: la ventana ±300 s y el reloj **no** son de `sigv1` sino de la cara HTTP, hallazgo 1); casos de `V/sigv1_test.go` (7) leídos
   - **Gate**: rojo · **Commit**: `rojo(solicitudes): contrato de integrations/sigv1` (si el inventario lo fija *simple*: una pasada, y T6.14 se cierra con el mismo SHA)
-- [ ] **T6.3 · rojo(solicitudes): `tenantvars` + `tenantvarshelpertest`** · 🌐 · dep. T6.1 · cumple R6.3.c
+- [x] **T6.3 · rojo(solicitudes): `tenantvars` + `tenantvarshelpertest`** — `8c7ce8b`; la invocación contra Postgres, escrita y sin correr, en `8cb2129` · 🌐 · dep. T6.1 · cumple R6.3.c
   - **Ficheros**: `S/tenantvars/{tenantvars,memory,postgres}.go` + tests, `S/tenantvars/tenantvarshelpertest/contrato.go`
   - **Hecho cuando**: 11 exportados; la suite `Contrato(t, func(t) Montaje)` escrita (sin `t.Skip`); `memory_test.go` la invoca; la invocación contra Postgres con el arnés queda escrita (P4; la corre T6.27) · **Commit**: `rojo(solicitudes): contrato de tenantvars`
-- [ ] **T6.4 · rojo(solicitudes): `intakes/note.go`** · 🌐 · dep. T6.1 · cumple R6.1.d
+- [x] **T6.4 · rojo(solicitudes): `intakes/note.go`** — `571482b` (simple, una pasada: ya en verde) · 🌐 · dep. T6.1 · cumple R6.1.d
   - **Hecho cuando**: `MaxNoteRunes`, `NoteTooLongError` (+`Error`), `SanitizeNote` con R-08 en el comentario; texto `cart: …` asertado (D-F6-4); 14 casos de `cart/notes_test.go` leídos; corpus con casos adversarios (`reglas.md` §2, T-15) · **Commit**: `rojo(solicitudes): contrato de intakes/note` (si el inventario lo fija *simple*: una pasada, y su verde no espera a T6.15)
-- [ ] **T6.14 · verde(solicitudes): `sigv1`, `tenantvars`** · 🌐 · un commit por fichero (`verde(solicitudes): <fichero>`) · **Gate**: tests rc=0 y 0 SKIP; la suite `tenantvarshelpertest` pasa en memoria con `-race`; `make cobertura-ficheros` como informe (no bloquea)
-- [ ] **T6.5 · Cierre de la sesión F6-01** · 🌐 · **Hecho cuando**: `ci-local` rc=0; `make test-pendiente` anotado; las tres cosas del cierre; PR abierto
+- [x] **T6.14 · verde(solicitudes): `sigv1`, `tenantvars`** — `98f9220` (`sigv1`), `0108667` (`memory`), `177f529` (`postgres`); `tenantvars.go` nació en verde en `8c7ce8b` · 🌐 · un commit por fichero (`verde(solicitudes): <fichero>`) · **Gate**: tests rc=0 y 0 SKIP; la suite `tenantvarshelpertest` pasa en memoria con `-race`; `make cobertura-ficheros` como informe (no bloquea)
+- [x] **T6.5 · Cierre de la sesión F6-01** — 2026-10-07: `ci-local` `GATE_RC=0`, `test-pendiente` `PENDIENTES=0 · ROJOS=0`, PR hacia `dev` · 🌐 · **Hecho cuando**: `ci-local` rc=0; `make test-pendiente` anotado; las tres cosas del cierre; PR abierto
 
 ## Bloque F6-02 · `intakes` (1/2): contratos del paquete y tipos puros en verde · 🌐 · T6.6–T6.8, T6.15
 Para cuando: los 24 ficheros de `S/intakes` con contrato y test + `intakeshelpertest` escrita · `note.go` y los 10 tipos puros en verde · `vet -tags pendiente` rc=0 · `ci-local` rc=0 · PR.
