@@ -200,9 +200,10 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
     UAT. Punto único donde vive la regla: `adoptRefreshedUpdatedAt` en `intakeshelpertest/snapshot_contrato.go`.
     **Decidido por Jhoan el 2026-10-08 (D-F6-8): se mantiene.** El `MemoryStore` nuevo refresca `UpdatedAt` en toda
     escritura de cabecera, a diferencia del doble viejo: lo escribe F6-03 (T6.16).
-14. 🟡 **`(*MemoryStore).StoredStatus` es un exportado nuevo**, fuera del API viejo: todas las lecturas del puerto
+14. ✅ **`(*MemoryStore).StoredStatus` es un exportado nuevo**, fuera del API viejo: todas las lecturas del puerto
     normalizan el estado y, sin ese mirador, la marca de estado (hallazgo 35) no distingue `closed` de `confirmed`.
-    Alternativa: quitar `Montaje.StoredStatus` y perder esa columna de la vigilancia. **Decide Jhoan.**
+    Alternativa: quitar `Montaje.StoredStatus` y perder esa columna de la vigilancia. **Decidido por Jhoan el
+    2026-10-08 (D-F6-9): se conserva.**
 15. ✅ **El `Montaje` de Postgres no cableaba el cifrador del literal** (decidido por Jhoan el 2026-10-08, **D-F6-10**: la
     suite reexporta la opción; el candado no se toca). La regla 3b del candado `ProcessImports` solo deja usar los `New…`
     del paquete del puerto desde `test/procesos`: `intakes.WithLiteralCipher` muerde, y sin cifrador
