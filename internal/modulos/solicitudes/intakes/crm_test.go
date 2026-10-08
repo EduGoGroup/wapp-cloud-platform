@@ -1,8 +1,9 @@
-//go:build pendiente
-
 package intakes
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // Las salidas esperadas de este fichero son LITERALES calculados con el fichero
 // viejo (internal/intakes/crm.go @ 64c181a): el candado de fronteras impide
@@ -53,8 +54,8 @@ func TestIsCRMStatus(t *testing.T) {
 		{name: "prefix of a canonical status", status: "pai"},
 		{name: "canonical status with a suffix", status: "paidd"},
 		{name: "two canonical statuses joined", status: "delivered,paid"},
-		// La «а» es cirílica (U+0430): se ve igual y no es el mismo estado.
-		{name: "cyrillic homoglyph", status: "pаid"},
+		// La segunda letra es la a cirílica (U+0430): se ve igual y no es el mismo estado.
+		{name: "cyrillic homoglyph", status: "p\u0430id"},
 		// Estados del ciclo de vida de wApp: otro vocabulario.
 		{name: "lifecycle confirmed", status: "confirmed"},
 		{name: "lifecycle closed alias", status: "closed"},
@@ -87,5 +88,15 @@ func TestCRMReflection_FoundAndChangedAreIndependent(t *testing.T) {
 	}
 	if retry.Intake.ID != "id-1" || retry.Intake.ContactID != "contacto-opaco-1" || retry.Intake.SessionID != "sess-a" {
 		t.Errorf("la solicitud reflejada no conserva contacto y sesión: %+v", retry.Intake)
+	}
+}
+
+// TestCRMCanonicalStatuses_ClosedListInSchemaOrder: la lista es cerrada y va en el orden del enum
+// del schema publicado y del CHECK de la migración 0048.
+func TestCRMCanonicalStatuses_ClosedListInSchemaOrder(t *testing.T) {
+	t.Parallel()
+	want := []string{"paid", "preparing", "delivered", "rejected"}
+	if !slices.Equal(crmCanonicalStatuses, want) {
+		t.Errorf("crmCanonicalStatuses = %q, quería %q", crmCanonicalStatuses, want)
 	}
 }

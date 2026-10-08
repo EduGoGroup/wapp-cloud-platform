@@ -7,7 +7,7 @@
 
 package intakes
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+import "slices"
 
 // Estados CANÓNICOS del contrato wapp-crm-v1 (verbo intake.status, D-042.6). Son un
 // vocabulario PROPIO de la frontera con el CRM y NO estados del ciclo de vida de
@@ -31,6 +31,12 @@ const (
 	CRMStatusRejected  = "rejected"
 )
 
+// crmCanonicalStatuses es la lista cerrada, en el mismo orden que el enum del
+// schema publicado (intake.status.schema.json) y que el CHECK de la migración 0048.
+var crmCanonicalStatuses = []string{
+	CRMStatusPaid, CRMStatusPreparing, CRMStatusDelivered, CRMStatusRejected,
+}
+
 // IsCRMStatus dice si un estado pertenece al vocabulario canónico del CRM: true
 // para los cuatro CRMStatus… y false para todo lo demás.
 //
@@ -39,7 +45,7 @@ const (
 // estados del ciclo de vida de wApp que no comparten literal («confirmed»,
 // «closed»).
 func IsCRMStatus(status string) bool {
-	panic(pendiente.Implementar("intakes.IsCRMStatus"))
+	return slices.Contains(crmCanonicalStatuses, status)
 }
 
 // CRMReflection es el resultado de reflejar un estado del CRM sobre una solicitud.
