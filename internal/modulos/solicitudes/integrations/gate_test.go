@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package integrations_test
 
 import (

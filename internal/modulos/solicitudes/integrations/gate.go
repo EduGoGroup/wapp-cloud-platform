@@ -4,8 +4,7 @@ package integrations
 
 import (
 	"context"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
 )
 
 // FeatureResolver es lo mínimo que EntitlementsGate necesita del resolver de
@@ -24,14 +23,18 @@ type FeatureResolver interface {
 //
 // Es UNA sola evaluación para todas las puertas que encolan (R-13): un tenant no
 // puede tener el puente abierto para una y cerrado para otra.
-type EntitlementsGate struct{}
+type EntitlementsGate struct {
+	features FeatureResolver
+	store    Store
+	feature  string
+}
 
 // NewEntitlementsGate construye el gate. feature es la clave a comprobar
 // (entitlements.FeatureCRMBridge en producción; un valor de prueba en tests
 // sin acoplar este paquete a entitlements por el símbolo de la constante). No
 // consulta nada al construirse.
 func NewEntitlementsGate(features FeatureResolver, store Store, feature string) *EntitlementsGate {
-	panic(pendiente.Implementar("integrations.NewEntitlementsGate"))
+	return &EntitlementsGate{features: features, store: store, feature: feature}
 }
 
 // Enabled implementa runtime.WebhookGate: fail-closed en las tres formas de
@@ -56,5 +59,20 @@ func NewEntitlementsGate(features FeatureResolver, store Store, feature string) 
 //   - «integrations: evaluar feature <feature> de <tenant>: » — falla el resolver;
 //   - «integrations: leer integración de <tenant>: » — falla el almacén.
 func (g *EntitlementsGate) Enabled(ctx context.Context, tenantID string) (bool, error) {
-	panic(pendiente.Implementar("integrations.EntitlementsGate.Enabled"))
+	has, err := g.features.Has(ctx, tenantID, g.feature)
+	if err != nil {
+		return false, fmt.Errorf("integrations: evaluar feature %s de %s: %w", g.feature, tenantID, err)
+	}
+	if !has {
+		return false, nil
+	}
+
+	ti, found, err := g.store.GetTenantIntegration(ctx, tenantID)
+	if err != nil {
+		return false, fmt.Errorf("integrations: leer integración de %s: %w", tenantID, err)
+	}
+	if !found || !ti.Enabled || ti.EventsAdapter != "webhook" {
+		return false, nil
+	}
+	return true, nil
 }
