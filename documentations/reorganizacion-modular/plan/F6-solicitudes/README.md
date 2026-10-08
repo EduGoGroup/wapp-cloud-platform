@@ -1,6 +1,6 @@
 # F6 · `solicitudes` — la solicitud, su bandeja, P5 y el puente CRM
 
-> **Estado: en curso** — F6-04 hecha el 2026-10-08 (`quotetext`, `telemetria`, `integrations` y `crmpush` en verde: el módulo queda **sin pendientes**, `PENDIENTES=0`, `ROJOS=1`; falta la cara HTTP y conmutar, F6-05). Antes, F6-03 el mismo día (`intakes` entero en verde: almacenes, las 9 acciones, notificador y candados; `PENDIENTES=0`, `ROJOS=1`). Antes, F6-02 el mismo día (contratos y tipos puros). Arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
+> **Estado: en curso** — F6-05a hecha el 2026-10-08 (la cara HTTP de solicitudes en verde en `internal/apipublica`, **sin montar**: 19 ficheros de producción, `PENDIENTES=0`, `ROJOS=1`; falta cablear y conmutar G1–G18, F6-05b). Antes, F6-04 hecha el 2026-10-08 (`quotetext`, `telemetria`, `integrations` y `crmpush` en verde: el módulo queda **sin pendientes**, `PENDIENTES=0`, `ROJOS=1`; falta la cara HTTP y conmutar, F6-05). Antes, F6-03 el mismo día (`intakes` entero en verde: almacenes, las 9 acciones, notificador y candados; `PENDIENTES=0`, `ROJOS=1`). Antes, F6-02 el mismo día (contratos y tipos puros). Arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
 > Jhoan ([`diseno.md`](diseno.md) §1.2). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.7 (G1–G18).
@@ -79,7 +79,7 @@ promoción, si no local · 💻 solo local. Cada una cierra con tres cosas: tare
 | [**F6-02**](../sesiones/F6-02-web-intakes-1.md) · `intakes` (1/2): contratos del paquete y tipos puros | 🌐 | T6.6–T6.8, T6.15 | los 24 ficheros de `intakes` con contrato y test + `intakeshelpertest`; `note.go` y los 10 tipos puros en verde · `vet -tags pendiente` rc=0 · PR ✅ hecha el 2026-10-08: son **40** ficheros y **9** tipos puros (hallazgo 11) |
 | [**F6-03**](../sesiones/F6-03-web-intakes-2.md) · `intakes` (2/2): almacenes, acciones, notificador y candados | 🌐 | T6.9, T6.16–T6.18 | 0 pendientes en `S/intakes`; suite verde en memoria; candados del plazo y de la poda verdes, INV-1 escritos tras `pendiente` · PR ✅ hecha el 2026-10-08 (hallazgos 24–34) |
 | [**F6-04**](../sesiones/F6-04-web-quotetext-integrations-crmpush.md) · `quotetext`, `telemetria`, `integrations`, `crmpush` | 💻 | T6.10–T6.13, T6.19–T6.21 | ✅ hecha el 2026-10-08 (`31b9343` … `af68fe3`; hallazgos 35–44): 0 pendientes en el módulo; puente (import) declarado; candado R-12 y esquema CRM verdes · PR |
-| [**F6-05**](../sesiones/F6-05-web-cara-http-y-conmutar.md) · cara HTTP, cableado y conmutar G1–G18 | 🌐❓ | T6.22–T6.26 (= TX.16–TX.18) | 12 ficheros de `apipublica` en verde · huella igual · `go list -deps` · test de cableado completo · `FaseActual = 6` · PR |
+| [**F6-05**](../sesiones/F6-05-web-cara-http-y-conmutar.md) · cara HTTP, cableado y conmutar G1–G18 | 💻 | T6.22–T6.26 (= TX.16–TX.18) | 🔧 **en dos PR**: F6-05a ✅ hecha el 2026-10-08 (`2cc4cde` … `6675927`; hallazgos 45–54: la cara en verde, sin montar); F6-05b pendiente (T6.24–T6.25) · 12 ficheros de `apipublica` en verde · huella igual · `go list -deps` · test de cableado completo · `FaseActual = 6` · PR |
 | [**F6-06**](../sesiones/F6-06-cli-cierre.md) · cierre local | 💻 | T6.27–T6.29 | suites en memoria y contra Postgres; procesos P5/P6 (T9.27) contra los dos binarios · `dev` integrado · `ESTADO.md` |
 
 Reparto de `intakes`: F6-02 escribe **todos** los contratos del paquete (las acciones y los almacenes dependen de los
@@ -371,3 +371,47 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
     → `WithTimeout`) rompen el **texto** que buscan `internal/arranque/quotetext_cableado_test.go:57,59` (`reglas.md` T-6)
     y R6.5.b. Hoy no fallan porque el arranque sigue cableando el `quotetext` viejo; al conmutar hay que reajustarlos. La
     tabla completa está en `tareas.md`, bloque F6-04.
+
+### F6-05a (2026-10-08; rama `reorg/f6-05a-cara-solicitudes` desde `dev` @ `40dc145`)
+
+45. **F6-05 no cabe en un PR y se parte en dos** (Jhoan, 2026-10-08). La ficha contaba «12 ficheros + 12 tests»; son **19** de
+    producción y 35 de test: `intakes.go` viejo (1073 líneas) sale en 6 por E-13 (con `intakes_llm_gate.go`, 7 de bandeja) (`intakes`, `_dto`, `_filter`, `_status`, `_items`,
+    `_approve`), `integrations.go` suelta `integrations_validate.go`, y G7·G9·G10 necesitan un fichero propio para su puerto y su
+    montaje (`intakereports.go`). Además T6.24 y T6.25 **no compilan por separado** (al cambiar el tipo de `c.intakeService`, los
+    campos de `publicapi.Deps` dejan de compilar), así que el corte limpio es «cara sin montar» / «cablear y conmutar».
+46. **El par en la lista cerrada no bastaba (D-F6-12).** La regla 3a de `ProcessImports` rechaza un `…helpertest` fuera de
+    `internal/modulos` e `internal/nucleo` antes de mirar los pares, y la suite de telemetría vive en la cara por D-FX-4. Jhoan
+    eligió la excepción estrecha: la regla 3a acepta, por igualdad, las claves de `ContractAdapterDirs`.
+47. **El inventario E-12 aprobado no clasifica la cara.** Cubre los 41 ficheros del módulo; para `apipublica` se aplicó lo que
+    dicen la ficha y TX.16: **medio** todos, **complejo** `eventstelemetry_store.go` (76 mutantes a mano: 73 muertos, 3
+    equivalentes). Ocho mutantes del **texto** del SQL solo mueren por la comparación literal de la consulta: su verdad es la
+    pasada contra Postgres de F6-06.
+48. **G17 · ventana anti-replay: divergencia a propósito.** En el viejo (`publicapi/crmcallback.go:289-293`) un timestamp a
+    más de ~292 años en el futuro **pasa** la ventana: la resta satura y `-delta` desborda. El caso real es un puente que manda
+    milisegundos en vez de segundos: bien firmado, ese mensaje no caduca nunca. El nuevo responde **401**
+    (`apipublica/crmcallback.go`, guarda `delta >= 0`; tres casos en `TestMountCRMCallback_Window`). Mejora clara; si se
+    prefiere el viejo, es quitar la condición y esos tres casos.
+49. **D-F6-11 toca a G17 menos de lo que se temía.** El paso de 200 a 403 solo ocurre con el puente encendido, **con** secreto
+    y sin `endpoint_url`; sin secreto ya era 401 en las dos caras (no hay con qué verificar la firma). Lo fija
+    `TestMountCRMCallback_WithTheModuleGate` con el gate real. A vigilar en P6 (F6-06). `validateLiveBridge` está portada
+    entera, con test por rama.
+50. **Relojes inyectados que el viejo no tenía**: `IntakesDeps.Now` (el `overdue` de G1/G2), `IntakeReportsDeps.Now` (nombre del
+    export y «ahora» del plazo de G7) y `CRMCallbackDeps.Now` (ventana de G17); `nil` ⇒ `time.Now`. El `generated_at` de G10
+    **no** sale de ahí sino del reloj del servicio (`intakes.WithClock`, D-F6-5).
+51. **Pánico de cableado nuevo**: `MountIntakeReports` con `QuoteSuggestions != nil` y `QuoteWriteDeadline <= 0` hace panic al
+    montar. El viejo no tenía el caso porque el plazo era una constante; ahora llega por parámetro (FX §4.3) y un plazo sin
+    cablear es un error del arranque. **Para F6-05b**: `CRMNotify` debe ser un `nil` de interfaz, no un `*Notifier` nil.
+52. **E-8 · reglas del viejo que no se mantienen, con motivo**: `TestGateLLM_LasClavesSonLasDelContrato` (compara con las
+    etiquetas JSON de `stages`, código viejo hasta F7: la cara no puede importarlo; **queda para F7**) · el EXPLAIN del índice
+    parcial de la 0056 (es del índice, necesita base: F9) · los dos tests del plazo de G7 con servidor y cronómetro reales (aquí
+    con dobles; la medición real, F9) · las ramas «store/reader nil ⇒ 500 … no configurado» y la guarda `feats != nil` del gate
+    (inalcanzables: el `Mount` solo registra con la dependencia). Rarezas del viejo **conservadas** y escritas en el contrato:
+    el cursor de G18 con instante cero equivale a no mandarlo y admite id negativo; G17 solo decodifica el primer valor JSON,
+    casa las claves sin distinguir mayúsculas y deja pasar `"external_ref":null` (más laxo que el schema publicado); en G12
+    una clave repetida gana la última y `null` se guarda como `""`; el `payload` no viaja byte a byte (`encoding/json` compacta).
+53. **Los *worktrees* de los sub-agentes inflan `make test-pendiente`**: con los cuatro vivos daba `ROJOS=4`; borrados, `ROJOS=1`
+    (lo avisa el protocolo §1.4). Y **`make lint` no admite paralelo entre *worktrees***: el cerrojo de `golangci-lint` es
+    global («parallel golangci-lint is running», rc≠0), aunque la caché sea por *checkout*; los cuatro tuvieron que reintentar.
+54. **Anotado, no tocado**: `endpoint_url` admite cualquier host http(s), incluidos `localhost` y direcciones internas
+    (deliberado en el viejo, `publicapi/integrations.go:330-342`): superficie SSRF del worker, por si se quiere revisar. Y un
+    comentario caducado en `publicapi/summary.go:105-110` dice que `customer_note` «sigue sin aparecer», pero el código la publica.
