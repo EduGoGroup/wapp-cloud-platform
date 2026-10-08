@@ -5,8 +5,7 @@ package casebank
 import (
 	"context"
 	"database/sql"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
 )
 
 // Postgres es la implementación real de Store sobre database/sql, contra
@@ -21,14 +20,28 @@ import (
 // cifrado sino que YA VIENE ANONIMIZADO desde `Service.Insert`. Si algún día
 // alguien escribe por este store sin pasar por el servicio, esta tabla es PII en
 // claro (ADR-0034) y no hay cifrado que lo tape. Ver el COMMENT de la 0082.
-type Postgres struct{}
-
-// NewPostgres construye el store sobre el *sql.DB ya abierto. No lo consulta.
-func NewPostgres(db *sql.DB) *Postgres {
-	panic(pendiente.Implementar("casebank.NewPostgres"))
+type Postgres struct {
+	db *sql.DB
 }
 
+// NewPostgres construye el store sobre el *sql.DB ya abierto. No lo consulta.
+func NewPostgres(db *sql.DB) *Postgres { return &Postgres{db: db} }
+
 var _ Store = (*Postgres)(nil)
+
+// insertSQL escribe la fila y devuelve su id. `consented` es el $2, no el literal
+// `true`: ver Insert.
+const insertSQL = `
+INSERT INTO public.intake_case_bank (tenant_id, consented, source_text, expected)
+VALUES ($1, $2, $3, $4)
+RETURNING id`
+
+// existsSQL (antes `existeSQL`) es el guard de idempotencia de la siembra.
+const existsSQL = `
+SELECT EXISTS (
+    SELECT 1 FROM public.intake_case_bank
+     WHERE tenant_id = $1 AND source_text = $2
+)`
 
 // Insert escribe el caso con UN `INSERT … RETURNING id` sobre el pool, sin
 // transacción, y devuelve el id que devuelve la base. Recibe el `source_text` YA
@@ -52,7 +65,17 @@ var _ Store = (*Postgres)(nil)
 // Si la sentencia falla o no devuelve fila, devuelve 0 y el error envuelto (%w)
 // con el prefijo "insertando en intake_case_bank: ".
 func (p *Postgres) Insert(ctx context.Context, c Case) (int64, error) {
-	panic(pendiente.Implementar("casebank.Postgres.Insert"))
+	// `any` y no `[]byte`: un []byte nil viajaría como valor vacío, no como NULL.
+	var expected any
+	if len(c.Expected) > 0 {
+		expected = []byte(c.Expected)
+	}
+	var id int64
+	if err := p.db.QueryRowContext(ctx, insertSQL,
+		c.TenantID, c.Consented, c.SourceText, expected).Scan(&id); err != nil {
+		return 0, fmt.Errorf("insertando en intake_case_bank: %w", err)
+	}
+	return id, nil
 }
 
 // Exists dice si ese tenant ya tiene ese literal en el banco, con UN `SELECT
@@ -63,5 +86,9 @@ func (p *Postgres) Insert(ctx context.Context, c Case) (int64, error) {
 // Si la consulta falla, devuelve false y el error envuelto (%w) con el prefijo
 // "consultando intake_case_bank: ".
 func (p *Postgres) Exists(ctx context.Context, tenantID, sourceText string) (bool, error) {
-	panic(pendiente.Implementar("casebank.Postgres.Exists"))
+	var found bool
+	if err := p.db.QueryRowContext(ctx, existsSQL, tenantID, sourceText).Scan(&found); err != nil {
+		return false, fmt.Errorf("consultando intake_case_bank: %w", err)
+	}
+	return found, nil
 }
