@@ -15,7 +15,6 @@ package pipeline_test
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -38,23 +37,7 @@ const (
 	draftIntakeID = "9f3c1d52-4b8a-4a6e-9c11-7d2e6f0a5b34"
 	// clearLiteral es lo que «descifra» el descifrador falso.
 	clearLiteral = "quiero una torta de chocolate para el viernes"
-
-	// waitLimit es el límite de paciencia de las esperas: no mide nada, es el punto en
-	// que se declara que una condición NO va a llegar.
-	waitLimit = 5 * time.Second
 )
-
-// eventually gira hasta que `cond` se cumple, cediendo el procesador en cada vuelta.
-func eventually(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(waitLimit)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("nunca se llegó a: %s", what)
-		}
-		runtime.Gosched()
-	}
-}
 
 // fakeClock es el reloj inyectado: solo avanza cuando un test lo empuja.
 type fakeClock struct {

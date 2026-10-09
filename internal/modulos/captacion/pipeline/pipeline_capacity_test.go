@@ -26,33 +26,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/pipeline"
 )
 
-// fakeSlots es el doble de pipeline.Slots: dice a qué Edge apunta cada sesión. En
-// producción lo satisface el selector de vía, que además sabe que un tenant en vía API NO
-// OCUPA PLAZA — aquí eso es `noSlot`.
-type fakeSlots struct {
-	edges  map[string]string
-	noSlot bool
-	err    error
-
-	mu    sync.Mutex
-	asked []string
-}
-
-var _ pipeline.Slots = (*fakeSlots)(nil)
-
-func (f *fakeSlots) PlazaDe(_ context.Context, tenant, session string) (string, bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.asked = append(f.asked, tenant+"/"+session)
-	if f.err != nil {
-		return "", false, f.err
-	}
-	if f.noSlot {
-		return "", false, nil
-	}
-	return f.edges[session], true, nil
-}
-
+// questions son las preguntas que se le hicieron al doble de Slots (slot_test.go).
 func (f *fakeSlots) questions() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

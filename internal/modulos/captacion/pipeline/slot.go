@@ -4,8 +4,8 @@ package pipeline
 
 import (
 	"context"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
+	"sync"
 )
 
 // slot.go — EL ENTERO (Plan 044 · Ola 2 · T2.7, ADR-0046 · Mecanismo 1; R-01).
@@ -66,15 +66,11 @@ type Slot struct {
 // Valid (antes `Valida`) dice si la dirección identifica una plaza: las DOS mitades no
 // vacías. Una plaza a medias no se toma: se sigue sin aforo, que es lo que hace el worker
 // cuando el tenant no tiene Edge.
-func (s Slot) Valid() bool {
-	panic(pendiente.Implementar("pipeline.Slot.Valid"))
-}
+func (s Slot) Valid() bool { return s.TenantID != "" && s.EdgeID != "" }
 
 // String es para el log: `<tenant_id>/<edge_id>`. No lleva PII: `edge_id` es el CN del
 // certificado y `tenant_id` un UUID.
-func (s Slot) String() string {
-	panic(pendiente.Implementar("pipeline.Slot.String"))
-}
+func (s Slot) String() string { return fmt.Sprintf("%s/%s", s.TenantID, s.EdgeID) }
 
 // Slots (antes `Plazas`) responde a la única pregunta que el worker necesita hacerle al
 // resto del sistema: **qué plaza ocupa una inferencia de este (tenant, sesión), si ocupa
@@ -118,13 +114,26 @@ type Slots interface {
 // reclamando y soltando el mismo job a la velocidad del error: la tormenta que la
 // migración 0078 existe para impedir. Esperar bloquea UN worker; el intentar-y-soltar
 // quemaría el proceso.
-type Capacity struct{}
+type Capacity struct {
+	k int
+
+	mu    sync.Mutex
+	slots map[Slot]chan struct{}
+	// waiting son las cadenas BLOQUEADAS de verdad pidiendo plaza, sumadas todas las
+	// direcciones. La que la coge sin esperar NO se cuenta (ver Acquire). Es un observable
+	// de verdad —el candidato natural a métrica «cadenas de lote esperando plaza»—: si
+	// crece y no baja, lo que hay es un Edge atascado reteniendo su plaza.
+	waiting int
+}
 
 // NewCapacity (antes `NuevoAforo`) construye el aforo con `k` plazas por dirección. Un
 // `k <= 0` cae a KPerSlot: un aforo de cero no dejaría pasar a NADIE y el pipeline entero
 // se quedaría colgado sin un solo error.
 func NewCapacity(k int) *Capacity {
-	panic(pendiente.Implementar("pipeline.NewCapacity"))
+	if k <= 0 {
+		k = KPerSlot
+	}
+	return &Capacity{k: k, slots: make(map[Slot]chan struct{})}
 }
 
 // Acquire (antes `Tomar`) ocupa la plaza `s` y devuelve la función que la suelta. Si hay
@@ -144,12 +153,68 @@ func NewCapacity(k int) *Capacity {
 //     plaza, sin dar un solo error;
 //   - la dirección no se valida aquí (lo hace el worker con Slot.Valid).
 func (c *Capacity) Acquire(ctx context.Context, s Slot) (func(), error) {
-	panic(pendiente.Implementar("pipeline.Capacity.Acquire"))
+	ch := c.channel(s)
+
+	// 🔴 EL INTENTO SIN BLOQUEO VA PRIMERO, Y NO ES UNA OPTIMIZACIÓN: es lo que hace que
+	// Waiting signifique lo que dice. Contando ANTES del select, una cadena que va a coger
+	// la plaza sin esperar ni un instante se apuntaba como «esperando» durante ese
+	// instante — un contador que miente en el caso normal, y de forma intermitente (lo
+	// destapó `-race -count=40`: fallaba ~1 de cada 40 veces).
+	select {
+	case ch <- struct{}{}:
+		return releaseOnce(ch), nil
+	default:
+	}
+
+	c.mu.Lock()
+	c.waiting++
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.waiting--
+		c.mu.Unlock()
+	}()
+
+	// 🔴 EL ENVÍO SE HACE FUERA DEL CANDADO. Enviar con `mu` tomado convertiría el primer
+	// bloqueo en un interbloqueo de todo el aforo: ninguna otra dirección podría siquiera
+	// crearse.
+	select {
+	case ch <- struct{}{}:
+		return releaseOnce(ch), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// releaseOnce (antes `soltarUnaVez`) devuelve la función que libera la plaza, blindada
+// contra la segunda llamada.
+func releaseOnce(ch chan struct{}) func() {
+	var once sync.Once
+	return func() { once.Do(func() { <-ch }) }
 }
 
 // Waiting (antes `Esperando`) son las cadenas BLOQUEADAS ahora mismo pidiendo plaza,
 // sumadas todas las direcciones. La que tomó la plaza sin esperar no cuenta, ni mientras
 // la toma ni después; la que se rinde por su `ctx` deja de contar.
 func (c *Capacity) Waiting() int {
-	panic(pendiente.Implementar("pipeline.Capacity.Waiting"))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.waiting
+}
+
+// channel (antes `canal`) devuelve el canal de la plaza, creándolo la primera vez.
+//
+// ⚠️ LOS CANALES NO SE BORRAN NUNCA, y es deliberado. Borrar el de una plaza vacía abriría
+// una carrera fea —dos workers con dos canales distintos para la misma dirección, o sea
+// DOS plazas donde debe haber una— a cambio de liberar unos bytes por Edge. El mapa crece
+// con el PARQUE DE EDGES, no con el tráfico.
+func (c *Capacity) channel(s Slot) chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ch, ok := c.slots[s]
+	if !ok {
+		ch = make(chan struct{}, c.k)
+		c.slots[s] = ch
+	}
+	return ch
 }

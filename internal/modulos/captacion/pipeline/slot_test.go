@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pipeline_test
 
 // slot_test.go — el contrato de slot.go: la dirección de la plaza (Slot), el puerto Slots
@@ -23,6 +21,33 @@ var (
 	slotA = pipeline.Slot{TenantID: "tenant-1", EdgeID: "edge-1"}
 	slotB = pipeline.Slot{TenantID: "tenant-1", EdgeID: "edge-2"}
 )
+
+// fakeSlots es el doble de pipeline.Slots: dice a qué Edge apunta cada sesión. En
+// producción lo satisface el selector de vía, que además sabe que un tenant en vía API NO
+// OCUPA PLAZA — aquí eso es `noSlot`.
+type fakeSlots struct {
+	edges  map[string]string
+	noSlot bool
+	err    error
+
+	mu    sync.Mutex
+	asked []string
+}
+
+var _ pipeline.Slots = (*fakeSlots)(nil)
+
+func (f *fakeSlots) PlazaDe(_ context.Context, tenant, session string) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, tenant+"/"+session)
+	if f.err != nil {
+		return "", false, f.err
+	}
+	if f.noSlot {
+		return "", false, nil
+	}
+	return f.edges[session], true, nil
+}
 
 // mustAcquire toma la plaza o falla.
 func mustAcquire(t *testing.T, c *pipeline.Capacity, s pipeline.Slot) func() {
