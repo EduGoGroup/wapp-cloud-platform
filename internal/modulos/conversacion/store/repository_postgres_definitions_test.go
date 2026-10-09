@@ -128,17 +128,18 @@ func TestPostgres_InsertResults_OneStatementForTheBatch(t *testing.T) {
 		strings.Contains(insert.query, "$14") && !strings.Contains(insert.query, "$15"), true)
 }
 
-// pgResultRows son dos filas de la lectura de respuestas: siete columnas, SIN event_id.
+// pgResultRows son dos filas de la lectura de respuestas, con sus ocho columnas: la primera es
+// una fila legada (event_id NULL) y la segunda trae su evento.
 func pgResultRows() [][]driver.Value {
 	return [][]driver.Value{
-		{pgTenant, pgContact, "menu", int64(1), "q1", "a", pgAt},
-		{pgTenant, pgContact, "menu", int64(2), "q2", "b", pgAt},
+		{pgTenant, pgContact, "menu", int64(1), "q1", "a", nil, pgAt},
+		{pgTenant, pgContact, "menu", int64(2), "q2", "b", pgEventID, pgAt},
 	}
 }
 
-// TestPostgres_ListResults_MapsRowsAndClosesThem: siete columnas por fila —esta consulta no lee
-// event_id y EventID sale vacío—; sin filas, la lista vacía; y los fallos del recorrido con su
-// texto propio, sin filas a medias.
+// TestPostgres_ListResults_MapsRowsAndClosesThem: ocho columnas por fila, el evento incluido
+// (event_id NULL ⇒ EventID vacío, la fila legada pre-0054); sin filas, la lista vacía; y los fallos
+// del recorrido con su texto propio, sin filas a medias.
 func TestPostgres_ListResults_MapsRowsAndClosesThem(t *testing.T) {
 	h := newFakeRepository(t, pgReply{rows: pgResultRows()}, pgReply{},
 		pgReply{rows: pgResultRows(), endErr: errPgBoom}, pgReply{rows: pgResultRows(), closeErr: errPgBoom})
@@ -146,8 +147,10 @@ func TestPostgres_ListResults_MapsRowsAndClosesThem(t *testing.T) {
 	got, err := h.repo.ListResults(t.Context(), pgTenant, pgContact, "menu")
 	requireNoError(t, "ListResults", err)
 	requireEqual(t, "filas", len(got), 2)
+	requireEqual(t, "fila legada, con event_id NULL", got[0], SurveyResult{TenantID: pgTenant, ContactID: pgContact,
+		FlowID: "menu", FlowVersion: 1, QuestionID: "q1", AnswerCode: "a", CreatedAt: pgAt})
 	requireEqual(t, "segunda fila", got[1], SurveyResult{TenantID: pgTenant, ContactID: pgContact, FlowID: "menu",
-		FlowVersion: 2, QuestionID: "q2", AnswerCode: "b", CreatedAt: pgAt})
+		FlowVersion: 2, QuestionID: "q2", AnswerCode: "b", EventID: pgEventID, CreatedAt: pgAt})
 
 	got, err = h.repo.ListResults(t.Context(), pgTenant, pgContact, "menu")
 	requireNoError(t, "ListResults sin filas", err)

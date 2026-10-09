@@ -121,8 +121,8 @@ func requireSameSurveyResults(t *testing.T, what string, got, want []SurveyResul
 	}
 }
 
-// sameAnswer compara lo que una respuesta dice sin su evento ni su fecha: los seis campos que
-// ListResults promete en los dos adaptadores.
+// sameAnswer compara lo que una respuesta dice sin su evento ni su fecha; quien quiera esos dos
+// los mira aparte.
 func sameAnswer(a, b SurveyResult) bool {
 	return a.TenantID == b.TenantID && a.ContactID == b.ContactID && a.FlowID == b.FlowID &&
 		a.FlowVersion == b.FlowVersion && a.QuestionID == b.QuestionID && a.AnswerCode == b.AnswerCode

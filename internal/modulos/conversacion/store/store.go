@@ -126,6 +126,10 @@ type SurveyResultStore interface {
 	//     normal es quedarse con la ÚLTIMA respuesta de cada question_id). Elegirla
 	//     aquí sería imponérsela a todos los lectores futuros con una columna que
 	//     no existe.
+	//
+	// Cada fila sale con el EventID con que se guardó; una fila legada con event_id
+	// NULL (pre-0054) sale con EventID "". Divergencia deliberada del viejo, F8-01
+	// (hallazgo 7): el viejo no leía la columna.
 	ListResults(ctx context.Context, tenantID, contactID, flowID string) ([]SurveyResult, error)
 }
 

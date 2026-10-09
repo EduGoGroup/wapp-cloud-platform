@@ -387,9 +387,8 @@ func (r *MemoryRepository) InsertResults(ctx context.Context, rows []SurveyResul
 // un test que distinga `nil` de `[]` sobre el doble estaría comprobando algo que la
 // implementación real no promete.
 //
-// Cada fila sale con el EventID con el que se guardó. ⚠️ El Postgres NO lo lee en esta
-// consulta (su SELECT no trae event_id) y allí sale siempre "": quien compare los dos
-// adaptadores no mira ese campo en ListResults. Nunca devuelve error.
+// Cada fila sale con el EventID con el que se guardó, igual que en el Postgres (que
+// desde F8-01 lee la columna: ver SurveyResultStore.ListResults). Nunca devuelve error.
 func (r *MemoryRepository) ListResults(ctx context.Context, tenantID, contactID, flowID string) ([]SurveyResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

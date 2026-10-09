@@ -140,9 +140,8 @@ func caseInsertResults(t *testing.T, m Montaje) {
 
 // caseListResults: ListResults devuelve lo que ESE contacto respondió en ESE flujo de ESE tenant,
 // en orden cronológico —y, dentro de una misma tanda, en el orden en que se escribió—, con la
-// versión del flujo y la fecha de cada fila. Sin respuestas, la lista vacía sin error.
-//
-// No se mira el EventID de lo que devuelve: el adaptador Postgres no lo lee en esta consulta.
+// versión del flujo, la fecha y el evento con que se guardó cada fila. Sin respuestas, la lista
+// vacía sin error.
 func caseListResults(t *testing.T, m Montaje) {
 	contact, other := uuid.NewString(), uuid.NewString()
 	if got, err := m.Store.ListResults(ctx, m.TenantA, contact, flowMenu); err != nil || len(got) != 0 {
@@ -170,8 +169,8 @@ func caseListResults(t *testing.T, m Montaje) {
 		t.Fatalf("ListResults: %v", err)
 	}
 	want := []SurveyResult{
-		answer(m.TenantA, contact, flowMenu, "q1", "a", ""),
-		answer(m.TenantA, contact, flowMenu, "q2", "b", ""),
+		answer(m.TenantA, contact, flowMenu, "q1", "a", eventA),
+		answer(m.TenantA, contact, flowMenu, "q2", "b", eventA),
 		again,
 	}
 	if len(got) != len(want) {
@@ -180,6 +179,10 @@ func caseListResults(t *testing.T, m Montaje) {
 	for i := range want {
 		if !sameAnswer(got[i], want[i]) {
 			t.Errorf("ListResults[%d] = %+v, quería %+v", i, got[i], want[i])
+		}
+		if got[i].EventID != want[i].EventID {
+			t.Errorf("ListResults[%d] trae EventID %q, quería el evento con que se guardó (%q)",
+				i, got[i].EventID, want[i].EventID)
 		}
 		if got[i].CreatedAt.IsZero() {
 			t.Errorf("ListResults[%d] trae CreatedAt cero", i)

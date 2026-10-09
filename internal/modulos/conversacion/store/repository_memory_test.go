@@ -216,8 +216,8 @@ func TestMemoryRepository_FlowEventsMirror(t *testing.T) {
 
 // TestMemoryRepository_SurveyResultsMirror: el mirador de las respuestas devuelve las de TODOS los
 // tenants, en orden de escritura, y una COPIA. Lo que solo el gemelo hace: acepta una respuesta sin
-// evento, respeta el CreatedAt que trae una fila (fecha con el reloj la que no lo trae) y devuelve
-// el EventID en ListResults.
+// evento y respeta el CreatedAt que trae una fila (fecha con el reloj la que no lo trae). Y
+// ListResults devuelve el EventID.
 func TestMemoryRepository_SurveyResultsMirror(t *testing.T) {
 	repo, clock := newMemoryRepository()
 	own := time.Date(2020, 5, 5, 0, 0, 0, 0, time.UTC)

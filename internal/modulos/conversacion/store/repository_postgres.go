@@ -389,6 +389,10 @@ func (r *PostgresRepository) InsertResults(ctx context.Context, rows []SurveyRes
 // created_at al milisegundo y sin el id de desempate saldrían en orden arbitrario —
 // justo en el caso en que quien resume necesita saber cuál fue la última.
 //
+// Cada fila trae su EventID; event_id NULL (fila legada pre-0054: el CHECK es NOT
+// VALID) ⇒ EventID "". Divergencia deliberada del viejo, F8-01 (hallazgo 7): el viejo
+// no leía la columna. Se lee con ::text, como en flow_state e intakes.
+//
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "store: listar resultados de encuesta: %w"
 //   - "store: cerrar filas de resultados: %w"
@@ -396,7 +400,8 @@ func (r *PostgresRepository) InsertResults(ctx context.Context, rows []SurveyRes
 //   - "store: iterar resultados de encuesta: %w"
 func (r *PostgresRepository) ListResults(ctx context.Context, tenantID, contactID, flowID string) (out []SurveyResult, err error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT tenant_id, contact_id, flow_id, flow_version, question_id, answer_code, created_at
+		SELECT tenant_id, contact_id, flow_id, flow_version, question_id, answer_code,
+		       event_id::text, created_at
 		FROM survey_results
 		WHERE tenant_id = $1 AND contact_id = $2 AND flow_id = $3
 		ORDER BY created_at, id
@@ -412,10 +417,16 @@ func (r *PostgresRepository) ListResults(ctx context.Context, tenantID, contactI
 
 	out = make([]SurveyResult, 0)
 	for rows.Next() {
-		var s SurveyResult
+		var (
+			s       SurveyResult
+			eventID sql.NullString
+		)
 		if serr := rows.Scan(&s.TenantID, &s.ContactID, &s.FlowID, &s.FlowVersion,
-			&s.QuestionID, &s.AnswerCode, &s.CreatedAt); serr != nil {
+			&s.QuestionID, &s.AnswerCode, &eventID, &s.CreatedAt); serr != nil {
 			return nil, fmt.Errorf("store: escanear resultado de encuesta: %w", serr)
+		}
+		if eventID.Valid {
+			s.EventID = eventID.String
 		}
 		out = append(out, s)
 	}

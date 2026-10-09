@@ -97,10 +97,10 @@ type (
 // una vez por caso y no limpia nada entre llamadas. Todos los campos son obligatorios.
 //
 // Los observadores existen porque el puerto no deja ver lo que escribe: no hay lectura de
-// flow_events ni de tenant_content_versions, ListResults no trae el event_id, las dos lecturas de
-// cabecera de una solicitud no traen la nota ni las solicitudes que no se saben pedir, y la
-// bienvenida solo se ve al tocarla. En memoria salen de los miradores del gemelo; contra Postgres,
-// de SQL directo.
+// flow_events ni de tenant_content_versions, ListResults solo ve las respuestas de un contacto en un
+// flujo, las dos lecturas de cabecera de una solicitud no traen la nota ni las solicitudes que no
+// se saben pedir, y la bienvenida solo se ve al tocarla. En memoria salen de los miradores del
+// gemelo; contra Postgres, de SQL directo.
 type Montaje struct {
 	// Store es la implementación bajo prueba.
 	Store Port
@@ -175,9 +175,8 @@ type Montaje struct {
 //     test propio de MemoryRepository.
 //   - Lo que solo cabe en la base: los CHECK, las claves foráneas y los valores por defecto de las
 //     columnas. Lo cubren los procesos de F9.
-//   - FlowSummary.CreatedAt (el gemelo no lo rastrea), el EventID que devuelve ListResults (el
-//     adaptador Postgres no lo lee) y el texto de ErrDefinitionNotFound más allá de `flow=<id>`
-//     (el gemelo solo añade `version=` si el flujo existe).
+//   - FlowSummary.CreatedAt (el gemelo no lo rastrea) y el texto de ErrDefinitionNotFound más
+//     allá de `flow=<id>` (el gemelo solo añade `version=` si el flujo existe).
 //   - El valor concreto de una fecha que pone la implementación: solo que cae entre dos lecturas
 //     de Now, y cuándo avanza y cuándo no.
 //   - Que una lista vacía sea nil o no.
