@@ -14,11 +14,20 @@ package apipublica
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
 	"time"
+
+	sharedintents "github.com/EduGoGroup/wapp-shared/intents"
+	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intentcfg"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // IntentConfigStore es el puerto de persistencia del blob de intents por tenant que la cara
@@ -133,5 +142,158 @@ type IntentsDeps struct {
 // Fallo de cableado: k.MW nil con las dos dependencias presentes hace panic AL MONTAR (ver
 // Common).
 func MountIntents(c *Cara, k Common, d IntentsDeps) {
-	panic(pendiente.Implementar("apipublica.MountIntents"))
+	// Solo se montan si el store y el resolver están cableados: un 404 de ruta inexistente es
+	// mejor que un 500 a medio camino o que un PUT que no puede comprobar el plan.
+	if d.Intents == nil || d.Entitlements == nil {
+		return
+	}
+	mustHaveMW(k, "MountIntents")
+
+	// GET lee el blob vigente (intents.read); PUT valida el contrato (wapp-shared/intents),
+	// exige la feature llm_intent (gate de verdad ⇒ 403 sin ella), persiste y empuja el
+	// ConfigUpdate a las sesiones vivas del tenant. Escritura auditada; lectura sin auditoría.
+	c.Handle("GET /api/v1/intents", protectRead(k, "intents.read",
+		intentsGetHandler(d.Intents, d.DBTimeout, k.Log)))
+	c.Handle("PUT /api/v1/intents", protect(k, "intents.write", "intents",
+		intentsPutHandler(d.Intents, d.Entitlements, d.ConfigPush, k.Log)))
+}
+
+// intentsConfigResponse (intentConfigResponse en la cara vieja) es la respuesta de E1: la
+// version de entidad + el blob de config crudo (verbatim, ya validado al persistir).
+type intentsConfigResponse struct {
+	Version string          `json:"version"`
+	Config  json.RawMessage `json:"config"`
+}
+
+// intentsGetHandler (getIntentsHandler en la cara vieja) sirve E1: el blob de intents del
+// tenant del token (INV-8) con su version de entidad.
+//
+// dbTimeout acota la lectura (Plan 050 · Ola 3 · T3.3, ver dbCtx). El PUT hermano queda FUERA a
+// propósito: escribe, y el presupuesto está calibrado para lecturas.
+//
+// La rama vieja «store nil ⇒ 500 store de intents no configurado» no se porta: la ruta solo se
+// monta con un store no nil (MountIntents), así que era inalcanzable.
+func intentsGetHandler(store IntentConfigStore, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		ctx, cancel := dbCtx(r.Context(), dbTimeout)
+		defer cancel()
+		cfg, err := store.Get(ctx, id.TenantID)
+		if err != nil {
+			if dbTimedOut504(w, log, err, "la lectura de la config de intents no respondió a tiempo, reintenta",
+				"op", "intents.get", "tenant_id", id.TenantID) {
+				return
+			}
+			if errors.Is(err, intentcfg.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "el tenant no tiene config de intents")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "no se pudo leer la config de intents")
+			return
+		}
+		writeJSON(w, http.StatusOK, intentsConfigResponse{Version: cfg.Version, Config: cfg.Blob})
+	})
+}
+
+// intentsPutHandler (putIntentsHandler en la cara vieja) sirve E2: exige la feature llm_intent
+// (gate de verdad, ADR-0022), valida el blob con wapp-shared/intents, fija la version de
+// entidad (hash del blob normalizado), persiste y empuja el ConfigUpdate a las sesiones vivas
+// del tenant (ADR-0021). El tenant SIEMPRE sale del token (INV-8).
+//
+// event_kind del blob (Plan 043 · T5.3, D-043.9): el Cloud NO lee `event_kind` del blob: el
+// scoping por evento activo sale de flow_triggers (regla kind='llm'). El campo es informativo
+// para un Edge futuro. Si un tenant lo incluye por intent, el body sigue validando
+// (ParseAndValidate no usa DisallowUnknownFields) y se persiste tal cual, pero es INERTE en el
+// Cloud: no arma ni acota ninguna regla.
+//
+// La rama vieja «store o checker nil ⇒ 500 API de intents no configurada» no se porta: la ruta
+// solo se monta con los dos (MountIntents), así que era inalcanzable.
+func intentsPutHandler(store IntentConfigStore, ents entitlements.Resolver, pusher ConfigPusher, log sharedlogger.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		// Gate de VERDAD (ADR-0022): sin la feature, la superficie de administración se
+		// rechaza (403). Un fallo del resolver NO abre la capacidad, pero tampoco se disfraza
+		// de «sin la feature»: responde 500, como la cara vieja (su comentario decía que se
+		// trataba como sin la feature; el código nunca lo hizo, y manda el código).
+		has, err := ents.Has(r.Context(), id.TenantID, entitlements.FeatureLLMIntent)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudo verificar el entitlement")
+			return
+		}
+		if !has {
+			writeError(w, http.StatusForbidden, "el plan del tenant no incluye la clasificación de intenciones")
+			return
+		}
+
+		// Cortafuegos de tamaño ANTES de leer todo: el contrato acota el blob a
+		// MaxConfigBytes (wapp-shared/intents). +1 detecta el exceso.
+		body, err := io.ReadAll(io.LimitReader(r.Body, sharedintents.MaxConfigBytes+1))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "no se pudo leer el cuerpo")
+			return
+		}
+		if len(body) > sharedintents.MaxConfigBytes {
+			writeTooLarge(w, "la config", sharedintents.MaxConfigBytes)
+			return
+		}
+
+		// Validación del contrato (ParseAndValidate): nombres únicos/kebab, >=1 ejemplo por
+		// intent, umbral en rango, etc. Config inválida ⇒ 400.
+		if _, verr := sharedintents.ParseAndValidate(body); verr != nil {
+			writeError(w, http.StatusBadRequest, "config de intents inválida: "+verr.Error())
+			return
+		}
+
+		// Defensa heredada: tras ParseAndValidate el cuerpo ya es JSON, así que esta rama no
+		// se alcanza. Se conserva por si el validador dejara un día de decodificar.
+		version, err := intentsEntityVersion(body)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "el cuerpo debe ser JSON válido")
+			return
+		}
+
+		if err := store.Upsert(r.Context(), id.TenantID, version, body); err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudo persistir la config de intents")
+			return
+		}
+
+		// Push best-effort a las sesiones vivas del tenant (ADR-0021). Un fallo NO invalida el
+		// PUT: la config ya está persistida y el push al conectar reconcilia (hace de
+		// reintento; no hay reintentos aquí). El error se registra pero no se propaga al
+		// cliente. Va con el contexto de la PETICIÓN, como en la cara vieja.
+		if pusher != nil {
+			if perr := pusher.PushConfig(r.Context(), id.TenantID, intentcfg.Kind, version, body); perr != nil && log != nil {
+				log.Warn("intents: push de config best-effort falló (persistida; reconcilia al conectar)",
+					"tenant_id", id.TenantID, "version", version, "error", perr)
+			}
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"version": version})
+	})
+}
+
+// intentsEntityVersion (entityVersion en la cara vieja) calcula la version de ENTIDAD del blob:
+// sha256 (12 hex) del JSON NORMALIZADO (re-serializado desde su forma decodificada, lo que
+// ordena las claves de objeto y descarta el espacio en blanco insignificante). Así dos cuerpos
+// con el mismo contenido lógico producen la misma version (idempotencia del push, ADR-0021).
+func intentsEntityVersion(body []byte) (string, error) {
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return "", err
+	}
+	norm, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(norm)
+	return hex.EncodeToString(sum[:])[:12], nil
 }

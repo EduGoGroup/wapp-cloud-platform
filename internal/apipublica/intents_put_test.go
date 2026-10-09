@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // intents_put_test.go — cubre E2 (PUT /api/v1/intents) del contrato de intents.go: el gate, los

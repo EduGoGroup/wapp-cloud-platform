@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // intents_test.go — cubre el contrato de intents.go (IntentConfigStore, ConfigPusher,
