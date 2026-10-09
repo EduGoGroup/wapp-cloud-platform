@@ -59,8 +59,6 @@
 
 package modules
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
-
 // VarQueryVerdict (`VarConsultaVeredicto` en el viejo) es la clave de
 // Conversation.Vars bajo la que el ENGINE siembra el veredicto de una Query antes
 // de la SEGUNDA llamada a Step. Su presencia es, además, la señal de «ya
@@ -192,9 +190,7 @@ type Verdict struct {
 // Resolved (`Resuelto` en el viejo) informa si el veredicto trae una respuesta de UN
 // SOLO código que aplicar: Code no vacío. No mira Codes a propósito: quien pregunta
 // por trozos pregunta con ResolvedAny.
-func (v Verdict) Resolved() bool {
-	panic(pendiente.Implementar("modules.Verdict.Resolved"))
-}
+func (v Verdict) Resolved() bool { return v.Code != "" }
 
 // ResolvedAny (`ResueltoAlguno` en el viejo) informa si el veredicto trae ALGO
 // aplicable, sea el código único o al menos uno no vacío de los códigos por trozo.
@@ -204,7 +200,15 @@ func (v Verdict) Resolved() bool {
 // producen a propósito, y tratarlo como un cero tiraría trabajo que ya se pagó con
 // la plaza única del Edge.
 func (v Verdict) ResolvedAny() bool {
-	panic(pendiente.Implementar("modules.Verdict.ResolvedAny"))
+	if v.Resolved() {
+		return true
+	}
+	for _, c := range v.Codes {
+		if c != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // VerdictFrom (`VeredictoDe` en el viejo) lee el veredicto sembrado por el engine.
@@ -213,7 +217,8 @@ func (v Verdict) ResolvedAny() bool {
 // módulo —en la primera puede preguntar, en la segunda no debe— y confundirlas es
 // el bucle. Un valor bajo la clave que no sea un Verdict cuenta como «no hay».
 func VerdictFrom(vars map[string]any) (Verdict, bool) {
-	panic(pendiente.Implementar("modules.VerdictFrom"))
+	v, ok := vars[VarQueryVerdict].(Verdict)
+	return v, ok
 }
 
 // WithVerdict (`ConVeredicto` en el viejo) devuelve una COPIA de vars con el
@@ -221,7 +226,9 @@ func VerdictFrom(vars map[string]any) (Verdict, bool) {
 // el de la conversación viva que el llamante conserva, y la primera pasada tiene que
 // poder descartarse sin dejar rastro. Con vars nil devuelve un mapa nuevo.
 func WithVerdict(vars map[string]any, v Verdict) map[string]any {
-	panic(pendiente.Implementar("modules.WithVerdict"))
+	out := CloneVars(vars)
+	out[VarQueryVerdict] = v
+	return out
 }
 
 // StripQueryVerdict (`StripConsultaVeredicto` en el viejo) devuelve unas Vars SIN la
@@ -238,5 +245,15 @@ func WithVerdict(vars map[string]any, v Verdict) map[string]any {
 // Devuelve el MISMO mapa cuando no hay nada que barrer (el caso común: todo turno
 // que no pasó por una consulta), así que no cuesta una copia por mensaje.
 func StripQueryVerdict(vars map[string]any) map[string]any {
-	panic(pendiente.Implementar("modules.StripQueryVerdict"))
+	if _, present := vars[VarQueryVerdict]; !present {
+		return vars
+	}
+	out := make(map[string]any, len(vars))
+	for k, v := range vars {
+		if k == VarQueryVerdict {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }

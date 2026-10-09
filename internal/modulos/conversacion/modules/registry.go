@@ -10,8 +10,11 @@
 package modules
 
 import (
+	"fmt"
+	"maps"
+	"sync"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Result es el veredicto puro de un módulo sobre la entrada del usuario en un
@@ -115,7 +118,19 @@ const VarIntentName = "intent_name"
 // que no venga del clasificador), así que no cuesta una copia por conversación. Un
 // mapa nil vuelve nil.
 func StripIntentSignal(vars map[string]any) map[string]any {
-	panic(pendiente.Implementar("modules.StripIntentSignal"))
+	_, hasParams := vars[VarIntentParams]
+	_, hasName := vars[VarIntentName]
+	if !hasParams && !hasName {
+		return vars
+	}
+	out := make(map[string]any, len(vars))
+	for k, v := range vars {
+		if k == VarIntentParams || k == VarIntentName {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // Effect es un efecto de lado DECLARADO por un módulo para que lo despache el
@@ -156,7 +171,15 @@ type Effect struct {
 // Sin PrivateKeys o con el Payload vacío devuelve el Payload tal cual (el mismo
 // mapa, o nil). Una clave privada que el Payload no trae no es un error.
 func (e Effect) PublicPayload() map[string]any {
-	panic(pendiente.Implementar("modules.Effect.PublicPayload"))
+	if len(e.PrivateKeys) == 0 || len(e.Payload) == 0 {
+		return e.Payload
+	}
+	out := make(map[string]any, len(e.Payload))
+	maps.Copy(out, e.Payload)
+	for _, k := range e.PrivateKeys {
+		delete(out, k)
+	}
+	return out
 }
 
 // KindPrivate marca un efecto cuyo PAYLOAD contiene datos personales del cliente
@@ -257,22 +280,30 @@ type NodeValidator interface {
 // Registry asocia tipos de nodo con su Module. Seguro para uso concurrente: se
 // escribe en el arranque y después solo se lee, pero registros y lecturas pueden
 // solaparse sin carrera.
-type Registry struct{}
+type Registry struct {
+	mu      sync.RWMutex
+	modules map[string]Module
+}
 
 // NewRegistry crea un registro vacío.
 func NewRegistry() *Registry {
-	panic(pendiente.Implementar("modules.NewRegistry"))
+	return &Registry{modules: make(map[string]Module)}
 }
 
 // Register registra un módulo bajo su Type(). Un Type repetido sobrescribe al
 // anterior.
 func (r *Registry) Register(m Module) {
-	panic(pendiente.Implementar("modules.Registry.Register"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.modules[m.Type()] = m
 }
 
 // Get devuelve el módulo registrado para el tipo dado y si existe.
 func (r *Registry) Get(nodeType string) (Module, bool) {
-	panic(pendiente.Implementar("modules.Registry.Get"))
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m, ok := r.modules[nodeType]
+	return m, ok
 }
 
 // Types devuelve los tipos de nodo actualmente registrados (orden no garantizado;
@@ -281,7 +312,13 @@ func (r *Registry) Get(nodeType string) (Module, bool) {
 // módulo enchufable (p. ej. "cart"): el modelo NO conoce los módulos concretos
 // (evita el ciclo model→modules), los tipos se le INYECTAN como strings.
 func (r *Registry) Types() []string {
-	panic(pendiente.Implementar("modules.Registry.Types"))
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	types := make([]string, 0, len(r.modules))
+	for t := range r.modules {
+		types = append(types, t)
+	}
+	return types
 }
 
 // ValidateModuleNodes valida la ESTRUCTURA de los nodos de MÓDULO del flujo cuyo
@@ -293,7 +330,22 @@ func (r *Registry) Types() []string {
 // id del nodo —`nodo %q: …`— e inspeccionable con errors.Is sobre el error base del
 // módulo. Lo invoca el handler del alta admin tras model.ParseAndValidate.
 func (r *Registry) ValidateModuleNodes(f model.Flow) error {
-	panic(pendiente.Implementar("modules.Registry.ValidateModuleNodes"))
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for id, n := range f.Nodes {
+		m, ok := r.modules[n.Type]
+		if !ok {
+			continue
+		}
+		v, ok := m.(NodeValidator)
+		if !ok {
+			continue
+		}
+		if err := v.ValidateNode(n); err != nil {
+			return fmt.Errorf("nodo %q: %w", id, err)
+		}
+	}
+	return nil
 }
 
 // WaitsForInput indica si el tipo dado está registrado y su módulo es
@@ -301,5 +353,8 @@ func (r *Registry) ValidateModuleNodes(f model.Flow) error {
 // false. Lo usa el engine para decidir si un nodo detiene el flujo esperando
 // input, sin cablear tipos concretos.
 func (r *Registry) WaitsForInput(typ string) bool {
-	panic(pendiente.Implementar("modules.Registry.WaitsForInput"))
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m, ok := r.modules[typ]
+	return ok && m.WaitsForInput()
 }

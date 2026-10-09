@@ -3,8 +3,9 @@
 package modules
 
 import (
+	"strings"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // CloneVars copia el mapa de variables para mantener la PUREZA de los módulos (no
@@ -12,14 +13,27 @@ import (
 // un nivel: los valores se comparten. Extraído de menú/encuesta, que lo duplicaban
 // byte-a-byte (Plan 027 · Ola 2 · T9, cierra H12).
 func CloneVars(in map[string]any) map[string]any {
-	panic(pendiente.Implementar("modules.CloneVars"))
+	out := make(map[string]any, len(in)+1)
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // GetInt lee un entero de Vars tolerando el tipo que deja un round-trip por JSON
 // (float64) además de int/int64. Valor ausente/de otro tipo → 0. Extraído de
 // menú/encuesta (Plan 027 · Ola 2 · T9, cierra H12).
 func GetInt(vars map[string]any, key string) int {
-	panic(pendiente.Implementar("modules.GetInt"))
+	switch v := vars[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
 }
 
 // ExitMenuVar es la clave de Conversation.Vars donde vive el TEXTO de la pantalla
@@ -81,9 +95,7 @@ const MaxReprompts = 3
 //
 // La clave del sello es adyacente a la del contador (no compartida) para que borrar un
 // contador borre su sello sin invalidar el de otro módulo que estuviera contando.
-func RepromptEventKey(repromptKey string) string {
-	panic(pendiente.Implementar("modules.RepromptEventKey"))
-}
+func RepromptEventKey(repromptKey string) string { return repromptKey + "_event_id" }
 
 // RepromptCount devuelve los intentos inválidos contados en vars PARA eventID. Si el
 // contador se cargó en otro evento vale 0: los intentos son del evento en que se
@@ -94,7 +106,15 @@ func RepromptEventKey(repromptKey string) string {
 // sello ilegible (que no es string) se lee como ausente: vale 0 dentro de cualquier
 // evento y solo cuenta fuera de todos.
 func RepromptCount(vars map[string]any, eventID, repromptKey string) int {
-	panic(pendiente.Implementar("modules.RepromptCount"))
+	// seal: `sello` en el viejo (E-11).
+	seal, ok := vars[RepromptEventKey(repromptKey)].(string)
+	if !ok {
+		seal = ""
+	}
+	if seal != eventID {
+		return 0
+	}
+	return GetInt(vars, repromptKey)
 }
 
 // SetRepromptCount escribe el contador SELLADO con el evento en que se está contando.
@@ -103,29 +123,36 @@ func RepromptCount(vars map[string]any, eventID, repromptKey string) int {
 // Con eventID "" el sello no se escribe (y se borra si lo hubiera): fuera de un evento
 // el JSONB de flow_state.vars queda byte a byte como antes de esta corrección.
 func SetRepromptCount(vars map[string]any, eventID, repromptKey string, n int) {
-	panic(pendiente.Implementar("modules.SetRepromptCount"))
+	vars[repromptKey] = n
+	if eventID == "" {
+		delete(vars, RepromptEventKey(repromptKey))
+		return
+	}
+	vars[RepromptEventKey(repromptKey)] = eventID
 }
 
 // ClearRepromptCount borra el contador y su sello (los dos, o el sello quedaría
 // huérfano en el JSONB). Muta vars; no toca ninguna otra clave.
 func ClearRepromptCount(vars map[string]any, repromptKey string) {
-	panic(pendiente.Implementar("modules.ClearRepromptCount"))
+	delete(vars, repromptKey)
+	delete(vars, RepromptEventKey(repromptKey))
 }
 
 // InEvent reporta si la conversación tiene un evento conversacional ACTIVO. Es lo
 // ÚNICO que un módulo necesita saber del plano de eventos y ya viaja en el estado
 // (model.Conversation.EventID, estampado por el runtime en T4.5.1): el paquete
 // modules NO importa el paquete de eventos ni recibe ningún callback.
-func InEvent(conv model.Conversation) bool {
-	panic(pendiente.Implementar("modules.InEvent"))
-}
+func InEvent(conv model.Conversation) bool { return conv.EventID != "" }
 
 // ExitMenuText compone el menú de salida sobre la pantalla que el módulo iba a
 // re-emitir: la pregunta, las tres opciones y, tras una línea en blanco, la pantalla.
 // El orden de las opciones lo fija D-043.10 y no es negociable: el «2» (dejarlo por
 // ahora) tiene que quedar entre las dos que NO abandonan.
 func ExitMenuText(screen string) string {
-	panic(pendiente.Implementar("modules.ExitMenuText"))
+	return "Parece que no nos estamos entendiendo. ¿Qué prefieres? Responde con el número:\n" +
+		"1) Seguir intentando\n" +
+		"2) Dejar esto por ahora\n" +
+		"3) Ver el menú\n\n" + screen
 }
 
 // ArmExitMenu deja el menú de salida ARMADO en vars —guardando `screen` en
@@ -143,7 +170,9 @@ func ExitMenuText(screen string) string {
 // está en la mano de los DOS llamantes (NumberedStep y cart.Module.Step lo reciben) y
 // ya se lee ahí mismo vía InEvent, así que el coste es cero y no entra ningún import.
 func ArmExitMenu(vars map[string]any, conv model.Conversation, screen string) Result {
-	panic(pendiente.Implementar("modules.ArmExitMenu"))
+	vars[ExitMenuVar] = screen
+	vars[ExitMenuEventVar] = conv.EventID
+	return Result{Vars: vars, Outputs: []string{ExitMenuText(screen)}}
 }
 
 // ExitMenuArmedOn devuelve el evento sobre el que se armó el menú de salida ("" si no
@@ -155,14 +184,29 @@ func ArmExitMenu(vars map[string]any, conv model.Conversation, screen string) Re
 // desarma y el texto sigue su camino. Degradar hacia «no es del menú de salida» es el
 // lado seguro — el otro sería secuestrar un turno ajeno.
 func ExitMenuArmedOn(vars map[string]any) string {
-	panic(pendiente.Implementar("modules.ExitMenuArmedOn"))
+	id, ok := vars[ExitMenuEventVar].(string)
+	if !ok {
+		return ""
+	}
+	return id
 }
 
 // DisarmExitMenu borra la marca (las DOS claves: pantalla y evento) y devuelve la
 // pantalla guardada ("" si no había menú armado o si no era un string). Lo llama el
 // RUNTIME; los módulos no lo necesitan. Muta vars; no toca ninguna otra clave.
 func DisarmExitMenu(vars map[string]any) string {
-	panic(pendiente.Implementar("modules.DisarmExitMenu"))
+	// La firma literal del contrato usa `screen, _ := vars[ExitMenuVar].(string)`;
+	// aquí se comprueba el `ok` porque este repo activa
+	// errcheck.check-type-assertions (.golangci.yml), que marca la aserción con
+	// blank como error no comprobado. Mismo comportamiento observable: "" si la
+	// clave falta o no es string.
+	screen, ok := vars[ExitMenuVar].(string)
+	if !ok {
+		screen = ""
+	}
+	delete(vars, ExitMenuVar)
+	delete(vars, ExitMenuEventVar)
+	return screen
 }
 
 // NumberedStep resuelve el patrón COMÚN de los nodos de opción numerada
@@ -199,5 +243,40 @@ func NumberedStep(
 	maxReprompts int,
 	onValid func(vars map[string]any, choice, target string) Result,
 ) Result {
-	panic(pendiente.Implementar("modules.NumberedStep"))
+	vars := CloneVars(conv.Vars)
+	trimmed := strings.TrimSpace(input)
+
+	if target, ok := node.Options[trimmed]; ok {
+		// Opción válida → el contador se reinicia al transicionar; onValid arma el Result.
+		ClearRepromptCount(vars, repromptKey)
+		return onValid(vars, trimmed, target)
+	}
+
+	// Opción inválida. El contador se lee SELLADO con el evento activo: uno cargado en
+	// otro evento vale 0 y esta entrada es el primer fallo de este (ver RepromptEventKey).
+	attempts := RepromptCount(vars, conv.EventID, repromptKey) + 1
+	if attempts >= maxReprompts {
+		// Último intento inválido: el contador se reinicia SIEMPRE (para no spamear) y
+		// se permanece en el nodo. Lo que se dice depende de si hay evento vivo:
+		//   - DENTRO de un evento (D-043.10): menú de salida numérico. Lo resuelve el
+		//     runtime en el turno siguiente (exitMenuChoice); el módulo solo lo arma.
+		//   - FUERA: el mensaje de ayuda de siempre, byte a byte (regresión cero).
+		ClearRepromptCount(vars, repromptKey)
+		if InEvent(conv) {
+			return ArmExitMenu(vars, conv, node.Prompt)
+		}
+		return Result{Vars: vars, Outputs: []string{numberedHelpText(node.Prompt)}}
+	}
+	SetRepromptCount(vars, conv.EventID, repromptKey, attempts)
+	return Result{Vars: vars, Outputs: []string{numberedInvalidText(node.Prompt)}}
+}
+
+// numberedInvalidText y numberedHelpText son los avisos del reprompt acotado,
+// idénticos byte-a-byte a los que menú/encuesta emitían por separado.
+func numberedInvalidText(prompt string) string {
+	return "Opción no válida. Responde con el número de una de las opciones.\n\n" + prompt
+}
+
+func numberedHelpText(prompt string) string {
+	return "No logré entender tu respuesta. Por favor elige una de las opciones escribiendo solo su número.\n\n" + prompt
 }
