@@ -1,6 +1,6 @@
 # F7 · `captacion` — la cola que convierte una conversación en borrador (P2→P4, match, draft)
 
-> **Estado: cerrada** el 2026-10-09 (sesión F7-05 💻, cierre local sobre `dev` @ `53e8f51`, PR #55–#58 integrados; siete commits de código, `30b0cf4`, `51d1bbb`, `fb33953`, `ca222ed`, `b0056a4`, `a1a19ed` y `3d5fa59` —los cuatro primeros, tests y, en `ca222ed`, el doble en memoria de `intake`; `ca222ed` y los tres últimos son de la ampliación pedida por Jhoan en el mismo PR, #59; `b0056a4` y `a1a19ed` son el rojo y el verde de D-F7-12 (hallazgo 61); `3d5fa59` arregla una carrera del arnés en el test de P8 (hallazgo 62)—; último commit de código de la fase `3d5fa59`, y de producción `a1a19ed`; `captacion` sigue fuera de `Conmutados` hasta F8; hallazgos 50–62 e informe de fase al final). Antes, en curso — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
+> **Estado: cerrada** el 2026-10-09 (sesión F7-05 💻, cierre local sobre `dev` @ `53e8f51`, PR #55–#58 integrados; siete commits de código, `30b0cf4`, `51d1bbb`, `fb33953`, `ca222ed`, `b0056a4`, `a1a19ed` y `3d5fa59` —los cuatro primeros, tests y, en `ca222ed`, el doble en memoria de `intake`; `ca222ed` y los tres últimos son de la ampliación pedida por Jhoan en el mismo PR, #59; `b0056a4` y `a1a19ed` son el rojo y el verde de D-F7-12 (hallazgo 61); `3d5fa59` arregla una carrera del arnés en el test de P8 (hallazgo 62)—; último commit de código de la fase `3d5fa59`, y de producción `a1a19ed`; `captacion` sigue fuera de `Conmutados` hasta F8; hallazgos 50–63 e informe de fase al final; del hallazgo 43 no queda nada abierto: D-F7-12 y D-F7-13, hallazgo 63). Antes, en curso — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
 > ese día ([`diseno.md`](diseno.md) §1.2). **F7-01 hecha** (bloque A): `evidence`, `anclaje`, `intake`, `intentcfg` y `casebank` en verde
 > (19 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). **F7-02 hecha** (bloque B): `stages` en verde (14 ficheros de producción, hallazgo 18) y el puente `captacion/stages → internal/flujos/store` declarado. **F7-03 hecha** (bloque C, 2026-10-09): `pipeline`, `intakeahead` y `reanalisis` en verde (14 ficheros de producción y un doble, hallazgo 27), el puente `captacion/reanalisis → internal/flujos/events` declarado y el de `flujos/runtime` evitado; **pendientes del módulo = 0**. **F7-04 hecha** (bloque D, 2026-10-09): H1, E1 y E2 por la cara nueva (`apipublica/reanalyze.go`, `apipublica/intents.go`; `FaseActual = 7`, 54 rutas), el arranque nuevo cablea `captacion` con `bridge_captacion.go` hacia el agregador y el compositor viejos, `llmConfigBridge` muere, el candado INV-1 mira la captación nueva y `catalogo` entra en `Conmutados` (hallazgos 39–49); huella igual. Falta el cierre contra Postgres y contra los dos binarios (F7-05): nada de F7-04 corrió contra una base ni contra un binario (hallazgo 49). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
@@ -450,7 +450,9 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     prosa, no `feature_not_enabled`, y deja auditoría `failure`. (f) Se guarda y se empuja el cuerpo byte a byte, y la
     versión sale del normalizado. (g) La rama 400 `el cuerpo debe ser JSON válido` es inalcanzable tras
     `ParseAndValidate`: portada como defensa, sin test. **No se portaron** las dos ramas 500 de dependencia nil: el
-    montaje las hace inalcanzables.
+    montaje las hace inalcanzables. ✅ **(a), (b), (d) y (e) decididos al cerrar F7-05** (D-F7-13, hallazgo 63): (e) y
+    (a) se difieren, juntos, a F10 o a DT-37, lo que llegue antes; (b) y (d) se quedan. (f) y (g) son descriptivos, sin
+    acción: del 43 no queda nada abierto.
 44. **H1: la cara no promete «todo 400 antes de todo 403»** (contra la letra de T7.21 y T-8 de FX). El servicio nuevo
     parte el 400 en dos —el `invalid_via` de coincidencia va **tras** el gate `llm_intake`—: un tenant sin `llm_intake`
     que mande `{"via":"api"}` recibe 403. T-8 se prueba desde la cara por estructura: `ReanalyzeDeps` tiene un solo
@@ -537,7 +539,7 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     `p9_diagnostico_config_push_test.go:179-208`) pasa contra los dos binarios dentro de `make test-procesos`. El GET **no**
     devuelve los bytes del PUT (Postgres canonicaliza, hallazgo 8) y nada depende de la identidad de bytes; el push **sí**
     lleva los bytes del PUT. El hallazgo 43 (conductas heredadas de E1–E2) queda sin tocar: pendiente de decisión de Jhoan,
-    no bloquea.
+    no bloquea. ✎ Decidido después, en la misma sesión: el (c), D-F7-12 (hallazgo 61); el resto, D-F7-13 (hallazgo 63).
 54. **Procesos de extremo a extremo e intermitencias** (F7-05). P4, P7 (con `index_cache`) y P8 contra `nuevo` ×3
     (`-count=3`): RC=0, 435 PASS, 0 SKIP; contra `viejo` ×1: RC=0, 145 PASS, 0 SKIP. Es la primera vez que el worker, el
     `Pool`, el índice de F5 y el re-análisis nuevos corren de extremo a extremo: **no se pudieron tumbar**.
@@ -566,7 +568,7 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     el arranque real de `cmd/server-modular` fuera del arnés y UAT (F10).
 58. **Para F8: lo que F7 deja heredado** (F7-05). (i) El mutante vivo y declarado de `intake` (hallazgo 52, e): el `<=`/`<`
     de `ClaimNext`, equivalente en la práctica (el del `ORDER BY` de `PutSourceText` lo mató `ca222ed`, hallazgo 59). (ii) La carrera `CloseWindow` → `PutSourceText` (D-F7-9, hallazgo 17): portada tal cual y vista una vez en F7-05, con su firma (hallazgo 62);
-    el arreglo es de F8. (iii) 🟡 El hallazgo 43, pendiente de decisión de Jhoan, sin bloquear (✎ su (c) ya está decidido y corregido: D-F7-12, hallazgo 61). (iv) `captacion` entra en
+    el arreglo es de F8. (iii) ✎ El hallazgo 43 ya **no** se hereda como pendiente: está decidido entero (su (c), corregido: D-F7-12, hallazgo 61; el resto, D-F7-13, hallazgo 63). Lo único que deja es una deuda con fecha, que no es de F8: E2 migra a `RequireFeature` en F10 o con DT-37. (iv) `captacion` entra en
     `Conmutados` en F8, cuando muera su adaptador `bridge_captacion.go` (hallazgo 41). (v) 🟡 Las marcas cruzadas de
     `PutSourceText`, alcanzables por `Release`/`Retry` (hallazgo 60).
 59. **Ampliación de F7-05, pedida por Jhoan en el mismo PR: el mutante del `ORDER BY` de `PutSourceText`, muerto**
@@ -611,7 +613,8 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     verde borró ese fichero y el test viejo. Mutantes sobre el verde, revertidos, los cuatro en rojo: volver a
     `r.Context()`; quitar el plazo (solo `WithoutCancel`); plazo de 30 s; `context.Background()` en vez de
     `WithoutCancel` (pierde la `Identity`). Ningún otro test, candado ni proceso afirmaba la conducta vieja; la huella
-    del arranque no cambia. Del hallazgo 43 siguen pendientes con Jhoan (a), (b), (d) y (e).
+    del arranque no cambia. Del hallazgo 43 siguen pendientes con Jhoan (a), (b), (d) y (e). ✎ Ya no: decididos al
+    cerrar la sesión, D-F7-13 (hallazgo 63).
 62. 🟡 **Intermitencias vistas al repetir los gates tras el 43 (c)** (F7-05, PR #59; rc leído del log). Los gates se
     repitieron sobre `a1a19ed` y salieron tres rojos, **ninguno del 43 (c)**:
     (a) **La carrera `CloseWindow` → `PutSourceText` (hallazgo 17, D-F7-9), por fin vista.** Primera pasada de
@@ -644,6 +647,32 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     la suite entera en paralelo —aislado ×5 es verde con los dos binarios—, así que un P8 aislado en verde no descarta
     ninguna de las dos carreras; y un gate rojo se lee antes de repetirlo: aquí eran tres causas distintas, no una.
 
+63. ✅ **El resto del hallazgo 43, analizado y decidido al cerrar** (F7-05; D-F7-13; investigación de solo lectura en todo
+    el ecosistema, 2026-10-09). **(e), los hechos.** El 403 de E2 sin `llm_intent` es
+    `{"error":"el plan del tenant no incluye la clasificación de intenciones"}` en las dos caras
+    (`internal/apipublica/intents.go:243-245`, `internal/publicapi/intents.go:122-130`). Es el **único** endpoint con
+    gate de plan que responde prosa: los demás devuelven `{"error":"feature_not_enabled","feature":"<clave>"}` —en la
+    cara vieja, contadas por ruta montada, 21 rutas con `RequireFeature` (incluidas las dos de `RequireAnyFeature`) más
+    reanalyze, que lo escribe a mano—. Incumple la norma escrita en la documentación funcional de la raíz
+    (`documentations/funcionalidades/05-administracion/04-identidad-permisos-y-roles.md:118-120`: un 403 con
+    `feature_not_enabled` es plan; cualquier otro es permiso). **No fue descuido**: el plan 040 dejó E2 sin migrar a
+    propósito, porque no era mecánico. La auditoría `failure` del 403 **no** es rareza de E2: la dejan todas las
+    escrituras con gate (`internal/apipublica/integrations_test.go:245-246`). **Nadie lo llama**: ningún cliente del
+    ecosistema usa `PUT /api/v1/intents` (ni `wapp-client-console`, ni `wapp-guardian-bff`, ni
+    `wapp-platform-console`, ni el Edge); el editor de intents en consola nunca se construyó (DT-37 de la deuda raíz) y
+    la config se publica por curl. `wapp-client-console` ya sabe leer `feature_not_enabled` y hacer *upsell*; con la
+    prosa de hoy mostraría «sin permiso». **Por qué no ahora**: P9
+    (`test/procesos/p9_diagnostico_config_push_test.go:245`) comprueba la prosa contra los **dos** binarios y los
+    procesos no ramifican por binario (R9.8.b), así que cambiar solo la cara nueva lo rompe contra el viejo; y migrar a
+    `RequireFeature` arrastra el (a), porque el helper es *fail-closed* (resolver caído → 403, hoy 500). **Decisión**
+    (Jhoan, «procede», se aplica la recomendación): **(e) y (a) se difieren, juntos** —E2 migra a `RequireFeature`
+    (cuerpo `feature_not_enabled` y *fail-closed*) cuando muera el binario viejo (F10) o cuando se construya el editor
+    de intents en consola (DT-37), lo que llegue antes—; **(b)** el gate antes de leer el cuerpo **se queda** (es lo que
+    hace también `RequireFeature`); **(d)** E1 sin gate de feature **se queda** (leer la config sin la feature es
+    inocuo). (c) ya estaba en D-F7-12; (f) y (g) son descriptivos, sin acción. Sin código: queda como deuda D-30 de
+    `documentations/deuda.md` y como nota en la fila de `/api/v1/intents` de `documentations/contratos.md`. **Del
+    hallazgo 43 ya no queda nada abierto.**
+
 ### Informe de fase (al cerrar F7)
 
 - **Sesiones**: F7-01 y F7-02 (2026-10-08) · F7-03 (2026-10-08/09) · F7-04 y F7-05 (2026-10-09). Minutos de pared (D-R-6):
@@ -657,8 +686,11 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
   (41); «lo verá P4» era falso (42 → 51).
 - **Mutantes**: los de cada sesión, en sus hallazgos (11 y 36); contra Postgres, hallazgos 52 y 59 (78 sembrados, 1 vivo
   declarado y equivalente en la práctica); los cuatro del push de E2, en el hallazgo 61.
-- **Lo que queda abierto de F7**: las 🟡 de los hallazgos 15, 22 y 43 (del 43, (a), (b), (d) y (e): el (c) se decidió y
-  se corrigió, D-F7-12, hallazgo 61); lo heredado por F8 (hallazgos 58 y 60, y la carrera de D-F7-9, vista una vez:
+- **Lo que queda abierto de F7**: las 🟡 de los hallazgos 15 (el anonimizador de `casebank`: excepción viva al
+  invariante, fuga de JID) y 22 (conductas raras del viejo en match, fechas y draft), **sin analizar todavía con Jhoan**:
+  no bloquean y se retoman cuando Jhoan quiera. Del 43 **ya no queda nada abierto** (el (c), decidido y corregido:
+  D-F7-12, hallazgo 61; (a), (b), (d) y (e), decididos al cerrar: D-F7-13, hallazgo 63; queda su deuda con fecha, D-30
+  de `documentations/deuda.md`, para F10 o DT-37); lo heredado por F8 (hallazgos 58 y 60, y la carrera de D-F7-9, vista una vez:
   hallazgo 62); el test de rendimiento viejo de `ci-docker`, sensible a la carga (62, c); y `casebank`
   sin efecto en UAT hasta F10 (D-F7-2, hallazgo 1).
 
