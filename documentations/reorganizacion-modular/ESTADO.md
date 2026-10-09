@@ -388,7 +388,7 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
   `trigger/store_memory.go` y `store/store.go` a medio; `cart/projection.go` sube a complejo; `runtime` deja de ser complejo en
   bloque (12 · 6 · 5). Adaptadores que F8 retira (crea 0): `bridge_contact`, `bridge_inferencia`, `bridge_captacion` y la 2.ª
   instancia vieja de `intakes.Postgres`; puentes de import: 3. Todo en el [README de F8](plan/F8-conversacion/README.md).
-- **Código** (14 commits, por tres sub-agentes en *worktrees* e integrados por `cherry-pick` en la rama):
+- **Código** (13 commits, por tres sub-agentes en *worktrees* e integrados por `cherry-pick` en la rama):
   `content` `15524e1` (simple, una pasada; 4 ficheros, 11 exportados) · `modules` `ed3b867` → `e104f19` (5 ficheros, 59) ·
   `trigger` `907839a` → `08c3aff` (5 ficheros, 54; `triggerhelpertest.Contrato`, 18 casos) · `store` `b579591` → `24524de`,
   `a8450e2`, `f8d0294`, `9a3f7b3`, `3b1d3f9`, `96865ce`, `3a408dc` (los 3 ficheros viejos nacen partidos en **12** por E-13, 107
@@ -1384,7 +1384,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
-- **F8-01 (inventario y hojas de F8)**: rama `reorg/f8-01-inventario-y-hojas`, partida de `origin/dev` @ `c0c0c03`; 2 commits de documentación (`7e24504`, `98a6214`), 14 de código (`15524e1` … `3a408dc`) y el de cierre; PR a `dev`, sin squash, pendiente de que Jhoan lo integre.
+- **F8-01 (inventario y hojas de F8)**: rama `reorg/f8-01-inventario-y-hojas`, partida de `origin/dev` @ `c0c0c03`; 2 commits de documentación (`7e24504`, `98a6214`), 13 de código (`15524e1` … `3a408dc`) y el de cierre; PR a `dev`, sin squash, pendiente de que Jhoan lo integre.
 - **F7-05 (cierre local de F7)**: rama `reorg/f7-05-cierre`, partida de `origin/dev` @ `53e8f51` (PR #58 dentro); `30b0cf4`, `51d1bbb`, `fb33953`, `ca222ed`, `b0056a4`, `a1a19ed` y `3d5fa59` (7 commits de código: tests y, en `ca222ed`, también el doble en memoria de `intake`; `b0056a4` y `a1a19ed`, rojo y verde de D-F7-12, con el único cambio de producción, `apipublica/intents.go`; `3d5fa59`, el arreglo del test de P8), 3 de documentación (`333f414`, `docs(reorganizacion-modular): F7 cerrada`; `13d2e59`, el resumen del plan al día; y `db7fbab`, la ampliación en el mismo PR) más el de esta puesta al día del cierre; el resto del hallazgo 43 se decidió al cerrar, sin código (D-F7-13, hallazgo 63 de F7); el PR #59, **integrado** en `dev` por orden expresa de Jhoan en la conversación («mergear»), merge `c0c0c03`, sin squash (✎ F8-01: aquí decía «se integra»). Los tres *worktrees* de los sub-agentes, borrados. `dev` y `origin/main` sin tocar.
 - **F7-04 (cara HTTP y conmutar)** (✎ F7-05: **integrada** en `dev` @ `53e8f51`, PR #58, sin squash): rama `reorg/f7-04-cara-http-y-conmutar`, partida de `origin/dev` @ `4f79bbf` (PR #57 dentro); `a688ca4` … `94f0648` (5 commits: 1 de rojo, 2 de verde, 1 de conmutar y 1 de refactor) más el cierre documental; PR de la rama hacia `dev`, abierto al cierre, **integrar sin squash**. Sin *worktrees*. `dev` y `origin/main` sin tocar.
 - **F7-03 (`pipeline`, `intakeahead`, `reanalisis`)**: rama `reorg/f7-03-pipeline-reanalisis`, partida de `origin/dev` @ `56097aa` (PR #56 dentro); `7cb66e2` … `69d142e` (4 de rojo y doble, 6 de verde, 3 de test) más el cierre documental y D-F7-10 y D-F7-11; PR **#57**, sin squash. Sin *worktrees*. `origin/main` sin tocar.
