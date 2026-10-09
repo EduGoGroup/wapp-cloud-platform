@@ -322,6 +322,29 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 - **Consecuencia**: teórica: no debería existir un tenant con id vacío.
 - **Veredicto**: **se deja**; como mucho, rechazar el id vacío en `Obtener` tras F10.
 
+### D-30 · 🟡 `PUT /api/v1/intents` responde prosa en vez de `feature_not_enabled`, y 500 en vez de *fail-closed*
+
+> No es de los seis de F45-02: lo destapó F7-04 al portar E1–E2 y se decidió el 2026-10-09 (D-F7-13 de
+> `reorganizacion-modular/plan/DECISIONES.md`; análisis en el hallazgo 63 de `…/plan/F7-captacion/README.md`). Misma
+> familia: portado tal cual y fijado por test.
+
+- **Dónde**: `internal/publicapi/intents.go:122-130` (el gate `llm_intent` está escrito a mano, no con
+  `entitlements.RequireFeature`); portado a `internal/apipublica/intents.go:243-245`. Lo fija P9 contra los dos
+  binarios (`test/procesos/p9_diagnostico_config_push_test.go:245`).
+- **Consecuencia**: sin la feature, el 403 es `{"error":"el plan del tenant no incluye la clasificación de
+  intenciones"}`: es el **único** endpoint con gate de plan que no responde
+  `{"error":"feature_not_enabled","feature":"<clave>"}`, e incumple la norma de la documentación funcional de la raíz
+  (un 403 con `feature_not_enabled` es plan; cualquier otro es permiso). Un cliente que hiciera *upsell* leyendo ese
+  cuerpo —`wapp-client-console` ya lo hace con las demás rutas— mostraría «sin permiso». Y si el resolver de derechos
+  falla, responde **500** donde el resto de gates cierra con 403. **Hoy no duele a nadie**: ningún cliente del
+  ecosistema llama a esta ruta (el editor de intents en consola no existe, DT-37 de la deuda de la raíz); se usa por
+  curl.
+- **Veredicto**: defecto. **Se paga en F10** (muerte del binario viejo) **o al construir el editor de intents (DT-37), lo
+  que llegue antes**: E2 migra a `RequireFeature`, que trae juntos el cuerpo canónico y el *fail-closed*. **No antes**,
+  porque P9 comprueba la prosa contra los dos binarios y los procesos no ramifican por binario (R9.8.b): cambiar solo
+  la cara nueva lo rompe contra el viejo. Al corregirlo, cambian con él el aserto de P9 y los tests de
+  `internal/apipublica` que fijan la prosa y el 500.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes

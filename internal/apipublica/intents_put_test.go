@@ -324,22 +324,40 @@ func TestMountIntents_PutPusherErrorIsStill200(t *testing.T) {
 	})
 }
 
-// TestMountIntents_PutPushUsesTheRequestContext: conducta heredada. El push va con el contexto
-// de la PETICIÓN, no con uno desligado: cancelada la petición, el contexto del push muere.
-func TestMountIntents_PutPushUsesTheRequestContext(t *testing.T) {
+// TestMountIntents_PutPushSurvivesTheRequestCancellation: ✎ divergencia con la cara vieja, a
+// propósito (D-F7-12). El cliente cuelga con la config YA persistida y el push por hacer —el
+// caso límite—: el push se hace igual, con un contexto que NO hereda esa cancelación, que
+// conserva los valores de la petición (la Identity) y que lleva un plazo propio de 5 s. El
+// Upsert sigue yendo con el contexto de la petición, sin plazo.
+func TestMountIntents_PutPushSurvivesTheRequestCancellation(t *testing.T) {
 	rig := newIntentsRig(t, nil)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rig.store.afterUpsert = cancel // el cliente se fue: persistido, y el push aún por hacer
 	req := httptest.NewRequest(http.MethodPut, intentsTarget, strings.NewReader(intentsValidBody)).WithContext(ctx)
 	req.Header.Set("Authorization", "Bearer "+rig.h.With(tenantA, intentsWritePerm))
 	rec := httptest.NewRecorder()
 	rig.cara.ServeHTTP(rec, req)
-	wantCode(t, "E2", rec, http.StatusOK)
-	if rig.pusher.ctx == nil || rig.pusher.ctx.Err() != nil {
-		t.Fatalf("el push no recibió un contexto vivo durante la petición: %v", rig.pusher.ctx)
+
+	wantCode(t, "E2 con el cliente ido", rec, http.StatusOK)
+	if ctx.Err() == nil {
+		t.Fatal("la petición no llegó a cancelarse: el test no ejerce el caso que dice")
 	}
-	cancel()
-	if rig.pusher.ctx.Err() == nil {
-		t.Error("cancelada la petición, el contexto del push sigue vivo: el push no va con el contexto de la petición")
+	if rig.store.upserts != 1 || rig.store.upsertRemaining != -1 {
+		t.Errorf("Upsert: %d llamadas, plazo restante %v; quiero 1 y sin plazo (va con el contexto de la petición)",
+			rig.store.upserts, rig.store.upsertRemaining)
+	}
+	if rig.pusher.calls != 1 {
+		t.Fatalf("PushConfig se llamó %d veces, quiero 1: que el cliente cuelgue no puede perder el push", rig.pusher.calls)
+	}
+	if rig.pusher.ctxErr != nil {
+		t.Errorf("el push recibió un contexto MUERTO (%v): falta soltar la cancelación de la petición", rig.pusher.ctxErr)
+	}
+	if rig.pusher.remaining > 5*time.Second || rig.pusher.remaining < 4*time.Second {
+		t.Errorf("al push le quedaba un plazo de %v (-1 = sin plazo); quiero uno propio de ~5 s", rig.pusher.remaining)
+	}
+	if rig.pusher.tenantInCtx != tenantA {
+		t.Errorf("el contexto del push perdió los valores de la petición (tenant %q, quiero %q)", rig.pusher.tenantInCtx, tenantA)
 	}
 }
 

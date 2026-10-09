@@ -162,7 +162,7 @@ porque **espera al modelo dentro de la petición**: 24,8–35,5 s medidos en UAT
 | **`POST /api/v1/integrations/callback`** | 🔴 **SIN JWT** | `:1055` |
 | `GET` · `PUT` · `DELETE /api/v1/tenant-llm` | `llm.read` / `llm.write` + `api_llm` | `:986` `:988` `:990` |
 | `GET /api/v1/degradation-notices` | `llm.read` + `llm_intake` | `:1030` |
-| `GET` · `PUT /api/v1/intents` | `intents.read` / `intents.write` | `:571` `:573` |
+| `GET` · `PUT /api/v1/intents` | `intents.read` / `intents.write` + `llm_intent` (solo el `PUT`; el `GET` no lleva gate). ⚠️ Su 403 es prosa, no `feature_not_enabled` (D-F7-13, [D-30](deuda.md)) | `:571` `:573` |
 | `GET /api/v1/entitlements` | `entitlements.read` | `:559` |
 | `GET /api/v1/audit` | `audit.read` | `:604` |
 

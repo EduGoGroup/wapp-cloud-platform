@@ -87,7 +87,8 @@ type Row struct {
 // QueueMontaje es lo que una implementación de intake.JobStore entrega a ContratoQueue para UN
 // caso: ContratoQueue llama a nuevo una vez por caso. Todos los campos son obligatorios.
 //
-// No trae siembra: todo estado que la cola puede producir se alcanza por el propio puerto.
+// Casi todo estado que la cola puede producir se alcanza por el propio puerto; Seed está para
+// el que no (queue_put_contrato.go: las marcas cruzadas de dos ventanas cerradas).
 type QueueMontaje struct {
 	// Store es la implementación bajo prueba. Llega con la tabla VACÍA: ListAggregating no
 	// filtra por tenant, y una ventana viva de otro caso saldría en su lista.
@@ -98,6 +99,9 @@ type QueueMontaje struct {
 	// Rows devuelve TODAS las filas del tenant, enteras, en cualquier orden. Las columnas que
 	// la implementación no guarda (las de la máquina, en el gemelo de la cola) salen a cero.
 	Rows func(t *testing.T, tenantID string) []Row
+	// Seed inserta la fila TAL CUAL y devuelve su id: es el Table.Seed de las otras dos suites,
+	// con su misma semántica. La suite siembra siempre con Key, Status, CreatedAt y UpdatedAt.
+	Seed func(t *testing.T, r Row) (id string)
 	// Advance deja pasar el reloj con el que la implementación fecha lo que escribe: promete
 	// que lo escrito después de la llamada lleva un instante ESTRICTAMENTE posterior a lo
 	// escrito antes. En memoria adelanta el reloj inyectado; contra Postgres espera,
@@ -276,6 +280,7 @@ func queueCases() []contractCase[QueueMontaje] {
 		// PutSourceText (queue_put_contrato.go).
 		{"PutSourceText_ClosedWindow_WritesTheThreeOnce", casePutOnce},
 		{"PutSourceText_SeveralClosedWindows_OnlyTheMostRecentOne", casePutPicksTheLatestPending},
+		{"PutSourceText_CrossedMarks_LatestUpdateWins_CreationBreaksTies", casePutCrossedMarks},
 		{"PutSourceText_NoClosedWindow_FalseAndNothingTouched", casePutWithoutPending},
 		{"PutSourceText_IncompleteEnvelope_ErrorAndNothingWritten", casePutIncompleteEnvelope},
 		// La clave de ventana incompleta (queue_key_contrato.go).
@@ -307,6 +312,7 @@ func machineCases() []contractCase[MachineMontaje] {
 		{"Release_Processing_BackToPendingWithNothingElseTouched", caseRelease},
 		{"Release_NotProcessing_FalseAndUntouched", caseReleaseNotProcessing},
 		{"Retry_Processing_PendingWithOneMoreAttemptAndTheMarkPushed", caseRetry},
+		{"Retry_PastMark_IsWrittenAsGivenAndClaimableAtOnce", caseRetryPastMark},
 		{"Retry_ZeroInstant_ErrorAndNothingWritten", caseRetryZeroInstant},
 		{"Retry_NotProcessing_FalseAndUntouched", caseRetryNotProcessing},
 		{"Finish_Processing_DoneEmptiesTheEnvelopeAndWritesTheIntake", caseFinish},
@@ -342,8 +348,8 @@ func validateQueueMontaje(t *testing.T, m QueueMontaje) {
 	switch {
 	case m.Store == nil:
 		t.Fatal("QueueMontaje.Store es nil")
-	case m.Rows == nil || m.Advance == nil:
-		t.Fatal("QueueMontaje: Rows y Advance son obligatorios")
+	case m.Rows == nil || m.Seed == nil || m.Advance == nil:
+		t.Fatal("QueueMontaje: Rows, Seed y Advance son obligatorios")
 	}
 	validateTenants(t, m.TenantA, m.TenantB)
 	for _, tenant := range []string{m.TenantA, m.TenantB} {

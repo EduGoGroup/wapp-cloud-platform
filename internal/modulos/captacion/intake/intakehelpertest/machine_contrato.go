@@ -103,10 +103,12 @@ func caseClaimRespectsTheMark(t *testing.T, m MachineMontaje) {
 // CRUZADAS a propósito: si coincidieran, un orden por creación pasaría el caso sin serlo.
 func caseClaimOrder(t *testing.T, m MachineMontaje) {
 	now := base(t, m.Table)
+	// Misma marca que waitedLongest, creado después: pierde el desempate. Se siembra ANTES que
+	// el ganador a propósito: un reclamo que no desempatara por creación devolvería los dos en
+	// el orden en que se escribieron, y con el perdedor sembrado después pasaría el caso.
+	tieLoser := seedJob(t, m.Table, m.TenantA, intake.StatusPending, at(now.Add(-time.Minute), now.Add(-5*time.Minute)))
 	waitedLongest := seedJob(t, m.Table, m.TenantA, intake.StatusPending, at(now.Add(-time.Minute), now.Add(-10*time.Minute)))
 	oldestMark := seedJob(t, m.Table, m.TenantB, intake.StatusPending, at(now.Add(-10*time.Minute), now.Add(-time.Minute)))
-	// Misma marca que waitedLongest, creado después: pierde el desempate.
-	tieLoser := seedJob(t, m.Table, m.TenantA, intake.StatusPending, at(now.Add(-time.Minute), now.Add(-5*time.Minute)))
 
 	for i, want := range []string{oldestMark, waitedLongest, tieLoser} {
 		job, ok, err := m.Store.ClaimNext(context.Background())
@@ -173,9 +175,10 @@ func caseWakeOnlyPendingInOrder(t *testing.T, m MachineMontaje) {
 	for _, status := range statuses {
 		others = append(others, m.Row(t, seedJob(t, m.Table, m.TenantA, status, loaded, at(now.Add(-24*time.Hour), now.Add(-24*time.Hour)))))
 	}
+	// El perdedor del desempate se siembra ANTES que el ganador (ver caseClaimOrder).
+	tieLoser := seedJob(t, m.Table, m.TenantA, intake.StatusPending, at(now.Add(2*time.Hour), now.Add(-5*time.Minute)))
 	createdFirst := seedJob(t, m.Table, m.TenantA, intake.StatusPending, at(now.Add(2*time.Hour), now.Add(-10*time.Minute)))
 	earliestMark := seedJob(t, m.Table, m.TenantA, intake.StatusPending, at(now.Add(time.Hour), now.Add(-time.Minute)))
-	tieLoser := seedJob(t, m.Table, m.TenantA, intake.StatusPending, at(now.Add(2*time.Hour), now.Add(-5*time.Minute)))
 
 	for i, want := range []string{earliestMark, createdFirst, tieLoser} {
 		job, ok, err := m.Store.ClaimNextIgnoringBackoff(context.Background(), m.TenantA)

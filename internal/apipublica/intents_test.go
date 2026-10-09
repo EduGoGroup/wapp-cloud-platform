@@ -19,6 +19,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements/entitlementshelpertest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intentcfg"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 const (
@@ -67,6 +68,10 @@ type intentsStoreSpy struct {
 	tenant          string
 	getRemaining    time.Duration
 	upsertRemaining time.Duration
+
+	// afterUpsert, si no es nil, corre justo DESPUÉS de persistir con éxito: es donde un test
+	// hace que el cliente cuelgue «con la config ya guardada y el push por hacer».
+	afterUpsert func()
 }
 
 var _ apipublica.IntentConfigStore = (*intentsStoreSpy)(nil)
@@ -94,22 +99,35 @@ func (s *intentsStoreSpy) Upsert(ctx context.Context, tenantID, version string, 
 	if s.upsertErr != nil {
 		return s.upsertErr
 	}
-	return s.MemoryStore.Upsert(ctx, tenantID, version, blob)
+	if err := s.MemoryStore.Upsert(ctx, tenantID, version, blob); err != nil {
+		return err
+	}
+	if s.afterUpsert != nil {
+		s.afterUpsert()
+	}
+	return nil
 }
 
-// intentsPusherSpy es ConfigPusher: apunta la llamada (y su contexto) y falla si se le pide.
+// intentsPusherSpy es ConfigPusher: apunta la llamada y falla si se le pide. Del contexto apunta
+// lo que vio MIENTRAS duraba el push (si venía muerto, cuánto plazo le quedaba —-1 = sin plazo—
+// y si conserva la Identity de la petición): al volver el handler su contexto ya no dice nada.
 type intentsPusherSpy struct {
 	err error
 
 	calls                 int
 	tenant, kind, version string
 	payload               []byte
-	ctx                   context.Context //nolint:containedctx // el test mira el contexto que recibió el push
+	ctxErr                error
+	remaining             time.Duration
+	tenantInCtx           string
 }
 
 func (p *intentsPusherSpy) PushConfig(ctx context.Context, tenantID, kind, version string, payload []byte) error {
 	p.calls++
-	p.ctx = ctx
+	p.ctxErr, p.remaining = ctx.Err(), tenantVarRemaining(ctx)
+	if id, ok := httpapi.IdentityFromContext(ctx); ok {
+		p.tenantInCtx = id.TenantID
+	}
 	p.tenant, p.kind, p.version = tenantID, kind, version
 	p.payload = append([]byte(nil), payload...)
 	return p.err

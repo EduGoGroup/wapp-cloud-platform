@@ -166,6 +166,37 @@ func (m *MemoryStore) Jobs() []Job {
 	return out
 }
 
+// Seed mete una fila TAL CUAL y devuelve su id. Es el gancho de siembra del Montaje de
+// intakehelpertest.ContratoQueue: deja montar el estado que la cola no produce por su
+// puerto (dos `pending` de la misma tupla con las marcas cruzadas). Lo que venga a
+// cero se rellena como lo haría la tabla: ID con el siguiente de la secuencia, Status
+// con `pending`, CreatedAt con el reloj y UpdatedAt con CreatedAt. La fila se copia.
+//
+// 🔴 No pasa por ninguna guarda: quien siembre dos ventanas `aggregating` de la misma
+// tupla fabrica un estado que el índice único parcial de la 0072 rechazaría.
+func (m *MemoryStore) Seed(j Job) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.seq++
+	if j.ID == "" {
+		j.ID = formatSeq(m.seq)
+	}
+	if j.Status == "" {
+		j.Status = StatusPending
+	}
+	if j.CreatedAt.IsZero() {
+		j.CreatedAt = m.now()
+	}
+	if j.UpdatedAt.IsZero() {
+		j.UpdatedAt = j.CreatedAt
+	}
+	j.SourceRefs = append([]string(nil), j.SourceRefs...)
+	j.SourceText.Enc = append([]byte(nil), j.SourceText.Enc...)
+	j.SourceText.DEK = append([]byte(nil), j.SourceText.DEK...)
+	m.jobs = append(m.jobs, &j)
+	return j.ID
+}
+
 // liveLocked devuelve la ventana VIVA de la tupla, o nil. Es el equivalente en
 // memoria del índice único parcial.
 func (m *MemoryStore) liveLocked(k WindowKey) *Job {
@@ -237,17 +268,25 @@ func (m *MemoryStore) CloseWindow(_ context.Context, k WindowKey) (bool, error) 
 }
 
 // lastPendingLocked devuelve la ÚLTIMA ventana cerrada de la tupla: la de
-// `UpdatedAt` más reciente entre las `pending`. Es el equivalente en memoria de la
-// subconsulta de putSourceTextSQL, y replicarla importa — con varias ventanas
-// cerradas de la misma tupla, un doble que eligiera la primera probaría lo
-// contrario de lo que hace Postgres.
+// `UpdatedAt` más reciente entre las `pending` y, a igualdad, la de `CreatedAt` más
+// reciente. Es el equivalente en memoria de la subconsulta de putSourceTextSQL
+// (`ORDER BY updated_at DESC, created_at DESC LIMIT 1`), y replicarla importa — con
+// varias ventanas cerradas de la misma tupla, un doble que eligiera la primera
+// probaría lo contrario de lo que hace Postgres.
+//
+// ✎ DIVERGENCIA CON EL VIEJO, a propósito: el gemelo viejo solo miraba `UpdatedAt`,
+// y con dos `pending` de la misma marca se quedaba con la creada ANTES, al revés que
+// la segunda clave del SQL. Lo fija el caso
+// PutSourceText_CrossedMarks_LatestUpdateWins_CreationBreaksTies de
+// intakehelpertest.ContratoQueue.
 func (m *MemoryStore) lastPendingLocked(k WindowKey) *Job {
 	var out *Job
 	for _, j := range m.jobs {
 		if j.Key != k || j.Status != StatusPending {
 			continue
 		}
-		if out == nil || j.UpdatedAt.After(out.UpdatedAt) {
+		if out == nil || j.UpdatedAt.After(out.UpdatedAt) ||
+			(j.UpdatedAt.Equal(out.UpdatedAt) && j.CreatedAt.After(out.CreatedAt)) {
 			out = j
 		}
 	}

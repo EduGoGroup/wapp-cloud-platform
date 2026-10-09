@@ -178,6 +178,30 @@ func caseRetry(t *testing.T, m MachineMontaje) {
 	w.requireUntouched(t, m.Table)
 }
 
+// caseRetryPastMark: la marca se escribe TAL CUAL, también si ya pasó. Una marca pasada (y no
+// cero) no se sube al reloj de la implementación: queda exacta en la fila y, como ya venció, el
+// reclamo normal se lleva el job en el acto. Quien decide cuánto se espera es el llamante.
+func caseRetryPastMark(t *testing.T, m MachineMontaje) {
+	w := seedWitnesses(t, m.Table)
+	id, before := processingJob(t, m)
+	next := base(t, m.Table).Add(-time.Hour)
+	ok, err := m.Store.Retry(context.Background(), id, next)
+	requireApplied(t, "Retry con la marca en el pasado", ok, err)
+
+	want := before
+	want.Status = intake.StatusPending
+	want.Attempts = before.Attempts + 1
+	want.NextAttemptAt = next
+	retried := m.Row(t, id)
+	requireWrittenRow(t, "el job reencolado con la marca en el pasado", retried, want)
+	if !retried.NextAttemptAt.Equal(next) {
+		t.Errorf("NextAttemptAt = %v, quería la marca dada sin tocar (%v)", retried.NextAttemptAt, next)
+	}
+
+	requireClaimMatchesRow(t, claimOf(t, m, id), retried)
+	w.requireUntouched(t, m.Table)
+}
+
 // caseRetryZeroInstant: una marca cero es el año 1 —el pasado— y el backoff sería un no-op
 // silencioso. Se rechaza con error y el job sigue tomado, intacto.
 func caseRetryZeroInstant(t *testing.T, m MachineMontaje) {
