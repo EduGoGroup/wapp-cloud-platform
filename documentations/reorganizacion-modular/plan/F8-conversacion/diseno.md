@@ -64,6 +64,9 @@ error de definición la envuelve con `%w` (`:304-336`: JSON mal formado, `flow_i
 
 ### 1.2 · `C/trigger` ← `internal/flujos/trigger`
 
+> ✎ **F8-01 (hallazgo 10)**: la normalización del texto **no** es NFC ni está en `trigger.go`: es `ToLower` → NFD → descarte de
+> marcas `Mn` → `strings.Fields`, en `config_resolver.go:355-375`. Y `ConfigResolver` exporta `Resolve`, **`ResolveLive`** e `IsEscape`.
+
 | Fichero | Líneas | Exp. | Qué promete |
 |---|---:|---:|---|
 | `trigger.go` | 257 | 33 | Tipos de regla (`keyword`, `fallback`, `event_start`, `event_stop`, `escape`, `llm`), `Signal`, `Resolver` (`:211`), normalización del texto (NFC, `golang.org/x/text/unicode/norm`) |

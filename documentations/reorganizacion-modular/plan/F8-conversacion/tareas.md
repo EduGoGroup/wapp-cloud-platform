@@ -28,49 +28,67 @@
 ## Bloque 1 · inventario E-12 y hojas · 💻 · sesión F8-01 · T8.1–T8.8, T8.22
 Para cuando: el inventario E-12 está **aprobado por Jhoan** (antes no se escribe código); `model`, `trigger`, `content`, `store`, `modules` verdes; `storehelpertest` y `triggerhelpertest` exportan `Contrato` y corren en memoria y en Postgres; `G` y `V` rc=0. (~18 ficheros de producción + 2 suites.)
 
-- [ ] **T8.1 · Verdad de campo** · 💻 · dep. F7 cerrado · cumple R8.1.a
+- [x] **T8.1 · Verdad de campo** · 💻 · dep. F7 cerrado · cumple R8.1.a — `7e24504` (el `G` de esta tarea se corrió al cierre, sobre `3a408dc`, no al arrancar: T8.8)
   - **Ficheros**: `plan/F8-conversacion/README.md` (estado «en curso», SHA)
   - **Hecho cuando**: las 5 entradas del README comprobadas con su comando; `go list ./internal/modulos/...` lista `acceso`, `edge`, `inferencia`, `catalogo`, `solicitudes`, `captacion`; `pendiente` = 0 fuera de F8.
   - **Gate**: `G`
   - **Commit**: `docs(reorganizacion-modular): F8 arranca — entradas verificadas`
-- [ ] **T8.2 · Inventario E-12** · 💻 · dep. T8.1 · cumple R8.1.a–d
+- [x] **T8.2 · Inventario E-12** · 💻 · dep. T8.1 · cumple R8.1.a–d — `98a6214` (aprobado por Jhoan el 2026-10-09; inventario en el README de la fase)
   - **Ficheros**: `README.md` (tabla de tamaño y tabla de niveles), `arquitectura.md` §1 y §5 (si difieren), `diseno.md` §0.1
   - **Produce**: (1) la tabla `archivo · estado en memoria · concurrencia · BD/transacciones · nº de consumidores · nivel (simple/medio/complejo)` de los 74–75 ficheros, re-contados (ficheros/líneas/exportados/tests de los 14 paquetes, comandos de `diseno.md` §0); (2) la **lista de adaptadores `bridge_<x>.go`**: F8 **crea 0** y **retira** todos los vivos — `ls internal/arranque/bridge_*.go` y las segundas instancias viejas, volcados en `arquitectura.md` §5.2 con «retira: T8.32» y el módulo que entra en `Conmutados`; (3) los puentes (import): `grep -n 'flujos\|turnoacotado\|gateway/session' internal/modulos/fronteras_test.go` en §5.1 con «retira: T8.31»; (4) decidido si `send_budget_cableado_test.go` es de F3 o F8; si `C/model` ya existe (F5), T8.3 se tacha.
   - **Hecho cuando**: **Jhoan aprueba la tabla. Antes de eso no se escribe código.** Si un archivo sale peor de lo previsto, sube de nivel.
   - **Gate**: `G`
   - **Commit**: `docs(reorganizacion-modular): F8 — inventario E-12 y adaptadores verificados`
-- [ ] **T8.3 · rojo(conversacion): `model/model.go`** · 💻 · dep. T8.2 · cumple R8.2.a–c — *solo si D-F8-1 = no*
+- [x] ~~**T8.3 · rojo(conversacion): `model/model.go`**~~ — **tachada**: D-F8-1 = D-F5-1, `C/model` lo reconstruyó F5 y está verde (441 l, 24 exportados)
   - **Ficheros**: `C/model/model.go`, `…/model_test.go`
   - **Hecho cuando**: 24 exportados con promesa; `ErrInvalidFlow` y sus textos de `diseno.md` §1.1 escritos en el comentario; test rojo por `-run`.
   - **Gate**: `V` · test suelto rc≠0
   - **Commit**: `rojo(conversacion): contrato de model`
-- [ ] **T8.4 · rojo(conversacion): `trigger` (5) y `triggerhelpertest.Contrato`** · 💻 · dep. T8.3 · cumple R8.2.a–e
+- [x] **T8.4 · rojo(conversacion): `trigger` (5) y `triggerhelpertest.Contrato`** · 💻 · dep. T8.3 · cumple R8.2.a–e — `907839a` (`trigger.go` y `store.go`, nivel simple, nacen ya verdes en este commit)
   - **Ficheros**: `C/trigger/{trigger,config_resolver,store,store_memory,store_postgres}.go` + tests; `C/trigger/triggerhelpertest/contrato.go`
   - **Hecho cuando**: 54 exportados; `store.go` sin test propio (puerto, E-3) y su suite `Contrato(t, func(t) Montaje)` corrida desde `store_memory_test.go` y, con el arnés de F9-A, contra Postgres (P4); regla D-5 (`KindLLM`) escrita; `ErrTriggerNotFound` literal; el corpus de normalización lleva casos adversarios (`reglas.md` §0).
   - **Gate**: `V` · `go doc ./internal/modulos/conversacion/trigger/triggerhelpertest Contrato`
   - **Commit**: `rojo(conversacion): contrato de trigger y su suite`
-- [ ] **T8.5 · rojo(conversacion): `content` (4)** · 💻 · dep. T8.3 · cumple R8.2.a–c
+- [x] **T8.5 · rojo(conversacion): `content` (4)** · 💻 · dep. T8.3 · cumple R8.2.a–c — `15524e1` (nivel simple: una pasada, mismo SHA que su verde)
   - **Ficheros**: `C/content/{content,static,json,router}.go` + tests (`content.go` es puerto: lo prueban los de sus 3 implementaciones)
   - **Hecho cuando**: 11 exportados; textos de error de `diseno.md` §1.3 en los comentarios.
   - **Gate**: `V`
   - **Commit**: `rojo(conversacion): contrato de content`
-- [ ] **T8.6 · rojo(conversacion): `store` (3) y `storehelpertest.Contrato`** · 💻 · dep. T8.3 · cumple R8.2.a–e
+- [x] **T8.6 · rojo(conversacion): `store` (3) y `storehelpertest.Contrato`** · 💻 · dep. T8.3 · cumple R8.2.a–e — `b579591` (`store (3)` nace partido en **12** ficheros por E-13; suite de 61 casos en 15 ficheros; los 4 `store*.go` de declaraciones nacen verdes)
   - **Ficheros**: `C/store/{store,repository_memory,repository_postgres}.go` + tests; `C/store/storehelpertest/contrato.go`
   - **Hecho cuando**: 107 exportados; la suite `Contrato(t, func(t) Montaje)` cubre las 13 interfaces de `store.go` (lectura de los 18 tests viejos, 12 de integración) y su marca de estado vigila **todas** las columnas que cada operación puede tocar (hallazgo 35); `repository_memory` con **reloj inyectable**; `repository_postgres_test.go` corre la suite con el arnés de F9-A (P4).
   - **Gate**: `V` · `go doc ./internal/modulos/conversacion/store/storehelpertest Contrato`
   - **Commit**: `rojo(conversacion): contrato de store y su suite`
-- [ ] **T8.7 · rojo(conversacion): `modules` (5)** · 💻 · dep. T8.3 · cumple R8.2.a–c
+- [x] **T8.7 · rojo(conversacion): `modules` (5)** · 💻 · dep. T8.3 · cumple R8.2.a–c — `ed3b867` (`ports.go` y `coerce.go`, nivel simple, nacen ya verdes)
   - **Ficheros**: `C/modules/{registry,ports,numbered,consulta,coerce}.go` + tests
   - **Hecho cuando**: 59 exportados; `ports.go` con aserciones de compilación en el test de sus implementadores.
   - **Gate**: `V`
   - **Commit**: `rojo(conversacion): contrato de modules`
-- [ ] **T8.22 · verde(conversacion): `model`, `trigger`, `content`, `store`, `modules`** · 💻 · dep. T8.3–T8.7 · cumple R8.3.a–e
+- [x] **T8.22 · verde(conversacion): `model`, `trigger`, `content`, `store`, `modules`** · 💻 · dep. T8.3–T8.7 · cumple R8.3.a–e — `content` `15524e1` · `modules` `e104f19` · `trigger` `08c3aff` · `store` `24524de` (`repository_memory.go` + `_tenant_content.go`, juntos por el lint `unused`), `a8450e2`, `f8d0294`, `9a3f7b3`, `3b1d3f9`, `96865ce`, `3a408dc`; 37 mutantes del SQL de `store` contra Postgres, 37 muertos
   - **Ficheros**: los 18 de T8.3–T8.7, en el orden de `arquitectura.md` §2
   - **Hecho cuando**: por paquete, `GOWORK=off go test -race ./C/<pkg>/; echo rc=$?` → 0; un test por promesa del contrato; `storehelpertest`/`triggerhelpertest` verdes **en memoria y en Postgres** (P4), que es lo que da la verdad de `repository_postgres.go` y `store_postgres.go`; mutantes en lo que el inventario marque complejo (`store`).
   - **Gate**: `G` por commit · **Commit**: `verde(conversacion): <fichero>` (uno por fichero en complejo; por paquete en medio; una pasada en simple)
-- [ ] **T8.8 · Cierre del bloque 1** · 💻 · dep. T8.3–T8.7, T8.22
+- [x] **T8.8 · Cierre del bloque 1** · 💻 · dep. T8.3–T8.7, T8.22 — commit de cierre de F8-01 (el que trae esta línea): `pendiente` = 0, `G` `GATE_RC=0` sobre `3a408dc`, rama empujada y PR a `dev`
   - **Hecho cuando**: `grep -rn 'pendiente.Implementar' --include='*.go' C | wc -l` → 0; `G` rc=0; las tres cosas del cierre (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en el README); `dev` empujado.
   - **Gate**: skill `validar-antes-de-cerrar`
+
+> 🔤 **Correspondencia de nombres (E-11) que F8-01 deja a las sesiones siguientes** — `modules/consulta.go` tenía los
+> exportados en español; el nuevo los lleva en inglés (el fichero conserva su nombre; los valores observables no cambian:
+> `"consulta_veredicto"`, `"opcion"`, `"cantidad"`, `"sin_resolutor"`, `"fallo"`, `"no_concluyente"`). `engine`, `cart` y
+> `turnoacotado` usan estos:
+>
+> | Viejo | Nuevo |
+> |---|---|
+> | `Consulta` {`Clase`, `Nivel`, `Texto`, `Opciones`, `Trozos`} · `Result.Consulta` | `Query` {`Class`, `Level`, `Text`, `Options`, `Chunks`} · `Result.Query` |
+> | `Veredicto` {`Codigo`, `Motivo`, `Codigos`} · `Resuelto` / `ResueltoAlguno` | `Verdict` {`Code`, `Reason`, `Codes`} · `Resolved` / `ResolvedAny` |
+> | `ClaseConsulta`, `ClaseOpcion`, `ClaseCantidad` | `QueryClass`, `QueryClassOption`, `QueryClassQuantity` |
+> | `OpcionConsulta` {`Codigo`, `Etiqueta`} | `QueryOption` {`Code`, `Label`} |
+> | `MotivoConsulta`, `MotivoSinResolutor`, `MotivoFallo`, `MotivoNoConcluyente` | `QueryReason`, `QueryReasonNoResolver`, `QueryReasonFailure`, `QueryReasonInconclusive` |
+> | `VarConsultaVeredicto` · `VeredictoDe` / `ConVeredicto` / `StripConsultaVeredicto` | `VarQueryVerdict` · `VerdictFrom` / `WithVerdict` / `StripQueryVerdict` |
+>
+> En `store` y `trigger` los exportados ya estaban en inglés y se conservan; en `store`, los no exportados `isUUID`,
+> `intakeHeaderCols` y `scanIntakeHeader` son nombres nuevos. Las suites de Postgres viven en
+> `test/procesos/{flowstore,trigger}_contrato_test.go` (no en `repository_postgres_test.go`, como decía T8.6): es el patrón de F9-A.
 
 ## Bloque 2 · el motor · 💻 · sesión F8-02 · T8.9–T8.11, T8.14, T8.23
 Para cuando: `engine`, `menu`, `survey`, `media`, `turnoacotado` verdes; `G`, `V` rc=0. (9 ficheros.)

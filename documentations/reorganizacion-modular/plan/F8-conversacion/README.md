@@ -165,6 +165,53 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
    `flujos/runtime`). Para F8-07.
 5. **(F8-01) `bridge_contact_test.go` tiene 809 líneas**, sobre el tope de E-13; muere con el adaptador (T8.32).
 
+6. **(F8-01, `store`) Tres divergencias deliberadas del gemelo en memoria: ahora imita a Postgres** (cada una con su comentario
+   «Divergencia deliberada del viejo, F8-01» y su caso en la suite; vetables): (a) `UpsertIntake` ya no escribe `CustomerNote`
+   (el viejo, `flujos/store/repository_memory.go:518`, guardaba la del argumento y borraba la de una cerrada; el SQL,
+   `repository_postgres.go:581-594`, ni nombra la columna); (b) `GetOpenIntake` y `GetIntakeByEvent` devuelven `CustomerNote ""`,
+   como la proyección de cabecera (`:759`); (c) con varias `open` del mismo contacto, `GetOpenIntake` y `CloseIntake` eligen la
+   más reciente por `created_at`, como el `ORDER BY` de Postgres, y no «la primera del recorrido del mapa» (`:613`, `:666`),
+   que era no determinista. 🟡 Ojo en F8-03…F8-05: un test viejo de `cart` o `runtime` que dependiera de (a) o (b) con el
+   doble en memoria estaba probando algo que producción no hace.
+7. **(F8-01, `store`) Conductas del viejo que se portan tal cual y NO se arreglan**: `ListResults` de Postgres no lee
+   `event_id` y devuelve `EventID ""` (memoria sí lo devuelve; `repository_postgres.go:346`); `UpsertIntake` con `EventID ""`
+   falla siempre en Postgres (NOT NULL de la 0055), así que el «ni con NULL lo pisa» del `COALESCE` es inalcanzable;
+   reescribir una línea `_shipping` ya existente viola `intake_items_shipping_uniq` en Postgres y memoria la duplica; y el
+   comentario de `CloseIntake` («el segundo la ve ya closed y no crea otra», `:673-675`) no es lo que hace el código: N
+   cierres con N eventos dan N solicitudes `closed` (la suite fija lo real). 🟡 Los cuatro, por analizar con Jhoan; ninguno bloquea.
+8. **(F8-01, `store`) Los 18 tests viejos no fijaban ninguna carrera** (ni una goroutine). La suite añade tres (versionado,
+   cierre, bienvenida), y el montaje de Postgres **precalienta el pool** (16 conexiones): sin eso las llamadas salían
+   escalonadas y el mutante «`CloseIntake` sin `FOR UPDATE`» sobrevivía.
+9. **(F8-01, `store`) Los 9 métodos del gemelo que Postgres no tiene son solo de tests.** `MigrateContactID` lo llama solo
+   `contact.MemoryResolver` (`nucleo/contact/repository_memory.go:243`), que solo se construye con un `MemoryRepository` en
+   tests del runtime. Se portan los nueve: son los observadores del `Montaje` y los dobles de F8-03…F8-05.
+10. **(F8-01, `trigger`) [`diseno.md`](diseno.md) §1.2 no casaba con el código**: la normalización no es «NFC» ni vive en
+    `trigger.go`: es `ToLower` → NFD → descarte de marcas `Mn` → `strings.Fields`, en `config_resolver.go:355-375`; y a
+    `ConfigResolver` le faltaba `ResolveLive`. Corregido con ✎. Conductas fijadas en el corpus adversario y **no** arregladas:
+    «año» casa «ano»; dos bytes UTF-8 inválidos distintos casan entre sí; un emoji casa con y sin selector de variación; la İ
+    turca baja a «i» pero la ı sin punto no es «i»; `IsEscape` no desempata por `priority` sino por `trigger_id` menor
+    (`:233-243`). Equivalencia viejo ↔ nuevo: 67 filas de corpus, 1.005 comparaciones y 20.000 rondas aleatorias, 0 divergencias.
+11. **(F8-01, `trigger`) `flow_triggers.tenant_id` no tiene clave foránea a `tenants`** (`0023_flow_triggers.sql`), y el gemelo
+    en memoria no valida forma de UUID (un `trigger_id` que no lo es da `ErrTriggerNotFound`; Postgres, error de sintaxis). Se
+    porta tal cual y está escrito en el contrato.
+12. **(F8-01, `modules`) Un comentario del viejo no casaba con su código** (`numbered.go:92-106`: «un sello ilegible vale 0»; un
+    sello que no es string se lee como ausente). Se porta el comportamiento, se corrige el comentario y se fija con dos casos.
+    `AsInt` no acepta `float32` y `AsFloat` sí (`coerce.go:10-37`): asimetría portada y fijada. Los tests viejos de
+    `exit_menu_test.go:197-283` (prueban `menu.New()`/`survey.New()`) son de F8-02.
+13. **(F8-01, E-11) `modules/consulta.go` pasa sus exportados al inglés** (`Consulta` → `Query`, `Veredicto` → `Verdict`…):
+    tabla en [`tareas.md`](tareas.md), antes del bloque 2. Si Jhoan los prefiere en español, es un renombre mecánico mientras
+    nadie los consuma (F8-02 es el primero).
+
+14. **(F8-01, gates) El binario viejo necesitó cuatro pasadas de `make test-procesos`**; el nuevo pasó a la primera. Las tres rojas,
+    por intermitencias ya conocidas (hallazgos 17 y 62 de F7), ninguna en las suites nuevas: (1) `TestP6_CRMBridge/callback_body_adversarial`,
+    `p6_crm_test.go:270: … write: broken pipe`; (2) `TestP4_MessageToDraft` (`adversarios`, `otro_borrador`, `cierre`), con
+    `p4_borrador_test.go:319: línea ERROR inesperada … pipeline: job FAILED · causa=job_invalido · «stages: el job no trae literal que
+    analizar (el compositor del flush no llegó a escribir el sobre)»`; (3) `TestP6_CRMBridge` (`push_first_attempt_fails`, `push_delivered`,
+    `push_exhausted`…), misma firma en `p6_crm_test.go:379`. 🔴 **La carrera de D-F7-9 ya no es «vista una vez contra el nuevo»**: dos
+    veces seguidas contra el **viejo**, en P4 y en P6, con la máquina cargada (load ≈ 11–13, ajeno a los gates). No reproducida a
+    propósito ni arreglada aquí; es de F8-04/F8-05. Sin medir: si las dos suites nuevas (≈ 9 s más de Postgres por binario) la hacen
+    más probable.
+
 ## Orden de lectura
 
 `README` → [`arquitectura.md`](arquitectura.md) (sobre todo §4 singleton y §5 puentes y adaptadores) →
