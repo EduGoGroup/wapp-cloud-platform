@@ -21,6 +21,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -208,7 +209,10 @@ func (r *MemoryRepository) ListIntakeItems(ctx context.Context, intakeID string)
 // Conserva las líneas de LA PLATAFORMA (sku con el prefijo reservado "_") AL FRENTE y
 // tal cual estaban, que es donde las deja Postgres al ordenar por added_at. No
 // comprueba que la solicitud exista ni que intakeID sea un UUID, y NO toca la
-// cabecera (ni su updated_at). Nunca devuelve error.
+// cabecera (ni su updated_at).
+//
+// Devuelve error, SIN modificar nada, si la escritura dejaría la solicitud con más de
+// una línea de envío (ver checkShippingLocked). En cualquier otro caso, nil.
 //
 // Que este adaptador reemplace y el otro también NO es cosmética: si aquí siguiera
 // acumulando, los tests unitarios verían un pedido sin duplicados que en Postgres
@@ -216,13 +220,60 @@ func (r *MemoryRepository) ListIntakeItems(ctx context.Context, intakeID string)
 func (r *MemoryRepository) ReplaceIntakeItems(ctx context.Context, intakeID string, items []IntakeItem) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := r.checkShippingLocked(intakeID, items); err != nil {
+		return err
+	}
 	r.replaceIntakeItemsLocked(intakeID, items)
+	return nil
+}
+
+// shippingSKU es el sku de la línea estándar de envío (D-041.11). El literal se
+// repite aquí en vez de importarse de solicitudes, igual que reservedSKUPrefix y por
+// lo mismo; lo que impide que diverjan es el test propio de este fichero.
+const shippingSKU = "_shipping"
+
+// errSecondShippingLine es el rechazo de checkShippingLocked. No se exporta: el
+// Postgres devuelve aquí la violación de único de pgx, así que ningún llamante puede
+// distinguir este error por identidad en los dos adaptadores.
+var errSecondShippingLine = errors.New("una solicitud no admite una segunda línea de envío (" + shippingSKU + ")")
+
+// checkShippingLocked dice, con el mutex YA tomado y ANTES de escribir nada, si
+// reemplazar las líneas de cliente de la solicitud por `items` la dejaría con más de
+// una línea de envío: la que ya tuviera (las de la plataforma sobreviven al
+// reemplazo) más las que traiga `items`. intakeID "" es una solicitud que aún no
+// existe: solo cuentan las de `items`.
+//
+// Divergencia deliberada del viejo, F8-01 (hallazgo 7): el viejo duplicaba la línea;
+// Postgres la rechaza por `intake_items_shipping_uniq` (índice único parcial sobre
+// intake_id WHERE sku = '_shipping', migración 0045) y deshace la transacción entera.
+// Por eso quien llama comprueba PRIMERO y no toca nada si hay error.
+//
+// Textos de error (literales, con errSecondShippingLine envuelto en %w):
+//   - "store: insertar líneas de solicitud: %w"
+func (r *MemoryRepository) checkShippingLocked(intakeID string, items []IntakeItem) error {
+	n := 0
+	if intakeID != "" {
+		for _, it := range r.intakeItems[intakeID] {
+			if it.SKU == shippingSKU {
+				n++
+			}
+		}
+	}
+	for _, it := range items {
+		if it.SKU == shippingSKU {
+			n++
+		}
+	}
+	if n > 1 {
+		return fmt.Errorf("store: insertar líneas de solicitud: %w", errSecondShippingLine)
+	}
 	return nil
 }
 
 // replaceIntakeItemsLocked es el reemplazo con el mutex YA tomado: lo comparten
 // ReplaceIntakeItems y CloseIntake, que necesita hacerlo dentro de su propia sección
-// crítica (el equivalente de su transacción).
+// crítica (el equivalente de su transacción). No puede fallar: quien lo llama ha
+// pasado antes por checkShippingLocked.
 //
 // Conserva las líneas de LA PLATAFORMA (prefijo reservado) al frente, que es donde
 // las deja Postgres cuando existen: se escriben antes de cualquier reemplazo posterior
@@ -281,13 +332,23 @@ func (r *MemoryRepository) MarkIntakeStatus(ctx context.Context, intakeID, statu
 //
 // En los dos casos las líneas se REEMPLAZAN por in.Items con la misma regla que
 // ReplaceIntakeItems (las de la plataforma sobreviven; in.Items vacío deja la
-// solicitud sin líneas de cliente). Nunca devuelve error.
+// solicitud sin líneas de cliente).
+//
+// Devuelve ("", err), SIN cerrar ni crear nada, si el cierre dejaría la solicitud con
+// más de una línea de envío (ver checkShippingLocked): es la transacción del Postgres,
+// que se deshace entera. En cualquier otro caso el error es nil.
 func (r *MemoryRepository) CloseIntake(ctx context.Context, in IntakeClose) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()
+	o, found := r.newestOpenLocked(in.TenantID, in.ContactID)
+	// Antes de tocar la cabecera: o.ID es "" si no hay abierta (la que nacería no
+	// tiene líneas todavía).
+	if err := r.checkShippingLocked(o.ID, in.Items); err != nil {
+		return "", err
+	}
 	var intakeID string
-	if o, found := r.newestOpenLocked(in.TenantID, in.ContactID); found {
+	if found {
 		intakeID = o.ID
 		o.Status = "closed"
 		o.Total = in.Total

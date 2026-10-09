@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
 )
 
 // Los casos de las líneas de una solicitud: ReplaceIntakeItems y ListIntakeItems sobre
@@ -103,6 +105,49 @@ func caseReplaceItemsPlatform(t *testing.T, m Montaje) {
 		}
 		requireListMatchesObserver(t, m, "foto del carrito", in.ID)
 	}
+}
+
+// caseReplaceItemsSecondShipping: una solicitud tiene A LO SUMO una línea de envío. Escribirle una
+// segunda —sobre la que ya tenía, o dos en la misma escritura, por ReplaceIntakeItems o por
+// CloseIntake— se rechaza y no cambia NADA: ni las líneas que había ni la cabecera, y el cierre no
+// cierra ni crea solicitud. Solo se afirma que hay error: su texto es de cada adaptador.
+func caseReplaceItemsSecondShipping(t *testing.T, m Montaje) {
+	contact, shipping := uuid.NewString(), line(platformSKU, "Envío", 1, 3000)
+	in := seedIntake(t, m, m.TenantA, contact, statusOpen)
+	bare := seedIntake(t, m, m.TenantA, uuid.NewString(), statusOpen)
+	mustReplaceItems(t, m, in.ID, shipping, line("CAFE", "Café", 1, 2.5))
+	mustReplaceItems(t, m, bare.ID, line("FLAN", "Flan", 1, 4))
+	m.Advance(t)
+	before := take(t, m)
+
+	again := []IntakeItem{line(platformSKU, "Envío exprés", 1, 5000), line("TE", "Té", 2, 2)}
+	if err := m.Store.ReplaceIntakeItems(ctx, in.ID, again); err == nil {
+		t.Error("ReplaceIntakeItems aceptó una segunda línea de envío")
+	}
+	requireUntouched(t, "segunda línea de envío", before, take(t, m))
+
+	if err := m.Store.ReplaceIntakeItems(ctx, bare.ID, []IntakeItem{shipping, line("TE", "Té", 1, 2), shipping}); err == nil {
+		t.Error("ReplaceIntakeItems aceptó dos líneas de envío en la misma escritura")
+	}
+	requireUntouched(t, "dos líneas de envío en la misma escritura", before, take(t, m))
+
+	closedID, err := m.Store.CloseIntake(ctx, store.IntakeClose{
+		TenantID: m.TenantA, ContactID: contact, Total: 5004, CustomerNote: "no debe quedar",
+		EventID: in.EventID, Items: again,
+	})
+	if err == nil || closedID != "" {
+		t.Errorf("CloseIntake con una segunda línea de envío = (%q, %v), quería (\"\", un error)", closedID, err)
+	}
+	requireUntouched(t, "cierre con una segunda línea de envío", before, take(t, m))
+
+	closedID, err = m.Store.CloseIntake(ctx, store.IntakeClose{
+		TenantID: m.TenantA, ContactID: uuid.NewString(), Total: 6000,
+		EventID: m.NewEvent(t, m.TenantA), Items: []IntakeItem{shipping, shipping},
+	})
+	if err == nil || closedID != "" {
+		t.Errorf("CloseIntake sin abierta y con dos líneas de envío = (%q, %v), quería (\"\", un error)", closedID, err)
+	}
+	requireUntouched(t, "cierre sin abierta con dos líneas de envío", before, take(t, m))
 }
 
 // caseListItems: una solicitud sin líneas —o que no existe— da la lista vacía SIN error; un id que

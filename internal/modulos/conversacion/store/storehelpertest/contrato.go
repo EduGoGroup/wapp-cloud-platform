@@ -252,6 +252,7 @@ func cases() []contractCase {
 		{"ReplaceIntakeItems_MirrorsTheSetInOrder", caseReplaceItemsMirrors},
 		{"ReplaceIntakeItems_Empty_DeletesCustomerLines", caseReplaceItemsEmpty},
 		{"ReplaceIntakeItems_KeepsPlatformLines", caseReplaceItemsPlatform},
+		{"IntakeItems_SecondShippingLine_RejectedAndNothingChanges", caseReplaceItemsSecondShipping},
 		{"ListIntakeItems_NoLinesIsEmpty_MalformedIDIsAnError", caseListItems},
 		// El cierre (close_contrato.go).
 		{"CloseIntake_ClosesTheOpenOne_ReplacingItsLines", caseCloseOpen},

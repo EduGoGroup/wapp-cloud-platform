@@ -213,3 +213,45 @@ func TestMemoryRepository_ReservedPrefix_IsTheOneOfIntakes(t *testing.T) {
 		requireEqual(t, "sku de la línea", items[i].SKU, want)
 	}
 }
+
+// TestMemoryRepository_SecondShippingLine_IsRejected: el sku de envío de este almacén es el MISMO
+// que el del dominio de solicitudes (el literal se repite, como el prefijo reservado). Una segunda
+// línea de envío —sobre la que ya había, o dos en la misma escritura— se rechaza sin tocar nada, ni
+// por ReplaceIntakeItems ni por CloseIntake; otro sku de la plataforma sí puede repetirse (el
+// índice único de la base es solo del de envío).
+func TestMemoryRepository_SecondShippingLine_IsRejected(t *testing.T) {
+	repo, _ := newMemoryRepository()
+	shipping := store.IntakeItem{SKU: intakes.ShippingSKU, Label: "Envío", Qty: 1, UnitPrice: 3000}
+	other := store.IntakeItem{SKU: intakes.ReservedSKUPrefix + "otra", Qty: 1}
+	mustUpsert(t, repo, store.Intake{ID: "solicitud-1", TenantID: "t1", ContactID: "c1", Status: "open"})
+	if err := repo.ReplaceIntakeItems(ctx, "solicitud-1", []store.IntakeItem{shipping, other, {SKU: "CAFE", Qty: 1}}); err != nil {
+		t.Fatalf("ReplaceIntakeItems: %v", err)
+	}
+	if err := repo.ReplaceIntakeItems(ctx, "solicitud-1", []store.IntakeItem{other}); err != nil {
+		t.Fatalf("un segundo sku de la plataforma que no es el de envío: %v", err)
+	}
+
+	const wantText = "store: insertar líneas de solicitud: una solicitud no admite una segunda línea de envío (_shipping)"
+	err := repo.ReplaceIntakeItems(ctx, "solicitud-1", []store.IntakeItem{shipping, {SKU: "TE", Qty: 1}})
+	if err == nil || err.Error() != wantText {
+		t.Fatalf("ReplaceIntakeItems con una segunda línea de envío: err = %v, quería %q", err, wantText)
+	}
+	if err := repo.ReplaceIntakeItems(ctx, "solicitud-2", []store.IntakeItem{shipping, shipping}); err == nil {
+		t.Error("ReplaceIntakeItems aceptó dos líneas de envío en la misma escritura")
+	}
+	if _, err := repo.CloseIntake(ctx, store.IntakeClose{TenantID: "t1", ContactID: "c1", Items: []store.IntakeItem{shipping}}); err == nil {
+		t.Error("CloseIntake aceptó una segunda línea de envío")
+	}
+	if _, err := repo.CloseIntake(ctx, store.IntakeClose{TenantID: "t1", ContactID: "sin-abierta", Items: []store.IntakeItem{shipping, shipping}}); err == nil {
+		t.Error("CloseIntake sin solicitud abierta aceptó dos líneas de envío")
+	}
+
+	requireEqual(t, "solicitudes tras los rechazos", len(repo.Intakes()), 1)
+	requireEqual(t, "estado de la solicitud tras los rechazos", intakeByID(t, repo, "solicitud-1").Status, "open")
+	items := repo.IntakeItems("solicitud-1")
+	requireEqual(t, "líneas tras los rechazos", len(items), 3)
+	for i, want := range []string{intakes.ShippingSKU, other.SKU, other.SKU} {
+		requireEqual(t, "sku de la línea", items[i].SKU, want)
+	}
+	requireEqual(t, "líneas de la solicitud que no llegó a escribirse", len(repo.IntakeItems("solicitud-2")), 0)
+}
