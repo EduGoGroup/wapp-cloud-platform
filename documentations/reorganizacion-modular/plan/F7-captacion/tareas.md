@@ -109,14 +109,53 @@ Lo que sigue en español porque ya estaba escrito: `indice.Indice`, `Coincidenci
 ## Bloque C · `pipeline`, `intakeahead`, `reanalisis` · 🌐❓ · sesión F7-03 · T7.10–T7.13, T7.18–T7.20
 Para cuando: pendientes del módulo = 0 · puentes (import) declarados · un test por promesa del contrato, mutantes en lo complejo · `ci-local` rc=0 · PR.
 
-- [ ] **T7.10 · rojo(captacion): `pipeline`** · 🌐❓ · dep. T7.17 · cumple R7.2.a–c · `backoff.go`, `plaza.go`, `pipeline.go` (+ `memoria.go` según D-F7-3) · R-01, R-02 · **Commit**: `rojo(captacion): contratos del worker y del aforo`
-- [ ] **T7.11 · rojo(captacion): `intakeahead`** · 🌐❓ · dep. T7.14 · cumple R7.3.a–b · R-11, R-12 · **Commit**: `rojo(captacion): contrato de intakeahead`
-- [ ] **T7.12 · rojo(captacion): `reanalisis` y puentes (import) 2–3** · 🌐❓ · dep. T7.17 · cumple R7.4.a–c
+- [x] **T7.10 · rojo(captacion): `pipeline`** — `403f73d` (`verde(captacion): pipelinehelpertest`: el doble `CatalogMemory` nace completo y en verde, D-F7-5) y `1ff2012` (contratos de `pipeline.go`, `pipeline_loop.go`, `slot.go`, `backoff.go`; `pipeline_chain.go` y `pipeline_outcome.go` no tienen exportados y nacen en el verde, hallazgo 27) · 🌐❓ · dep. T7.17 · cumple R7.2.a–c · `backoff.go`, `plaza.go`, `pipeline.go` (+ `memoria.go` según D-F7-3) · R-01, R-02 · **Commit**: `rojo(captacion): contratos del worker y del aforo`
+- [x] **T7.11 · rojo(captacion): `intakeahead`** — `aacc30e` (`intakeahead.go` y `warmup.go`; `sanitize.go` e `intakeahead_classify.go`, sin exportados, nacen en el verde) · 🌐❓ · dep. T7.14 · cumple R7.3.a–b · R-11, R-12 · **Commit**: `rojo(captacion): contrato de intakeahead`
+- [x] **T7.12 · rojo(captacion): `reanalisis` y puentes (import) 2–3** — `7cb66e2` (puente `captacion/reanalisis → internal/flujos/events` declarado; el de `flujos/runtime` **evitado**: `threadLimit int` es el octavo parámetro de `NewService`, y un valor ≤ 0 se rechaza) · 🌐❓ · dep. T7.17 · cumple R7.4.a–c
   - **Hecho cuando**: seis puertos con sus firmas; decidido en el commit si `DefaultThreadLimit` entra por constructor (sin puente 3, recomendado) o por puente; puentes en `fronteras_test.go` · 🔶 `reanalisis_test` (33) y `dobles_test` (AST) · **Commit**: `rojo(captacion): contrato de reanalisis y sus puentes`
-- [ ] **T7.13 · Punto de control del rojo** · 🌐❓ · pendientes contados (`grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/captacion | wc -l`) = `make test-pendiente` (sin PR: la sesión sigue)
-- [ ] **T7.18 · verde(captacion): `pipeline`** · 🌐❓ · reloj y canal de despertar probados sin `sleep` real; mutantes sobre `pipeline.go` y `plaza.go` si el inventario los deja en complejo
-- [ ] **T7.19 · verde(captacion): `intakeahead`, `reanalisis`** · 🌐❓
-- [ ] **T7.20 · refactor(captacion) e informe** · 🌐❓ · la tabla de `make cobertura-ficheros` va al PR; no bloquea · cierra la sesión: PR
+- [x] **T7.13 · Punto de control del rojo** — sobre `1ff2012`: `grep` = 15 = `make test-pendiente` (`PENDIENTES=15 · ROJOS=11`, rc=0), todos de `pipeline`; `reanalisis` e `intakeahead` ya estaban en verde (paquetes independientes, hallazgo 26) · 🌐❓ · pendientes contados (`grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/captacion | wc -l`) = `make test-pendiente` (sin PR: la sesión sigue)
+- [x] **T7.18 · verde(captacion): `pipeline`** — `8d63643` (`slot.go`), `3b6dfd4` (`backoff.go`), `b6f55e3` (los cuatro del worker, un commit: métodos del mismo `Worker` que se llaman entre sí) y `8e23511` (tests que matan los mutantes vivos); 216 mutantes sobre los seis ficheros: 201 muertos, 0 vivos, 3 equivalentes, 12 que no compilan (hallazgo 36) · 🌐❓ · reloj y canal de despertar probados sin `sleep` real; mutantes sobre `pipeline.go` y `plaza.go` si el inventario los deja en complejo
+- [x] **T7.19 · verde(captacion): `intakeahead`, `reanalisis`** — `reanalisis`: `e813c06` (`reanalisis_errors.go`), `5d3e1b1` (`reanalisis.go`, `reanalisis_checks.go`, `reanalisis_source.go`, un commit: se necesitan mutuamente) · `intakeahead`: `9d43c45` (los cuatro de producción, un commit) y `19a0c73` (test que mata el mutante vivo) · 🌐❓
+- [x] **T7.20 · refactor(captacion) e informe** — sin commit de refactor (no hizo falta: la partición por tema se hizo al nacer, D-F7-6); la tabla de `make cobertura-ficheros` va en el PR · 🌐❓ · la tabla de `make cobertura-ficheros` va al PR; no bloquea · cierra la sesión: PR
+
+### Correspondencia de nombres (E-11) — F7-03 (`pipeline`, `intakeahead`, `reanalisis`)
+
+Valores (48 s, K = 1, 5 s / 30 s / 5 min / 10 / 3, 4 / 64 / 45 s / 110 s), textos de error y de log, claves de log y las causas
+`calidad`·`infra`·`job_invalido` no cambian. Se conservan `NewWorker`, `Worker`, `Config`, `Run`, `Pool`, `New`, `Request`,
+`Warm`, `Sink`, `SinkFunc`, `ConfigStore`, `ProviderSelector`, `WithWorkers`, `WithQueueSize`, `WithTimeout`,
+`WithWarmTimeout`, `Jobs`, `Features`, y los métodos de puerto que satisfacen piezas ya escritas (`PlazaDe`, `Obtener`,
+`Decrypt`, `ShippingZones`). El paquete `reanalisis` y sus ficheros conservan el nombre.
+
+| Paquete | Viejo / spec | Nuevo |
+|---|---|---|
+| `pipeline` (ficheros) | `pipeline.go` (1.148) | `pipeline.go` · `pipeline_loop.go` · `pipeline_chain.go` · `pipeline_outcome.go` (D-F7-6) |
+| `pipeline` (ficheros) | `plaza.go` · `memoria.go` (mitad catálogo) | `slot.go` · `pipelinehelpertest/catalog_memory.go` (D-F7-5) |
+| `pipeline` | `Descifrador` · `Catalogos` · `ZonasDeEnvio` | `Decrypter` · `Catalogs` · `ShippingZones` |
+| `pipeline` | `EtapaIdeas` · `EtapaEspecificaciones` · `EtapaNormalizacion` · `EtapaMatch` · `EtapaDraft` | `IdeasStage` · `SpecsStage` · `NormalizationStage` · `MatchStage` · `DraftStage` |
+| `pipeline` | `ErrSinCablear` · `PlazoPorLlamadaSuelo` · `Opcion` | `ErrNotWired` · `CallTimeoutFloor` · `Option` |
+| `pipeline` | `ConAforo` · `ConZonasDeEnvio` | `WithCapacity` · `WithShippingZones` |
+| `pipeline` | `Despertar` · `DrenarDespierto` · `Drenar` · `UnaVuelta` | `Wake` · `DrainAwake` · `Drain` · `RunOnce` |
+| `pipeline` | `Config{Cadencia, MaxIntentosCalidad, MaxIntentosInfra, BackoffTope}` | `Config{Cadence, MaxQualityAttempts, MaxInfraAttempts, BackoffCap}` (`BackoffBase` igual) |
+| `pipeline` | `KPorPlaza` · `Plaza` · `Valida` · `Plazas` | `KPerSlot` · `Slot` · `Valid` · `Slots` |
+| `pipeline` | `Aforo` · `NuevoAforo` · `Tomar` · `Esperando` | `Capacity` · `NewCapacity` · `Acquire` · `Waiting` |
+| `pipeline` | `CausaCalidad` · `CausaInfra` · `CausaJobInvalido` | `CauseQuality` · `CauseInfra` · `CauseInvalidJob` |
+| `pipeline` | `CadenciaPorDefecto` · `BackoffBasePorDefecto` · `BackoffTopePorDefecto` | `DefaultCadence` · `DefaultBackoffBase` · `DefaultBackoffCap` |
+| `pipeline` | `MaxIntentosInfraPorDefecto` · `MaxIntentosCalidadPorDefecto` | `DefaultMaxInfraAttempts` · `DefaultMaxQualityAttempts` |
+| `pipeline` | — (costuras nuevas de test) | `WithClock` · `WithTicker` |
+| `pipelinehelpertest` | `CatalogoEnMemoria` · `NuevoCatalogoEnMemoria` · `RomperLaLectura` · `Lecturas` | `CatalogMemory` · `NewCatalogMemory` · `BreakRead` · `Reads` |
+| `intakeahead` (ficheros) | `calentamiento.go` · `saneo.go` · `intakeahead.go` (592) | `warmup.go` · `sanitize.go` · `intakeahead.go` + `intakeahead_classify.go` (E-13) |
+| `intakeahead` | `Calentador` · `WithCalentador` · `WithCalentamiento` | `Warmer` · `WithWarmer` · `WithWarmup` |
+| `reanalisis` (ficheros) | `reanalisis.go` (772) | `reanalisis.go` · `reanalisis_errors.go` · `reanalisis_checks.go` · `reanalisis_source.go` (D-F7-6) |
+| `reanalisis` | `Solicitud` · `Resultado` · `EstadoEnCurso` | `Request` · `Result` · `StatusInProgress` |
+| `reanalisis` | `RazonPurgada` · `RazonNuncaGuardada` | `ReasonPurged` · `ReasonNeverStored` |
+| `reanalisis` | `ViaInvalidaError{Via, Configurada}` · `FeatureAusenteError` · `CredencialAusenteError` | `InvalidViaError{Via, Configured}` · `FeatureMissingError` · `CredentialsMissingError` |
+| `reanalisis` | `FuenteAusenteError` · `EnCursoError` · `ErrSinCablear` | `SourceUnavailableError` · `InProgressError` · `ErrNotWired` |
+| `reanalisis` | `Solicitudes` · `Hilo` · `Compositor` · `ConfigLLM` | `Intakes` · `Thread` · `Composer` · `LLMConfig` |
+| `reanalisis` | `Servicio` · `NewServicio(…6)` · `Reanalizar` | `Service` · `NewService(…6, threadLimit int)` · `Reanalyze` |
+
+🔴 **Para F7-04 (T7.23, T7.24)**: tres candados de cableado copiados en F0 buscan **texto** con los nombres viejos y ya no
+pueden quedar «verdes sin tocarlos» (hallazgo 28): `pipeline.ConAforo`, `pipeline.ConZonasDeEnvio`, `intakePipeline.Despertar`,
+`intakeahead.WithCalentamiento`, `reanalisis.NewServicio`, `stages.ConEmpujeCRM`.
 
 ## Bloque D · cara HTTP y conmutar · 🌐❓ · sesión F7-04 · T7.21–T7.26 (= **TX.19–TX.21** + intenciones)
 Para cuando: `reanalyze.go`, `intents.go` en verde · `bridge_captacion.go` con test de cableado completo · huella igual · candados verdes · PR (y traspaso si aplica).

@@ -2,7 +2,7 @@
 
 > **Estado: en curso** — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
 > ese día ([`diseno.md`](diseno.md) §1.2). **F7-01 hecha** (bloque A): `evidence`, `anclaje`, `intake`, `intentcfg` y `casebank` en verde
-> (19 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). **F7-02 hecha** (bloque B): `stages` en verde (14 ficheros de producción, hallazgo 18) y el puente `captacion/stages → internal/flujos/store` declarado. Falta `pipeline`, `intakeahead` y `reanalisis` (F7-03). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
+> (19 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). **F7-02 hecha** (bloque B): `stages` en verde (14 ficheros de producción, hallazgo 18) y el puente `captacion/stages → internal/flujos/store` declarado. **F7-03 hecha** (bloque C, 2026-10-09): `pipeline`, `intakeahead` y `reanalisis` en verde (14 ficheros de producción y un doble, hallazgo 27), el puente `captacion/reanalisis → internal/flujos/events` declarado y el de `flujos/runtime` evitado; **pendientes del módulo = 0**. Falta la cara HTTP y conmutar (F7-04) y el cierre contra Postgres (F7-05). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.5 y §2.8
 > (H1, y E1–E2 por **D-FX-1** resuelta en su alternativa: las intenciones se mudan **aquí**).
@@ -68,7 +68,7 @@ estado en memoria) → [`diseno.md`](diseno.md) → [`reglas.md`](reglas.md) →
 |---|---|---|---|
 | **A** · [`F7-01`](../sesiones/F7-01-web-inventario-y-hojas.md) · inventario E-12 + hojas | 🌐❓ | T7.1–T7.6, T7.14–T7.15 | inventario **aprobado por Jhoan** · `evidence`, `intake`, `anclaje`, `intentcfg`, `casebank` en verde con sus suites en memoria |
 | **B** · [`F7-02`](../sesiones/F7-02-web-stages.md) · `stages` | 🌐❓ | T7.7–T7.9, T7.16–T7.17 | 10 ficheros de `stages` en verde; puente (import) a `flujos/store` declarado |
-| **C** · [`F7-03`](../sesiones/F7-03-web-pipeline-reanalisis.md) · `pipeline`, `intakeahead`, `reanalisis` | 🌐❓ | T7.10–T7.13, T7.18–T7.20 | pendientes del módulo = 0; 2 puentes (import) (3 si T7.12 no evita el de `runtime`) |
+| **C** · [`F7-03`](../sesiones/F7-03-web-pipeline-reanalisis.md) · `pipeline`, `intakeahead`, `reanalisis` | 🌐❓ | T7.10–T7.13, T7.18–T7.20 | pendientes del módulo = 0; 2 puentes (import) (3 si T7.12 no evita el de `runtime`) — ✅ hecha el 2026-10-09: 2 puentes, el de `runtime` evitado |
 | **D** · [`F7-04`](../sesiones/F7-04-web-cara-http-y-conmutar.md) · cara HTTP + conmutar | 🌐❓ | T7.21–T7.26 (= TX.19–TX.21) | `reanalyze.go`, `intents.go` en verde · `bridge_captacion.go` con test de cableado · huella igual · INV-1 re-tocado |
 | **E** · [`F7-05`](../sesiones/F7-05-cli-cierre.md) · cierre local | 💻 | T7.27–T7.29 | suites contra Postgres · P4 y P8 (T9.28) contra los dos binarios · `dev` · `ESTADO.md` |
 
@@ -306,4 +306,108 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     **solo** el de `solicitudes/intakes` (R-06: el tipo no lo impide si alguien añade `InsertRevision` al otro), y
     `WithCRMPush` se cablea con `CRMPusherFunc` resuelta al llamar, porque `Draft` se construye antes que el `Service`
     (R-07). `Run` de `draft` no es idempotente en la revisión: lo evita el worker saltándose la etapa al reanudar.
-    `Media.ByLine` nil es válido (D-6). `Analysis.Provider` lo rellena el worker con la vía.
+    `Media.ByLine` nil es válido (D-6). ✎ F7-03: ~~`Analysis.Provider` lo rellena el worker con la vía~~ — **falso**: el
+    worker viejo pasa `stages.Analisis{}` en cero (`internal/intake/pipeline/pipeline.go:915`, y lo afirma
+    `cadena_ola3_test.go:164`); el nuevo también (hallazgo 29).
+26. **Los tres paquetes de F7-03 no se hablan entre sí, y el orden real no fue «todo el rojo, luego todo el verde»**
+    (F7-03). `reanalisis` e `intakeahead` no importan `pipeline` ni al revés: cada uno hizo su rojo y su verde con su
+    sub-agente, en paralelo, y cuando se contó el punto de control (T7.13) los 15 pendientes eran solo de `pipeline`. El
+    rojo de cada paquete fue anterior a su verde, que es lo que protege el método.
+27. **Son 14 ficheros de producción y un doble, no 8** (F7-03; `diseno.md` §2.5–§2.7 cuenta 4 + 3 + 1). `pipeline`: 6
+    (`pipeline.go` en cuatro por D-F7-6, `slot.go`, `backoff.go`) más `pipelinehelpertest/catalog_memory.go`; 40 exportados
+    (los 38 del viejo sin el doble, más `WithClock` y `WithTicker`), no 57. `intakeahead`: 4 (`intakeahead.go` partido en
+    dos por E-13: con los comentarios de contrato pasaba de 600). `reanalisis`: 4. **Un fichero sin exportados no puede
+    existir en el rojo**: sus funciones darían `unused` en el lint y `un_fichero_un_test` exigiría su gemelo. Por eso
+    `pipeline_chain.go`, `pipeline_outcome.go`, `intakeahead_classify.go`, `sanitize.go`, `reanalisis_checks.go` y
+    `reanalisis_source.go` nacen en el verde; sus tests ya estaban en rojo, probando por el exportado que los llama
+    (`RunOnce`, `Request`, `Reanalyze`), con el sufijo del origen.
+28. 🔴 **Para F7-04: los candados de cableado copiados en F0 ya no pueden quedar «verdes sin tocarlos»** (contra
+    `diseno.md` §6 y T7.23). Leen **texto** con los nombres viejos, y E-11 los renombró:
+    `internal/arranque/pipeline_captacion_cableado_test.go` busca `pipeline.ConAforo` (`:148`, `:157`),
+    `pipeline.ConZonasDeEnvio` (`:165`), `intakePipeline.Despertar` (`:132`) y `catalogo.NewCache` (`:90`; el paquete nuevo
+    es `indice`); `calentamiento_cableado_test.go:79` busca `intakeahead.WithCalentamiento`;
+    `reanalisis_cableado_test.go` busca `reanalisis.NewServicio` y `stages.ConEmpujeCRM` (este, desde F7-02). Hoy son
+    `WithCapacity`, `WithShippingZones`, `Wake`, `WithWarmup`, `NewService`, `WithCRMPush`. Se conservan `pipeline.NewWorker`,
+    `intakePipeline.Run`, `intakeAhead.Warm`, `stages.NewDraft`. F7-04 edita esos literales en el commit de la
+    conmutación (la trampa T-6 ya preveía «nombre corto para el paquete nuevo», no el renombrado). Además
+    `fase5_captacion.go:43,197,296` pasa a `pipeline.CallTimeoutFloor` y `pipeline.NewCapacity(pipeline.KPerSlot)` (ahí va
+    la aserción de igualdad de T-13), y `reanalisis.NewService` recibe `runtime.DefaultThreadLimit` desde
+    `bridge_captacion.go` y un `composerBridge` que convierte el `WindowKey` (T-3).
+29. **El worker: lo único que cambia de conducta es D-F9-10, y dos cosas que NO cubre** (F7-03). (i) Con el contexto
+    cancelado, el fallo del reclamo ya no va a `ERROR`, ni en `Drain` ni en `DrainAwake` (`V/pipeline.go:504-506`, `:547`);
+    con el contexto vivo el mismo fallo sigue yendo a `ERROR` y el bucle sigue (un caso cada uno). (ii) 🟡 **Una parada
+    sigue cobrando intento**: si el contexto se cancela *dentro* de una etapa, el error se clasifica como `infra`, hace
+    `Retry` con el intento cobrado (`V/pipeline.go:1007-1017`) y, si era el décimo, `Fail` y una línea «job FAILED» a
+    `ERROR`. Portado tal cual (T-12): es conducta del viejo y no la pidió D-F9-10; puede dejar una línea a `ERROR` en P0
+    si la parada cae en el último intento. (iii) El `Info` «la plaza está ocupada; este job ESPERA» solo sale si **ya**
+    había cola (`V/pipeline.go:662` mira `Esperando() > 0` antes de tomar): con dos cadenas, la espera de la segunda no
+    se anuncia nunca. Portado tal cual y fijado con test. (iv) El campo inyectable `numero` del viejo
+    (`V/pipeline.go:290`) no se porta: nadie lo inyectaba. `WithClock` y `WithTicker` son costuras nuevas para probar
+    sin `sleep`; la conducta por defecto no cambia. (v) D-F7-9: el sobre incompleto deja el job `failed` sin reintento
+    con el texto del viejo; lo dice el contrato de `RunOnce` (punto 1) y lo fija
+    `TestEnvelope_Incomplete_FailsTheJobWithoutRetry`.
+30. **Los guiones viejos de `pipeline` no se portaron a tests de fichero** (T-10): `guion_ambar`, `guion_hamburguesas` y
+    `TestWorker_ConLasEtapasREALES_…` van a P4 y P8 de F9. De ellos salieron las reglas del worker que sí tienen caso:
+    reanudación (salta lo persistido; `draft` persistido no se repite jamás, hallazgo 25), `Media` y `Analysis` en cero,
+    el job de re-análisis intacto hasta `draft` (R-07). `tope_test` y el del plazo por llamada ya están cubiertos en
+    `stages`. `intakehelpertest.MachineMemory.ClaimNext` **ignora el `ctx`**: la parada a mitad de reclamo se prueba con
+    un doble local que lo envuelve; contra Postgres lo ve F9.
+31. **`reanalisis`: el límite del hilo entra por constructor y se rechaza si no es positivo** (T7.12; puente 3 evitado).
+    `NewService` tiene 8 parámetros; `threadLimit <= 0` devuelve `reanalisis: el límite del hilo debe ser positivo (<n>): `
+    más el texto de `ErrNotWired`, envuelto. No hay valor por defecto: una segunda constante serían dos verdades con la
+    del compositor, y `events.Store.ListThread` con límite ≤ 0 devuelve `nil, nil`
+    (`internal/flujos/events/thread_reader.go:141`), así que toda petición saldría `never_stored` en silencio. Los tests
+    usan 137 para cazar un 200 escrito dentro. `arquitectura.md` §2 sigue listando el PUENTE 3: ya no existe.
+32. **Los `go/ast` y las lecturas de fuente de estos paquetes tampoco eran candados** (🔶 de `diseno.md` §6, resuelto;
+    como el hallazgo 20). `V/reanalisis/reanalisis_test.go:725,754` (con `dobles_test.go`) se sustituye por
+    `TestPorts_NoneCanReachTheCustomerNorAnOldEnvelope`, que fija con `reflect` el juego exacto de métodos de los seis
+    puertos y los parámetros de `NewService`; `V/intakeahead/intakeahead_test.go:873,898` (INV-6, leían el fuente como
+    texto), por `TestLogs_NeverCarryWhatTheClientWrote` (ocho caminos). Se pierde detectar un identificador prohibido
+    usado *dentro* del fichero; lo cubren `fronteras` y el candado INV-1 cuando T7.25 añada `captacion/reanalisis`.
+33. **Dos dobles viejos escondían conducta** (F7-03). (i) El de `Jobs` de `reanalisis` no veía el job vivo:
+    `V/reanalisis_test.go:628-663` llama dos veces seguidas sobre el mismo evento, y con la cola real la segunda sale
+    `reanalysis_in_progress`; los tests nuevos terminan el primer job entre llamadas. (ii) El de `Features` devolvía
+    `(false, err)` (`V/dobles_test.go:231-233`): con eso el mutante «fail-open ante error del resolver» era
+    indetectable; el nuevo devuelve `(tiene, err)`. La conducta de producción no cambia en ninguno de los dos.
+34. 🟡 **Heredado y portado tal cual en `intakeahead`** (para Jhoan, sin bloquear). `Warm` no comprueba `log`
+    (`V/calentamiento.go:136`): un `Pool` con `log` nil y `Warmer` cableado haría nil-deref dentro de la goroutine;
+    `usable()` sí lo mira para `Request` y `Run`, y producción siempre pasa log. La rama `<= 0` de `warmBudget`
+    (`warmup.go:220-225`) es inalcanzable por `New`. Un segundo `Run` sobre el mismo `Pool` sumaría workers sin error
+    (T-4, sin guarda). Y `desconocido` con evidencia presente en el texto **sí** llega al sink: quien decide no disparar
+    es el agregador.
+35. **Técnicas que funcionaron, para quien venga detrás** (F7-03). (i) `go test -overlay` valida el rojo contra el port
+    con lógica **sin meterla en el árbol compartido** (no rompe `un_fichero_un_test` a los demás sub-agentes). (ii)
+    `testing/synctest` da reloj falso y `synctest.Wait()` para afirmar negativos sin costura de producción
+    (`intakeahead`; ya había precedente en `edge` y `arranque`). (iii) Llamar en línea, desde un test en rojo, a una
+    función del contrato que solo hace `panic` da SA4006/SA4008 con `--build-tags pendiente` (todo lo de detrás es código
+    muerto): se llama por un ayudante del banco o por una interfaz local. (iv) Las fronteras «≤ 0 se ignora» de las
+    opciones de plazo no las fijaba ningún test, ni viejo ni nuevo, hasta que un mutante lo dijo (`19a0c73`).
+36. **Mutantes de F7-03** (a mano, sobre los ficheros commiteados; `pipeline` con `go test -overlay`, sin tocar el árbol).
+    `pipeline` (complejo): **216** sobre sus seis ficheros — 201 muertos, 0 vivos, 3 equivalentes, 12 que no compilan (su
+    reescritura compilable está entre los 216 y muere). Siete de los muertos mueren por el `-timeout` de 90 s y no por una
+    aserción (`Retry`→`Release` y `Fail`→`Release` son la tormenta de reclamos del viejo; opciones ignoradas; `k` mal
+    acotado). Equivalentes: `slot.go:133` (`k <= 0` → `k <= 1`) y las dos mitades de la guarda
+    `w.capacity == nil || w.slots == nil` de `pipeline_chain.go:85`, redundante por construcción (`WithCapacity` solo las
+    asigna juntas, `pipeline.go:293`; heredada de `V/pipeline.go:644`). La primera pasada dejó 3 vivos, 1 latente y 1 que
+    moría por azar: los mata `8e23511`, solo con tests. `intakeahead` (complejo): **79** — 76 muertos, 0 vivos, 3 que no
+    compilan; el único vivo de la primera pasada (`warmup.go:221`, frontera del plazo) lo mata `19a0c73`. `reanalisis`
+    (medio, no obligatorio): 19 de 19. **Lección repetida dos veces: un doble que devuelve el valor cero junto al error
+    esconde mutantes** (`tenantSpy` devolvía zonas nil con el error; `fakeSlots`, Edge vacío con `ok = false`): sirve para
+    los dobles de F8.
+37. **Dos excepciones a «cada test pierde la etiqueta con su gemelo»** (F7-03, `pipeline`). (i) `backoff_test.go` prueba
+    la política desde el worker: no puede estar en verde hasta el commit del worker (`b6f55e3`), no el de `backoff.go`
+    (`3b6dfd4`). (ii) Un auxiliar con regla y sin llamante de producción todavía (`causeOf`, `backoffFor`) pasa el lint
+    `unused` si nace con su test interno (`backoff_internal_test.go`): es la salida al problema del hallazgo 19 cuando el
+    auxiliar lleva regla. Para que `slot_test.go` compilara solo, dos ayudantes de espera y un doble cambiaron de fichero
+    de test en `8d63643`, sin cambiar un byte.
+38. 🔴 **El gate por paquete no ve los candados que viven en OTRO módulo: `make ci-local` salió rc=2 la primera vez**
+    (F7-03). El candado C2 del árbol nuevo (`internal/modulos/inferencia/llmvia/c2_via_test.go`, I-CP-3) barre todo
+    `internal/modulos` y exige que la lista de ficheros que comparan por vía sea exacta: el verde de `reanalisis`
+    (`5d3e1b1`) metió esas comparaciones en `reanalisis_checks.go` y el candado se puso en rojo. El propio candado
+    anunciaba la entrada («la añade quien introduzca esa comparación, en su commit `verde`», y nombraba `reanalisis.go`:
+    al partir por tema cayó en `reanalisis_checks.go`). Se añadió en `69d142e`, con el motivo literal del candado viejo;
+    debió ir en `5d3e1b1`, y entre los dos commits el árbol tiene ese test en rojo. **Para F8 y lo que venga**: el
+    sub-agente que porta un fichero corre, además de su paquete y de `./internal/modulos/`, los candados de invariante de
+    `05` §3.2 que barren el árbol (`go test ./internal/modulos/inferencia/llmvia/ -run TestC2`), o los corre el
+    orquestador antes de aceptar el verde.
+
