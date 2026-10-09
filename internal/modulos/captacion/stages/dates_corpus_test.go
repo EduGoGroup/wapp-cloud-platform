@@ -1,0 +1,127 @@
+//go:build pendiente
+
+package stages_test
+
+// Trozo de dates_test.go (E-13): el CORPUS ADVERSARIO de expresiones de fecha (hallazgo
+// 40 de F6) — blancos Unicode, caracteres invisibles, acentos combinantes, dígitos que
+// no son ASCII, separadores repetidos, años imposibles, subcadenas y UTF-8 inválido.
+//
+// Las fechas esperadas se fijaron ejecutando el paquete viejo
+// (internal/intake/stages @ 4cd9cfb) sobre estas mismas entradas: es la equivalencia
+// viejo ↔ nuevo, fijada a mano porque el paquete nuevo no importa el viejo. Una fila con
+// fecha esperada NO dice que esa fecha sea la deseable: dice lo que el sistema hace hoy.
+//
+// 🔴 Los caracteres invisibles van ESCAPADOS, nunca literales: un U+FEFF literal en el
+// fuente ni siquiera compila («illegal byte order mark»).
+
+import "testing"
+
+// adversarialDateCases son las filas del corpus, en el formato de dateCase.
+var adversarialDateCases = []dateCase{
+	{"upper case with accents folds like lower case", "2026-07-13", "EL MIÉRCOLES DE LA SEMANA QUE VIENE", "2026-07-22"},
+	{"upper case day name alone", "2026-07-13", "SÁBADO", "2026-07-18"},
+	{"upper case relative day keeps its tilde letter", "2026-07-13", "PASADO MAÑANA", "2026-07-15"},
+	{"upper case accented unit", "2026-07-13", "EN CINCO DÍAS", "2026-07-18"},
+	{"no-break spaces between words are blanks", "2026-07-13", "el\u00a0miércoles\u00a0de la semana que\u00a0viene", "2026-07-22"},
+	{"tabs newlines and repeated spaces collapse", "2026-07-13", "  el   miércoles\n\tde la  semana que viene  ", "2026-07-22"},
+	{"ideographic thin and em spaces are blanks", "2026-07-13", "en\u30005\u2009días\u2003", "2026-07-18"},
+	{"narrow no-break space is a blank", "2026-07-13", "en 5\u202fdías", "2026-07-18"},
+	{"line separator and next line are blanks", "2026-07-13", "pasado\u2028mañana\u0085", "2026-07-15"},
+	{"only blanks is the empty expression", "2026-07-13", " \u00a0\u2003\t\n", ""},
+	{"zero width space alone is not empty and resolves nothing", "2026-07-13", "\u200b", ""},
+	{"zero width space inside a day name breaks it", "2026-07-13", "el mié\u200brcoles", ""},
+	{"zero width space instead of a blank still finds the inner word", "2026-07-13", "pasado\u200bmañana", "2026-07-14"},
+	{"zero width space inside the week mark falls to the bare day", "2026-07-13", "el miércoles de la semana\u200bque viene", "2026-07-15"},
+	{"byte order mark before a relative day", "2026-07-13", "\ufeffmañana", "2026-07-14"},
+	{"byte order mark before a numeric date", "2026-07-13", "\ufeff22/07", "2026-07-22"},
+	{"word joiner between preposition and number breaks the amount", "2026-07-13", "en\u20605 días", ""},
+	{"right to left mark before a numeric date", "2026-07-13", "\u200f22/07", "2026-07-22"},
+	{"mongolian vowel separator is not a blank", "2026-07-13", "en\u180e5 días", ""},
+	{"soft hyphen inside a month name breaks it", "2026-07-13", "22 de ju\u00adlio", ""},
+	{"combining acute accent is not folded", "2026-07-13", "el mie\u0301rcoles", ""},
+	{"upper case with combining acute accent is not folded", "2026-07-13", "EL MIE\u0301RCOLES", ""},
+	{"n without tilde is not the relative day", "2026-07-13", "manana", ""},
+	{"n without tilde after pasado", "2026-07-13", "pasado manana", ""},
+	{"n with combining tilde is not the relative day", "2026-07-13", "man\u0303ana", ""},
+	{"diaeresis folds to u", "2026-07-13", "el miércoles de la semana siguiente, sin vergüenza", "2026-07-22"},
+	{"grave accent is not folded", "2026-07-13", "el sàbado", ""},
+	{"arabic-indic digits in a lettered month date", "2026-07-13", "el \u0662\u0662 de julio", ""},
+	{"fullwidth digits in a numeric date", "2026-07-13", "\uff12\uff12/\uff10\uff17", ""},
+	{"devanagari digits in a numeric date", "2026-07-13", "\u0968\u0968/\u0966\u096d", ""},
+	{"fullwidth digit in an amount", "2026-07-13", "en \uff15 días", ""},
+	{"mixed ascii and arabic-indic digits", "2026-07-13", "el 2\u0662 de julio", ""},
+	{"non ascii digits next to a day name fall to the bare day", "2026-07-13", "el miércoles \u0662\u0662 de julio", "2026-07-15"},
+	{"superscript digit is not a digit", "2026-07-13", "en \u00b2 días", ""},
+	{"doubled slash", "2026-07-13", "22//07", ""},
+	{"doubled dash", "2026-07-13", "22--07", ""},
+	{"slash then dash", "2026-07-13", "22/-07", ""},
+	{"trailing slash", "2026-07-13", "22/07/", "2026-07-22"},
+	{"mixed dash and slash with year", "2026-07-13", "22-07/2026", "2026-07-22"},
+	{"dot separator is not supported", "2026-07-13", "22.07", ""},
+	{"spaced slash is not supported", "2026-07-13", "22 / 07", ""},
+	{"fullwidth slash is not a separator", "2026-07-13", "22\uff0f07", ""},
+	{"en dash is not a separator", "2026-07-13", "22\u201307", ""},
+	{"repeated de", "2026-07-13", "22 de de julio", ""},
+	{"doubled blanks inside a lettered date collapse", "2026-07-13", "22   de   julio", "2026-07-22"},
+	{"two digit year is 2000 plus", "2026-07-13", "22/07/26", "2026-07-22"},
+	{"single digit day month and two digit year", "2026-07-13", "22-7-27", "2027-07-22"},
+	{"three digit year is taken literally", "2026-07-13", "22/07/126", "0126-07-22"},
+	{"one digit year is ignored", "2026-07-13", "22/07/1", "2026-07-22"},
+	{"five digit year is ignored", "2026-07-13", "22/07/20266", "2026-07-22"},
+	{"two digit year after a lettered month is ignored", "2026-07-13", "el 22 de julio de 26", "2026-07-22"},
+	{"five digit year after a lettered month is ignored", "2026-07-13", "22 de julio de 20266", "2026-07-22"},
+	{"three digit day does not match", "2026-07-13", "122/07", ""},
+	{"day zero does not exist", "2026-07-13", "00/07", ""},
+	{"day 32 does not exist", "2026-07-13", "32/07", ""},
+	{"month 13 does not exist", "2026-07-13", "22/13", ""},
+	{"april has no 31", "2026-07-13", "31/04", ""},
+	{"29 february without year does not look for a leap year", "2026-07-13", "29/02", ""},
+	{"29 february of a leap year", "2026-07-13", "29/02/2028", "2028-02-29"},
+	{"numeric date of the message day does not cross the year", "2026-07-13", "13/07", "2026-07-13"},
+	{"numeric date of the day before crosses the year", "2026-07-13", "12/07", "2027-07-12"},
+	{"lettered date of the message day does not cross the year", "2026-07-13", "el 13 de julio", "2026-07-13"},
+	{"numeric date crosses the year from december", "2026-12-28", "05/01", "2027-01-05"},
+	{"first of january from july", "2026-07-13", "1/1", "2027-01-01"},
+	{"setiembre spelling", "2026-07-13", "22 de Setiembre", "2026-09-22"},
+	{"upper case lettered date with year", "2026-07-13", "22 DE SEPTIEMBRE DE 2027", "2027-09-22"},
+	{"zero days does not resolve", "2026-07-13", "en 0 días", ""},
+	{"zero days next to a day name falls to the bare day", "2026-07-13", "en 0 días, o el lunes", "2026-07-20"},
+	{"three digit amount", "2026-07-13", "en 999 días", "2029-04-07"},
+	{"four digit amount does not match", "2026-07-13", "en 1000 días", ""},
+	{"one day in letters", "2026-07-13", "en un dia", "2026-07-14"},
+	{"fifteen days in letters", "2026-07-13", "en quince dias", "2026-07-28"},
+	{"eleven is not in the table", "2026-07-13", "en once días", ""},
+	{"unit with a trailing letter does not match", "2026-07-13", "en 5 díass", ""},
+	{"upper case accent in the unit", "2026-07-13", "en 5 dÍas", "2026-07-18"},
+	{"preposition glued to another word does not match", "2026-07-13", "tren 5 dias", ""},
+	{"three weeks in digits", "2026-07-13", "en 3 semanas", "2026-08-03"},
+	{"hoy is found as a substring", "2026-07-13", "en el hoyo", "2026-07-13"},
+	{"mañana is found inside a glued word", "2026-07-13", "pasadomañana", "2026-07-14"},
+	{"pasado mañana wins wherever it appears", "2026-07-13", "mañana o pasado mañana", "2026-07-15"},
+	{"mañana wins over hoy", "2026-07-13", "hoy o mañana", "2026-07-14"},
+	{"first day name in the text wins", "2026-07-13", "lunes o martes", "2026-07-20"},
+	{"first day name in the text wins reversed", "2026-07-13", "martes o lunes", "2026-07-14"},
+	{"two day names with the week mark", "2026-07-13", "el martes o el lunes de la semana que viene", "2026-07-21"},
+	{"week mark before the day name", "2026-07-13", "la semana que viene, el miércoles", "2026-07-22"},
+	{"semana entrante mark", "2026-07-13", "el jueves de la semana entrante", "2026-07-23"},
+	{"semana proxima mark without accent", "2026-07-13", "viernes de la semana proxima", "2026-07-24"},
+	{"relative day wins over a bare day name", "2026-07-13", "mañana martes", "2026-07-14"},
+	{"amount wins over a bare day name", "2026-07-13", "el lunes o en 5 días", "2026-07-18"},
+	{"impossible lettered date next to a day name falls to the bare day", "2026-07-13", "el miércoles 31 de febrero", "2026-07-15"},
+	{"impossible numeric date next to a day name falls to the bare day", "2026-07-13", "el 07/22, viernes", "2026-07-17"},
+	{"emoji after a relative day", "2026-07-13", "mañana \U0001f64f", "2026-07-14"},
+	{"emoji glued to a numeric date", "2026-07-13", "el 22/07\U0001f44d", "2026-07-22"},
+	{"bare day said on that same day is next week", "2026-07-19", "el domingo", "2026-07-26"},
+	{"sunday of next week said on a sunday", "2026-07-19", "el domingo de la próxima semana", "2026-07-26"},
+	{"saturday said on a friday is tomorrow", "2026-07-17", "sabado", "2026-07-18"},
+	{"today on the last day of a leap february", "2028-02-29", "hoy", "2028-02-29"},
+	{"tomorrow from the last day of a leap february", "2028-02-29", "mañana", "2028-03-01"},
+	{"in two weeks across the year", "2026-12-25", "en dos semanas", "2027-01-08"},
+	{"invalid byte instead of the tilde letter", "2026-07-13", "ma\xf1ana", ""},
+	{"invalid byte before a numeric date", "2026-07-13", "\xff22/07", "2026-07-22"},
+}
+
+// TestResolveDate_AdversarialCorpus_MatchesTheOldPackage corre el corpus entero.
+func TestResolveDate_AdversarialCorpus_MatchesTheOldPackage(t *testing.T) {
+	runDateCases(t, adversarialDateCases)
+}
