@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakeahead_test
 
 // intakeahead_run_test.go — los workers de Run, vistos por el contrato de intakeahead.go:

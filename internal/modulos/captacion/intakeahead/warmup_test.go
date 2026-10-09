@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakeahead_test
 
 // warmup_test.go — el contrato de warmup.go: Warm, el puerto Warmer y sus tres opciones.

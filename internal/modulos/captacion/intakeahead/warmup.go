@@ -8,7 +8,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-shared/llm"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intentcfg"
 )
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -77,9 +77,7 @@ type Warmer interface {
 // con nil—, `Warm` es un no-op silencioso: se pierde el precalentado (la primera
 // inferencia de cada prefijo vuelve a pagar el prefill frío) y NADA MÁS — el pipeline
 // funciona igual, solo más lento en su primer mensaje.
-func WithWarmer(w Warmer) Option {
-	panic(pendiente.Implementar("intakeahead.WithWarmer"))
-}
+func WithWarmer(w Warmer) Option { return func(p *Pool) { p.warmer = w } }
 
 // WithWarmup (antes `WithCalentamiento`) enciende o apaga el precalentado. Por defecto
 // está ENCENDIDO (New lo materializa), así que un Pool construido sin esta opción
@@ -93,14 +91,26 @@ func WithWarmer(w Warmer) Option {
 //
 // Apagado, `Warm` no hace nada: nadie precalienta y la primera inferencia de cada
 // prefijo nuevo paga el prefill frío.
-func WithWarmup(on bool) Option {
-	panic(pendiente.Implementar("intakeahead.WithWarmup"))
-}
+func WithWarmup(on bool) Option { return func(p *Pool) { p.warmupOn = on } }
 
 // WithWarmTimeout fija el presupuesto de un calentamiento (ver DefaultWarmTimeout). Un
 // valor <= 0 se ignora y queda el que hubiera.
 func WithWarmTimeout(d time.Duration) Option {
-	panic(pendiente.Implementar("intakeahead.WithWarmTimeout"))
+	return func(p *Pool) {
+		if d > 0 {
+			p.warmTimeout = d
+		}
+	}
+}
+
+// edgeKey identifica la caché que se calienta. Es el EDGE y no la sesión, y esa
+// elección es la que hace que el fan-out de un ConfigUpdate no sea una tormenta: un
+// Edge multiplexa TODAS las sesiones del tenant sobre un stream (ADR-0008) y tiene UN
+// Ollama, así que calentar «por sesión» dispararía N calentamientos idénticos contra
+// la misma plaza única — N × 50 s por publicar un catálogo.
+type edgeKey struct {
+	tenantID string
+	edgeID   string
 }
 
 // Warm dispara UN calentamiento de la caché de prefijo del Edge `edgeID` del tenant,
@@ -154,5 +164,85 @@ func WithWarmTimeout(d time.Duration) Option {
 // ⚠️ Heredado tal cual: `Warm` no comprueba `log`. Un pool construido con `log` nil y
 // con Warmer no está contemplado (el arranque siempre lo da).
 func (p *Pool) Warm(tenantID, edgeID, sessionID, kind string) {
-	panic(pendiente.Implementar("intakeahead.Pool.Warm"))
+	if p == nil || !p.warmupOn || p.warmer == nil || p.cfg == nil ||
+		tenantID == "" || sessionID == "" {
+		return
+	}
+	if kind != "" && kind != intentcfg.Kind {
+		return
+	}
+	k := edgeKey{tenantID: tenantID, edgeID: edgeID}
+	if !p.markWarmup(k) {
+		// Ya hay uno en vuelo para este Edge: el caso normal cuando un ConfigUpdate
+		// sale hacia varias sesiones a la vez. No es un fallo y no se loguea.
+		return
+	}
+	go func() {
+		defer p.releaseWarmup(k)
+		p.runWarmup(tenantID, sessionID)
+	}()
+}
+
+// runWarmup (antes `calentar`) hace el trabajo: lee el catálogo, arma la MISMA entrada
+// que usaría una P1 real y se la entrega al emisor con su propio reloj.
+func (p *Pool) runWarmup(tenantID, sessionID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), p.warmBudget())
+	defer cancel()
+
+	in, ok := p.input(ctx, "calentamiento", tenantID, "")
+	if !ok {
+		// Sin catálogo no hay prefijo que calentar, y es el estado NORMAL de un tenant
+		// que no ha publicado intenciones. `input` ya dijo lo que había que decir.
+		return
+	}
+	if err := p.warmer.Warm(ctx, tenantID, sessionID, in); err != nil {
+		// 🔴 EL MENSAJE NO AFIRMA QUE ALGO SE ROMPIÓ, y no es prudencia: el desenlace
+		// más frecuente aquí es un tenant en vía API, donde «no se emitió» es la
+		// respuesta CORRECTA y no un fallo. El error concreto va en el campo y dice
+		// cuál de los dos fue; el rótulo no puede decidirlo sin preguntar por la vía,
+		// que es lo que este paquete no hace.
+		//
+		// Y va en DEBUG, no en WARN: nadie estaba esperando esto. Un calentamiento que
+		// no sale deja al tenant exactamente como estaba —su primera inferencia paga el
+		// prefill frío—, así que subirlo de nivel entrenaría a quien mire los logs a
+		// ignorar avisos que sí importan.
+		p.log.Debug("calentamiento: no se emitió",
+			"tenant_id", tenantID, "session_id", sessionID, "error", err)
+		return
+	}
+	p.log.Debug("calentamiento: emitido contra el Edge",
+		"tenant_id", tenantID, "session_id", sessionID)
+}
+
+// warmBudget (antes `warmTimeoutFn`) resuelve el presupuesto. El default se aplica en
+// el uso y no solo en el constructor: un Pool armado con literal de struct en un test
+// interno se comporta igual que uno construido con New.
+func (p *Pool) warmBudget() time.Duration {
+	if p.warmTimeout <= 0 {
+		return DefaultWarmTimeout
+	}
+	return p.warmTimeout
+}
+
+// markWarmup (antes `marcarCalentamiento`) toma el cerrojo «uno en vuelo por Edge».
+// Devuelve false si ya había uno.
+func (p *Pool) markWarmup(k edgeKey) bool {
+	p.warmMu.Lock()
+	defer p.warmMu.Unlock()
+	if p.warmInFlight == nil {
+		p.warmInFlight = make(map[edgeKey]struct{})
+	}
+	if _, ok := p.warmInFlight[k]; ok {
+		return false
+	}
+	p.warmInFlight[k] = struct{}{}
+	return true
+}
+
+// releaseWarmup (antes `soltarCalentamiento`) libera el cerrojo. Corre siempre, por
+// defer.
+func (p *Pool) releaseWarmup(k edgeKey) {
+	p.warmMu.Lock()
+	defer p.warmMu.Unlock()
+	delete(p.warmInFlight, k)
 }

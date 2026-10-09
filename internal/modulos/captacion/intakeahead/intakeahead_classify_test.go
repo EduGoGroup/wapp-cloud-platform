@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakeahead_test
 
 // intakeahead_classify_test.go — lo que un worker hace con UNA petición, visto por el

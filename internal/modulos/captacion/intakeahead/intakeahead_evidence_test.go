@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakeahead_test
 
 // intakeahead_evidence_test.go — el SANEO contra el texto del cliente, visto por el

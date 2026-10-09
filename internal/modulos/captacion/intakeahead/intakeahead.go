@@ -85,6 +85,7 @@ package intakeahead
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/EduGoGroup/wapp-shared/llm"
@@ -92,7 +93,6 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intentcfg"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 const (
@@ -191,13 +191,50 @@ type SinkFunc func(key intake.WindowKey, intent string, confidence float64)
 // OnClassified implementa Sink: llama a la función con los tres argumentos tal cual,
 // una vez por entrega.
 func (f SinkFunc) OnClassified(key intake.WindowKey, intent string, confidence float64) {
-	panic(pendiente.Implementar("intakeahead.SinkFunc.OnClassified"))
+	f(key, intent, confidence)
+}
+
+// request (antes `peticion`) es UNA clasificación pendiente. Vive en la cola en
+// memoria y muere con el worker que la atiende.
+type request struct {
+	key intake.WindowKey
+	// text es el literal del cliente. Ver la cabecera: no se persiste y no se loguea.
+	text string
 }
 
 // Pool pide clasificaciones P1 fuera del camino del mensaje. Es seguro para uso
 // concurrente: `Request` corre desde la goroutine de cada entrante y `Warm` desde el
 // gateway. Se construye con New; un `*Pool` nil es un no-op seguro en sus tres métodos.
-type Pool struct{}
+type Pool struct {
+	log  logger.Logger
+	cfg  ConfigStore
+	sel  ProviderSelector
+	sink Sink
+
+	workers int
+	timeout time.Duration
+	queue   chan request
+
+	mu sync.Mutex
+	// inFlight (antes `enVuelo`) son las ventanas con una petición viva (encolada o
+	// corriendo). Es el cerrojo (1) de la cabecera y el que hace que una ráfaga no sea
+	// una tormenta.
+	inFlight map[intake.WindowKey]struct{}
+
+	// --- Calentamiento de la caché de prefijo (T1.7-4, ver warmup.go) ---
+	warmer Warmer
+	// warmupOn es el interruptor de campo. Nace en true (New lo materializa): ver
+	// WithWarmup.
+	warmupOn    bool
+	warmTimeout time.Duration
+	// warmMu protege warmInFlight. Es un candado APARTE del `mu` de arriba a propósito:
+	// aquel lo toman Request y serve en el camino de CADA entrante, y colgar de él un
+	// mapa que solo tocan los calentamientos —uno por Edge, cada muchos minutos— sería
+	// meter dos ritmos muy distintos bajo la misma cerradura sin necesidad.
+	warmMu sync.Mutex
+	// warmInFlight son los Edges con un calentamiento vivo. Cerrojo «uno por Edge».
+	warmInFlight map[edgeKey]struct{}
+}
 
 // Option configura el Pool al construirlo. Las opciones se aplican en orden: si dos
 // fijan lo mismo, gana la última.
@@ -206,20 +243,32 @@ type Option func(*Pool)
 // WithWorkers fija el techo de inferencias simultáneas (cuántos workers arranca Run).
 // Un valor <= 0 se ignora y queda el que hubiera (DefaultWorkers).
 func WithWorkers(n int) Option {
-	panic(pendiente.Implementar("intakeahead.WithWorkers"))
+	return func(p *Pool) {
+		if n > 0 {
+			p.workers = n
+		}
+	}
 }
 
 // WithQueueSize fija cuántas peticiones caben esperando worker; la siguiente se
 // descarta (ver Request). Un valor <= 0 se ignora y queda el que hubiera (DefaultQueue).
 func WithQueueSize(n int) Option {
-	panic(pendiente.Implementar("intakeahead.WithQueueSize"))
+	return func(p *Pool) {
+		if n > 0 {
+			p.queue = make(chan request, n)
+		}
+	}
 }
 
 // WithTimeout fija el presupuesto de una petición completa (ver DefaultTimeout). Un
 // valor <= 0 se ignora y queda el que hubiera. El umbral del reintento por calidad
 // —la mitad del presupuesto— se escala con él.
 func WithTimeout(d time.Duration) Option {
-	panic(pendiente.Implementar("intakeahead.WithTimeout"))
+	return func(p *Pool) {
+		if d > 0 {
+			p.timeout = d
+		}
+	}
 }
 
 // New construye el pool, sin arrancar nada: los workers nacen en Run.
@@ -232,7 +281,24 @@ func WithTimeout(d time.Duration) Option {
 // opcionales del pipeline: un arranque parcial no puede tumbar el turno de nadie.
 // Nunca devuelve nil.
 func New(log logger.Logger, cfg ConfigStore, sel ProviderSelector, sink Sink, opts ...Option) *Pool {
-	panic(pendiente.Implementar("intakeahead.New"))
+	p := &Pool{
+		log:      log,
+		cfg:      cfg,
+		sel:      sel,
+		sink:     sink,
+		workers:  DefaultWorkers,
+		timeout:  DefaultTimeout,
+		queue:    make(chan request, DefaultQueue),
+		inFlight: make(map[intake.WindowKey]struct{}),
+
+		warmupOn:     true,
+		warmTimeout:  DefaultWarmTimeout,
+		warmInFlight: make(map[edgeKey]struct{}),
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // Request encola la petición P1 de un entrante: `key` es su ventana y `text` (antes
@@ -297,7 +363,24 @@ func New(log logger.Logger, cfg ConfigStore, sel ProviderSelector, sink Sink, op
 // terminar y el siguiente mensaje de esa ventana vuelve a preguntar. Ningún fallo
 // sale hacia arriba ni detiene al worker: lo que se pierde es un adelanto.
 func (p *Pool) Request(key intake.WindowKey, text string) {
-	panic(pendiente.Implementar("intakeahead.Pool.Request"))
+	if !p.usable() || text == "" || !key.Valid() {
+		return
+	}
+	if !p.mark(key) {
+		// Ya hay una petición viva para esta ventana: el cerrojo (1). No es un fallo y
+		// no se loguea — en una ráfaga de 50 mensajes esto ocurre 49 veces y el log
+		// sería el ruido que la cola evita.
+		return
+	}
+	select {
+	case p.queue <- request{key: key, text: text}:
+	default:
+		// Cola llena: se descarta el ADELANTO, no el mensaje. Hay que soltar el
+		// cerrojo o la ventana quedaría marcada como «preguntando» para siempre.
+		p.release(key)
+		p.log.Debug("adelanto: cola de clasificación llena; la ventana cerrará por su reloj",
+			"tenant_id", key.TenantID, "session_id", key.SessionID)
+	}
 }
 
 // Run arranca los workers (DefaultWorkers, o los de WithWorkers) y bloquea hasta que
@@ -315,5 +398,53 @@ func (p *Pool) Request(key intake.WindowKey, text string) {
 // Se llama UNA vez, desde el arranque; un segundo `Run` sobre el mismo pool sumaría
 // workers sin dar error.
 func (p *Pool) Run(ctx context.Context) {
-	panic(pendiente.Implementar("intakeahead.Pool.Run"))
+	if !p.usable() {
+		return
+	}
+	var wg sync.WaitGroup
+	for range p.workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.worker(ctx)
+		}()
+	}
+	wg.Wait()
+}
+
+// worker atiende peticiones hasta que ctx se cancela.
+func (p *Pool) worker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case req := <-p.queue:
+			p.serve(ctx, req)
+		}
+	}
+}
+
+// usable dice si el pool tiene con qué trabajar. Un pool a medio cablear no encola
+// ni arranca workers en vez de reventar en la primera petición.
+func (p *Pool) usable() bool {
+	return p != nil && p.log != nil && p.cfg != nil && p.sel != nil && p.sink != nil
+}
+
+// mark (antes `marcar`) toma el cerrojo de la ventana. Devuelve false si ya había una
+// petición viva.
+func (p *Pool) mark(k intake.WindowKey) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, alive := p.inFlight[k]; alive {
+		return false
+	}
+	p.inFlight[k] = struct{}{}
+	return true
+}
+
+// release (antes `soltar`) libera el cerrojo de la ventana.
+func (p *Pool) release(k intake.WindowKey) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.inFlight, k)
 }

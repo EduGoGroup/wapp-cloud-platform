@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakeahead_test
 
 // intakeahead_test.go — el contrato de intakeahead.go: New, Request, Run, las opciones y

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakeahead_test
 
 // doubles_test.go — EL BANCO Y LOS DOBLES de los tests del adelanto (sin fichero de
