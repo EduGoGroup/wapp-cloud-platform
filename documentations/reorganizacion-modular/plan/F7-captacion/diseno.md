@@ -196,6 +196,10 @@ contrato de `draft` se reparte por responsabilidad: cabecera · revisión · eve
 
 ### 2.5 · `C/pipeline` (4 · 57 exp.)
 
+> ✎ **F7-03**: §2.5–§2.7 describen el paquete **viejo**, con sus nombres en español. Lo construido son 14 ficheros de
+> producción y un doble (hallazgo 27 del README), con los nombres de la tabla «Correspondencia de nombres — F7-03» de
+> [`tareas.md`](tareas.md); `NewService` de `reanalisis` tiene un octavo parámetro, `threadLimit` (hallazgo 31).
+
 | Fichero | L | Exp. | Contrato |
 |---|---:|---:|---|
 | `pipeline.go` | 1.148 | 21 | `NewWorker(log, store PipelineStore, p2, p3, p4, match, draft, catalogos Catalogos, descifrador Descifrador, Config, …)`; puertos `Descifrador` `:95`, `Etapa*` `:100-123`, `Catalogos` `:136`, `ZonasDeEnvio` `:146`; `Run` (ticker `Cadencia`), `Despertar(tenantID, edgeID)`; `PlazoPorLlamadaSuelo = 48 s` (`:207`); `Config{}` por defecto: cadencia 5 s, backoff 30 s → 5 min, 3 intentos por calidad, 10 por infra (sin variable de entorno a propósito); `ConAforo`, `ConZonasDeEnvio` (sin ella todo borrador sale con el envío sin precio); DEUDA-044.10 (`:56`); el `source_text` se descifra con el **mismo** keyring que lo cifró el compositor |

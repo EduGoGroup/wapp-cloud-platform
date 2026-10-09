@@ -82,6 +82,13 @@ var allowed = map[string]string{
 	// viejo le da a internal/publicapi/tenantllm.go, con el mismo motivo.
 	"internal/apipublica/tenantllm.go": "El CONTRATO HTTP del PUT: qué campos exige cada vía (REQ-33: elegir local no exige nada) y " +
 		"cómo se traduce el cuerpo a los argumentos del store. Valida la petición; no decide quién ejecuta la inferencia.",
+
+	// Entrada de F7 (F7-03), la otra que el comentario de arriba anunciaba: la misma que el candado
+	// viejo le da a internal/reanalisis/reanalisis.go, con el mismo motivo. El fichero es
+	// reanalisis_checks.go y no reanalisis.go porque el nuevo se partió por tema (E-13, D-F7-6).
+	"internal/modulos/captacion/reanalisis/reanalisis_checks.go": "El CONTRATO HTTP del re-análisis (§8.1): resuelve la vía EFECTIVA de la petición y " +
+		"decide QUÉ EXIGE cada una —`api` pide `api_llm` y credencial, `local` no pide nada—. No construye " +
+		"provider ni llama al modelo: la vía viaja al job como DATO y la selección la sigue haciendo el Selector.",
 }
 
 // TestC2_TheRouteIsOnlyAskedInTheSelection recorre el AST del árbol nuevo y exige que la

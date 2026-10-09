@@ -109,7 +109,9 @@ var reglas = candados.Reglas{
 	// inferencia no entra hasta F8, cuando muera bridge_inferencia.go.
 	Conmutados: []string{"acceso", "edge"},
 	// Puentes: import de un paquete NUEVO a uno VIEJO, declarado (05 §4.1). Vacía de F0 a F5;
-	// el primero nace en F6 (F6-04); el segundo, en F7 (F7-02, T7.9).
+	// el primero nace en F6 (F6-04); el segundo, en F7 (F7-02, T7.9); el tercero, en F7 (F7-03,
+	// T7.12). El PUENTE 3 de plan/F7-captacion/arquitectura.md §2 (reanalisis → flujos/runtime,
+	// por DefaultThreadLimit) se evitó: el límite del hilo entra por reanalisis.NewService.
 	Puentes: []candados.Puente{
 		{
 			Desde: "internal/modulos/solicitudes/intakes/telemetria",
@@ -127,6 +129,16 @@ var reglas = candados.Reglas{
 				"(IntakeStore: GetIntakeByEvent, UpsertIntake) y store.FlowEvent (EventWriter: InsertFlowEvent). " +
 				"public.intakes y flow_events los sigue sirviendo ese almacén, que no tiene gemelo nuevo en " +
 				"conversacion hasta F8 (PUENTE 1 de plan/F7-captacion/arquitectura.md §2)",
+			Nace:  "F7",
+			Muere: "F8",
+		},
+		{
+			Desde: "internal/modulos/captacion/reanalisis",
+			Hacia: "internal/flujos/events",
+			Motivo: "el re-análisis declara en su puerto Thread el tipo del hilo del almacén viejo de eventos " +
+				"(events.ThreadEntry, en ListThread) y decide si hay material contando las entradas " +
+				"events.KindMessage. conversation_event_messages la sigue sirviendo ese almacén, que no " +
+				"tiene gemelo nuevo en conversacion hasta F8 (PUENTE 2 de plan/F7-captacion/arquitectura.md §2)",
 			Nace:  "F7",
 			Muere: "F8",
 		},

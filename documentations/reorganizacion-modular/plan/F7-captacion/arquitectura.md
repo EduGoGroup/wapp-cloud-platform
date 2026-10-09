@@ -38,7 +38,7 @@ Exportados: **305**; cuerpos de función/método exportados ≈ **119** (regla e
 | `reanalisis` | `intake`, `stages` · `intakes` (`ReanalysisTarget`) · `cart.SanitizeNote` (`:647`) | `C/…`, F6 | permitido |
 | `reanalisis` | `entitlements` (`FeatureLLMIntake`, `FeatureAPILLM`) · `tenantllm` (`Config`, `ValidVia`, `ViaAPI`, `ViaLocal`) | `modulos/acceso/entitlements` (F2) · `modulos/inferencia/tenantllm` (F4) | módulo ya reconstruido |
 | `reanalisis` | **`internal/flujos/events`** (`ThreadEntry`, `KindMessage` en el puerto `Hilo` `:250-254`, `contarMensajes` `:704-706`) | **viejo** | 🔶 **PUENTE 2** hasta F8 |
-| `reanalisis` | **`internal/flujos/runtime`** (`DefaultThreadLimit` = 200, `:666`; `source_composer.go:294`) | **viejo** | 🔶 **PUENTE 3** hasta F8 (o se copia la constante: ver §4 nota) |
+| `reanalisis` | **`internal/flujos/runtime`** (`DefaultThreadLimit` = 200, `:666`; `source_composer.go:294`) | **viejo** | ~~🔶 **PUENTE 3** hasta F8~~ ✎ F7-03 (T7.12): **evitado** — el límite entra por el constructor (`NewService(…, threadLimit int)`); no hay import a `flujos/runtime` (hallazgo 31 del README) |
 
 **Lista blanca de F7** (`fronteras_test.go`): `captacion → {platform, solicitudes, catalogo,
 inferencia, acceso}`. Ni `stages` ni `intakeahead` importan `llmvia`: reciben el selector por puertos
