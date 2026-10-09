@@ -3,10 +3,11 @@
 // Trozo de repository_postgres.go (05 E-13): public.intakes y public.intake_items.
 // Las reglas comunes del adaptador están en la cabecera de repository_postgres.go.
 //
-// Los auxiliares no exportados del viejo (execer, intakeItemCols, reservedSKUPrefix,
-// replaceIntakeItemsTx, insertIntakeItems, esUUID, cabeceraIntakeCols y
-// escanearCabeceraIntake) nacen con el verde, con nombre en inglés (E-11). Dos reglas
-// suyas son del contrato y por eso se escriben aquí:
+// Los auxiliares no exportados del viejo viven aquí con nombre en inglés (E-11): isUUID
+// era esUUID, intakeHeaderCols era cabeceraIntakeCols y scanIntakeHeader era
+// escanearCabeceraIntake; execer, intakeItemCols, replaceIntakeItemsTx e
+// insertIntakeItems conservan el suyo. reservedSKUPrefix vive en store_intakes.go,
+// porque lo usan los DOS adaptadores. Dos reglas suyas son del contrato:
 //
 //   - el prefijo RESERVADO de los skus de la plataforma es el literal "_" (hoy solo
 //     la línea de envío, D-041.11). Es el MISMO literal que el del dominio de
@@ -25,9 +26,73 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/google/uuid"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
+
+// execer es la cara de escritura común de *sql.DB y *sql.Tx (ExecContext), para
+// que los INSERT en lote se reusen tanto en el camino autocommit como dentro de
+// una transacción (CloseIntake).
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// intakeItemCols es el número de columnas por fila que escribe insertIntakeItems
+// (orden de intake_items salvo id y added_at, que usan sus DEFAULT).
+const intakeItemCols = 6
+
+// isUUID dice si `s` puede estar en una columna de tipo `uuid`. Se pregunta ANTES de
+// consultar para no depender del 22P02 de Postgres: es un predicado, no un error, y
+// como predicado lo puede leer el linter y el que venga detrás. Gemelo del `isUUID` de
+// internal/intakes, que existe por lo mismo.
+func isUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
+}
+
+// intakeHeaderCols es la proyección de public.intakes que comparten las lecturas
+// de cabecera de este repositorio. Va en una constante porque son DOS consultas
+// —por identidad de negocio (GetOpenIntake) y por evento (GetIntakeByEvent)— que
+// tienen que devolver EXACTAMENTE la misma foto: dos caminos que hacen lo mismo y
+// divergen en una columna es la forma clásica de que el pedido se vea distinto
+// según por dónde se mire.
+const intakeHeaderCols = `id::text, tenant_id, contact_id, session_id, status, total,
+		       created_at, updated_at, expires_at, event_id::text`
+
+// scanIntakeHeader lee UNA fila de cabecera con la proyección de
+// intakeHeaderCols. sql.ErrNoRows ⇒ (zero, false, nil): "no hay" no es un fallo.
+func scanIntakeHeader(row *sql.Row, what string) (Intake, bool, error) {
+	var (
+		o       Intake
+		expires sql.NullTime
+		eventID sql.NullString
+	)
+	err := row.Scan(
+		&o.ID, &o.TenantID, &o.ContactID, &o.SessionID, &o.Status, &o.Total,
+		&o.CreatedAt, &o.UpdatedAt, &expires, &eventID,
+	)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Intake{}, false, nil
+	case err != nil:
+		return Intake{}, false, fmt.Errorf("store: %s: %w", what, err)
+	}
+	if expires.Valid {
+		o.ExpiresAt = expires.Time
+	}
+	// event_id NULL ⇒ EventID "" (fila legada pre-0054): es la señal con la que el
+	// proyector sabe que puede ESTAMPAR el padre al reusar (D-043.21).
+	if eventID.Valid {
+		o.EventID = eventID.String
+	}
+	return o, true, nil
+}
 
 // UpsertIntake inserta o actualiza (upsert por id) la solicitud en public.intakes
 // (Plan 016 · T0/T2). Idempotente por o.ID. ExpiresAt zero se materializa como
@@ -49,7 +114,32 @@ import (
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "store: upsert solicitud: %w"
 func (r *PostgresRepository) UpsertIntake(ctx context.Context, o Intake) error {
-	panic(pendiente.Implementar("store.PostgresRepository.UpsertIntake"))
+	var expires sql.NullTime
+	if !o.ExpiresAt.IsZero() {
+		expires = sql.NullTime{Time: o.ExpiresAt, Valid: true}
+	}
+	var eventID sql.NullString
+	if o.EventID != "" {
+		eventID = sql.NullString{String: o.EventID, Valid: true}
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO public.intakes
+			(id, tenant_id, contact_id, session_id, status, total, expires_at, event_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
+		ON CONFLICT (id) DO UPDATE
+		SET tenant_id  = EXCLUDED.tenant_id,
+		    contact_id = EXCLUDED.contact_id,
+		    session_id = EXCLUDED.session_id,
+		    status     = EXCLUDED.status,
+		    total      = EXCLUDED.total,
+		    expires_at = EXCLUDED.expires_at,
+		    event_id   = COALESCE(public.intakes.event_id, EXCLUDED.event_id),
+		    updated_at = now()
+	`, o.ID, o.TenantID, o.ContactID, o.SessionID, o.Status, o.Total, expires, eventID)
+	if err != nil {
+		return fmt.Errorf("store: upsert solicitud: %w", err)
+	}
+	return nil
 }
 
 // GetOpenIntake devuelve la solicitud "open" del contacto para (tenantID, contactID);
@@ -61,7 +151,13 @@ func (r *PostgresRepository) UpsertIntake(ctx context.Context, o Intake) error {
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "store: leer solicitud abierta: %w"
 func (r *PostgresRepository) GetOpenIntake(ctx context.Context, tenantID, contactID string) (Intake, bool, error) {
-	panic(pendiente.Implementar("store.PostgresRepository.GetOpenIntake"))
+	return scanIntakeHeader(r.db.QueryRowContext(ctx, `
+		SELECT `+intakeHeaderCols+`
+		FROM public.intakes
+		WHERE tenant_id = $1 AND contact_id = $2 AND status = 'open'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, tenantID, contactID), "leer solicitud abierta")
 }
 
 // GetIntakeByEvent implementa IntakeReader: la solicitud que declara `eventID` como
@@ -79,7 +175,16 @@ func (r *PostgresRepository) GetOpenIntake(ctx context.Context, tenantID, contac
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "store: leer la solicitud del evento: %w"
 func (r *PostgresRepository) GetIntakeByEvent(ctx context.Context, tenantID, eventID string) (Intake, bool, error) {
-	panic(pendiente.Implementar("store.PostgresRepository.GetIntakeByEvent"))
+	if !isUUID(eventID) {
+		return Intake{}, false, nil
+	}
+	return scanIntakeHeader(r.db.QueryRowContext(ctx, `
+		SELECT `+intakeHeaderCols+`
+		FROM public.intakes
+		WHERE tenant_id = $1 AND event_id = $2
+		ORDER BY created_at, id
+		LIMIT 1
+	`, tenantID, eventID), "leer la solicitud del evento")
 }
 
 // ListIntakeItems devuelve las líneas de la solicitud en el orden en que las ve el
@@ -98,7 +203,36 @@ func (r *PostgresRepository) GetIntakeByEvent(ctx context.Context, tenantID, eve
 //   - "store: escanear línea de solicitud: %w"
 //   - "store: iterar líneas de solicitud: %w"
 func (r *PostgresRepository) ListIntakeItems(ctx context.Context, intakeID string) (out []IntakeItem, err error) {
-	panic(pendiente.Implementar("store.PostgresRepository.ListIntakeItems"))
+	if _, perr := uuid.Parse(intakeID); perr != nil {
+		return nil, fmt.Errorf("store: listar líneas de solicitud: id %q inválido: %w", intakeID, perr)
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT sku, label, customization, qty, unit_price, added_at
+		FROM public.intake_items
+		WHERE intake_id = $1
+		ORDER BY added_at, id
+	`, intakeID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listar líneas de solicitud: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			out, err = nil, fmt.Errorf("store: cerrar filas de líneas: %w", cerr)
+		}
+	}()
+
+	out = make([]IntakeItem, 0)
+	for rows.Next() {
+		it := IntakeItem{IntakeID: intakeID}
+		if serr := rows.Scan(&it.SKU, &it.Label, &it.Customization, &it.Qty, &it.UnitPrice, &it.AddedAt); serr != nil {
+			return nil, fmt.Errorf("store: escanear línea de solicitud: %w", serr)
+		}
+		out = append(out, it)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("store: iterar líneas de solicitud: %w", rerr)
+	}
+	return out, nil
 }
 
 // ReplaceIntakeItems deja las líneas de cliente de la solicitud EXACTAMENTE en
@@ -120,7 +254,68 @@ func (r *PostgresRepository) ListIntakeItems(ctx context.Context, intakeID strin
 //   - "store: retirar líneas de solicitud: %w"
 //   - "store: insertar líneas de solicitud: %w"
 func (r *PostgresRepository) ReplaceIntakeItems(ctx context.Context, intakeID string, items []IntakeItem) error {
-	panic(pendiente.Implementar("store.PostgresRepository.ReplaceIntakeItems"))
+	return postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+		return replaceIntakeItemsTx(ctx, tx, intakeID, items)
+	})
+}
+
+// replaceIntakeItemsTx retira las líneas de CLIENTE de la solicitud y escribe las
+// nuevas, sobre una transacción ya abierta. Es el ÚNICO camino por el que el motor
+// de flujos escribe intake_items —lo usan la proyección de item_added y el cierre—,
+// y por eso escribir dos veces el mismo conjunto deja el mismo conjunto.
+//
+// El DELETE excluye el prefijo reservado (copiado de intakes.replaceClientItemsTx,
+// que es como el CRM rehace las líneas en una revisión): las líneas de wApp —hoy la
+// de envío, D-041.11— llevan su precio puesto a mano y no son del carrito. Hoy no
+// pueden coexistir con una escritura del carrito, porque la de envío se cuelga
+// DESPUÉS del cierre y a una solicitud cerrada ya no le entran item_added; la
+// exclusión está para que ese orden pueda cambiar sin que nadie pierda una línea.
+//
+// El orden del pedido se conserva aunque se reescriba entero: la lectura ordena por
+// (added_at, id) y las filas de un INSERT multi-fila reciben el BIGSERIAL en el orden
+// de los VALUES, que es el del carrito. La advertencia de applyRevalidationItemsTx
+// —«reescribirlas todas le reordenaría el pedido»— aplica a un DELETE+INSERT PARCIAL,
+// no a uno que reescribe el conjunto completo en su orden.
+func replaceIntakeItemsTx(ctx context.Context, ex execer, intakeID string, items []IntakeItem) error {
+	if _, err := ex.ExecContext(ctx, `
+		DELETE FROM public.intake_items
+		WHERE intake_id = $1 AND left(sku, 1) <> $2
+	`, intakeID, reservedSKUPrefix); err != nil {
+		return fmt.Errorf("store: retirar líneas de solicitud: %w", err)
+	}
+	return insertIntakeItems(ctx, ex, intakeID, items)
+}
+
+// insertIntakeItems ejecuta el INSERT multi-fila de líneas sobre cualquier execer.
+// len(items)==0 es un no-op. NO es un punto de entrada: se llama SIEMPRE detrás del
+// DELETE de replaceIntakeItemsTx, porque una solicitud recibe hoy varias escrituras
+// de su conjunto de líneas y añadirlas sin retirar las anteriores las duplicaría.
+func insertIntakeItems(ctx context.Context, ex execer, intakeID string, items []IntakeItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(items))
+	args := make([]any, 0, len(items)*intakeItemCols)
+	for i, it := range items {
+		base := i * intakeItemCols
+		placeholders = append(placeholders, fmt.Sprintf(
+			"($%d, $%d, $%d, $%d, $%d, $%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6,
+		))
+		// Customization viaja SIEMPRE, aunque esté vacía: la columna es NOT NULL y
+		// su vacío significa "sin personalización" (D-041.17), no "no sé".
+		args = append(args, intakeID, it.SKU, it.Label, it.Customization, it.Qty, it.UnitPrice)
+	}
+	// #nosec G202 -- solo se concatenan placeholders generados ($1, $2, ...); los
+	// valores viajan siempre parametrizados en args, nunca interpolados en el SQL.
+	query := `
+		INSERT INTO public.intake_items
+			(intake_id, sku, label, customization, qty, unit_price)
+		VALUES ` + strings.Join(placeholders, ", ")
+	if _, err := ex.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("store: insertar líneas de solicitud: %w", err)
+	}
+	return nil
 }
 
 // MarkIntakeStatus transiciona el estado de una solicitud (por id) y fija su total,
@@ -132,7 +327,15 @@ func (r *PostgresRepository) ReplaceIntakeItems(ctx context.Context, intakeID st
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "store: marcar estado de solicitud: %w"
 func (r *PostgresRepository) MarkIntakeStatus(ctx context.Context, intakeID, status string, total float64) error {
-	panic(pendiente.Implementar("store.PostgresRepository.MarkIntakeStatus"))
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.intakes
+		SET status = $2, total = $3, updated_at = now()
+		WHERE id = $1
+	`, intakeID, status, total)
+	if err != nil {
+		return fmt.Errorf("store: marcar estado de solicitud: %w", err)
+	}
+	return nil
 }
 
 // CloseIntake cierra ATÓMICAMENTE la solicitud abierta del contacto e inserta sus
@@ -165,5 +368,63 @@ func (r *PostgresRepository) MarkIntakeStatus(ctx context.Context, intakeID, sta
 //   - "store: bloquear solicitud abierta: %w"
 //   - "store: cerrar solicitud: %w"
 func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) (string, error) {
-	panic(pendiente.Implementar("store.PostgresRepository.CloseIntake"))
+	// Se declara FUERA de la clausura porque WithTx puede REEJECUTARLA ante un
+	// deadlock: cada intento reasigna el id y el que sobrevive es el del intento
+	// que confirmó.
+	var closedID string
+	err := postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+		var eventID sql.NullString
+		if in.EventID != "" {
+			eventID = sql.NullString{String: in.EventID, Valid: true}
+		}
+		var intakeID string
+		err := tx.QueryRowContext(ctx, `
+			SELECT id::text FROM public.intakes
+			WHERE tenant_id = $1 AND contact_id = $2 AND status = 'open'
+			ORDER BY created_at DESC
+			LIMIT 1
+			FOR UPDATE
+		`, in.TenantID, in.ContactID).Scan(&intakeID)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			intakeID = uuid.NewString()
+			// La fila "closed" coherente nace, como cualquier otra, declarando a su
+			// padre (event_id, D-043.21): sin él, el CHECK de la 0054 la rechaza.
+			if _, ierr := tx.ExecContext(ctx, `
+				INSERT INTO public.intakes
+					(id, tenant_id, contact_id, session_id, status, total, customer_note, event_id, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, 'closed', $5, $6, $7, now(), now())
+			`, intakeID, in.TenantID, in.ContactID, in.SessionID, in.Total, in.CustomerNote, eventID); ierr != nil {
+				return fmt.Errorf("store: insertar solicitud cerrada: %w", ierr)
+			}
+		case err != nil:
+			return fmt.Errorf("store: bloquear solicitud abierta: %w", err)
+		default:
+			// customer_note se escribe en el CIERRE y no al abrir la solicitud: el
+			// cliente la teclea en el resumen, que es el último paso antes de
+			// confirmar. La columna es NOT NULL, así que el vacío viaja igual que el
+			// texto —"sin indicación" es un valor, no una omisión— y una solicitud
+			// cerrada dos veces (reintento del 40P01) acaba con el mismo contenido.
+			//
+			// event_id con COALESCE, igual que en UpsertIntake: rellena un NULL
+			// legado (pre-0054) y JAMÁS pisa un padre ya declarado (D-043.21).
+			if _, uerr := tx.ExecContext(ctx, `
+				UPDATE public.intakes
+				SET status = 'closed', total = $2, customer_note = $3,
+				    event_id = COALESCE(event_id, $4), updated_at = now()
+				WHERE id = $1
+			`, intakeID, in.Total, in.CustomerNote, eventID); uerr != nil {
+				return fmt.Errorf("store: cerrar solicitud: %w", uerr)
+			}
+		}
+		closedID = intakeID
+		// REEMPLAZO, no INSERT: la solicitud puede llegar al cierre con las líneas que
+		// la proyección de item_added ya materializó mientras estaba abierta (Plan 043 ·
+		// Ola 3). Insertarlas otra vez las duplicaría todas.
+		return replaceIntakeItemsTx(ctx, tx, intakeID, in.Items)
+	})
+	if err != nil {
+		return "", err
+	}
+	return closedID, nil
 }
