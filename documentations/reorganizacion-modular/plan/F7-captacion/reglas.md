@@ -75,7 +75,7 @@ No se relaja en ningún nivel: equivalencia viejo ↔ nuevo, `make ci-local` rc=
 1. 32 ficheros (o 31 + `pipelinehelpertest/memoria.go` según D-F7-3) con `x_test.go`; suites `intakehelpertest`,
    `casebankhelpertest` (con doble), `intentcfghelpertest`.
 2. Pendientes en `internal/modulos/captacion` = 0; SKIP = 0 (gate con `-v`, sin pipe).
-3. Un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9. Las cuatro suites de puerto con BD
+3. Un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9. Las **cinco** suites de puerto con BD (✎ F7-01: `ContratoQueue`, `ContratoMachine`, `ContratoReanalysis`, `intentcfg` y `casebank`)
    verdes **en memoria y en Postgres** con el mismo `Montaje`: es la verdad de `postgres.go`, `machine_postgres.go` y
    `store_postgres.go`. La tabla de `make cobertura-ficheros` va al PR; no bloquea.
 4. `make ci-local` rc=0; `vet -tags pendiente` rc=0; `fronteras_test.go` con 2–3 puentes (import) de F7 + 1 de F6.

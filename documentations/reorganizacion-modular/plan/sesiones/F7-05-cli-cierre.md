@@ -9,7 +9,7 @@
 | Tareas | T7.27–T7.29 (T7.27 = T9.28) |
 | Depende de | F7-04 |
 | Decisiones | D-F9-1 (adelantar F9) |
-| Se para cuando | las suites de `intake`, `casebank` e `intentcfg` pasan contra Postgres con el arnés · P4 y P8 verdes contra `viejo` y `nuevo` · `make test-procesos` y `make ci-local` rc=0 con 0 SKIP · PR a `dev` abierto desde la rama de la sesión |
+| Se para cuando | las **cinco** suites (`intake`: `ContratoQueue`, `ContratoMachine` y `ContratoReanalysis`; `casebank`; `intentcfg`) pasan contra Postgres con el arnés · P4 y P8 verdes contra `viejo` y `nuevo` · `make test-procesos` y `make ci-local` rc=0 con 0 SKIP · PR a `dev` abierto desde la rama de la sesión |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -29,7 +29,7 @@ Tu encargo (y solo este):
 - Fase: F7 · captacion → documentations/reorganizacion-modular/plan/F7-captacion/
 - Bloque: E · cierre local
 - Tareas: T7.27–T7.29 de plan/F7-captacion/tareas.md (T7.27 = T9.28 de plan/F9-procesos/tareas.md)
-- Te paras cuando: las suites de `intake`, `casebank` e `intentcfg` pasan contra Postgres con el arnés, P4 y P8 están verdes contra `viejo` y `nuevo`, `make test-procesos` y `make ci-local` dan rc=0 con 0 SKIP, y `dev` está empujado.
+- Te paras cuando: las **cinco** suites (`intake`: `ContratoQueue`, `ContratoMachine` y `ContratoReanalysis`; `casebank`; `intentcfg`) pasan contra Postgres con el arnés, P4 y P8 están verdes contra `viejo` y `nuevo`, `make test-procesos` y `make ci-local` dan rc=0 con 0 SKIP, y `dev` está empujado.
 - Decisiones: D-F9-1 debe estar rellena en plan/DECISIONES.md. Si falta, PARA y dilo.
 - Skills: validar-antes-de-cerrar, procesos-testcontainers, traspaso-web-local (solo si hay traspaso que cerrar).
 
