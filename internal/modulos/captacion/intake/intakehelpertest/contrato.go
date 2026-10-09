@@ -307,6 +307,7 @@ func machineCases() []contractCase[MachineMontaje] {
 		{"Release_Processing_BackToPendingWithNothingElseTouched", caseRelease},
 		{"Release_NotProcessing_FalseAndUntouched", caseReleaseNotProcessing},
 		{"Retry_Processing_PendingWithOneMoreAttemptAndTheMarkPushed", caseRetry},
+		{"Retry_PastMark_IsWrittenAsGivenAndClaimableAtOnce", caseRetryPastMark},
 		{"Retry_ZeroInstant_ErrorAndNothingWritten", caseRetryZeroInstant},
 		{"Retry_NotProcessing_FalseAndUntouched", caseRetryNotProcessing},
 		{"Finish_Processing_DoneEmptiesTheEnvelopeAndWritesTheIntake", caseFinish},
