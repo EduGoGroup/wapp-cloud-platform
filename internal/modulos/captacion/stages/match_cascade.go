@@ -3,9 +3,14 @@
 package stages
 
 import (
+	"context"
+	"sort"
+	"strings"
+	"unicode/utf8"
+
 	"github.com/EduGoGroup/wapp-shared/textmatch"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/indice"
 )
 
 // match_cascade.go — LA CASCADA `clave → barrido → zona gris` CONTRA EL CATÁLOGO, que es
@@ -72,7 +77,10 @@ import (
 //
 // Cada llamada devuelve una cascada utilizable; nunca nil.
 func DefaultCascade() *textmatch.Cascade {
-	panic(pendiente.Implementar("stages.DefaultCascade"))
+	// `NewFuzzy(0)` cae al DefaultFuzzyThreshold del módulo, que es 0,85; y
+	// `.Deterministic()` deja el tercer escalón a nil: no es una promesa, es que
+	// `Cascade.Compare` no tiene a quién llamar.
+	return textmatch.NewCascade(textmatch.Exact{}, textmatch.NewFuzzy(0)).Deterministic()
 }
 
 // LengthMargin (antes `MargenLongitud`) es la fracción del texto que el umbral de la
@@ -153,3 +161,222 @@ const (
 	// `customization`—.
 	StrategyNGram = "ngrama"
 )
+
+// minTokenRunes es el tamaño a partir del cual un token cuenta para preseleccionar
+// candidatos. «de», «la», «un» aparecen en media carta y no identifican nada; contarlos
+// haría que el ranking lo ganara la etiqueta más larga en vez de la más parecida.
+const minTokenRunes = 3
+
+// finding es un match resuelto: qué se encontró y quién lo encontró.
+type finding struct {
+	match      indice.Coincidencia
+	provenance MatchProvenance
+}
+
+// scanner es el catálogo PREPARADO PARA BARRER, construido UNA VEZ POR JOB junto al
+// índice y reutilizado por todos los ítems.
+//
+// El índice resuelve las cuatro búsquedas por clave en O(1), pero un hash no sabe
+// contestar «¿qué etiqueta se PARECE a ésta?». Esto es lo que falta para el escalón del
+// medio: las etiquetas ya normalizadas (para no volver a normalizar 2.000 cadenas por
+// cada ítem), su longitud en runas y su histograma (para el prefiltro).
+//
+// Los TOKENS se construyen PEREZOSAMENTE: solo hacen falta cuando hay que preguntarle a
+// la zona gris, y un pedido en el que todo casa —el caso normal— no debe pagar 2.000
+// `SplitTokens` para nada.
+type scanner struct {
+	idx      *indice.Indice
+	norm     []string
+	runes    []int
+	profiles []profile
+
+	tokens [][]string // nil hasta el primer uso; ver tokensOf
+}
+
+// newScanner normaliza las etiquetas del catálogo y calcula sus histogramas UNA SOLA VEZ
+// por job: con el catálogo en su techo son 2.000 normalizaciones, que repartidas entre
+// los hasta 10 ítems del pedido salen a una fracción del presupuesto por ítem.
+//
+// No se cachea entre jobs a propósito: la etapa se queda SIN ESTADO, como P2, P3 y P4, y
+// por tanto es segura para varias goroutines sin candado. El día que el precio del
+// catálogo pese, el sitio de la caché es al lado del índice (que ya la tiene por
+// contenido), no aquí.
+func newScanner(idx *indice.Indice) *scanner {
+	n := idx.Articulos()
+	e := &scanner{idx: idx, norm: make([]string, n), runes: make([]int, n), profiles: make([]profile, n)}
+	for i := range n {
+		e.norm[i] = textmatch.Normalize(idx.Etiqueta(i))
+		e.runes[i] = utf8.RuneCountInString(e.norm[i])
+		e.profiles[i] = profileOf(e.norm[i])
+	}
+	return e
+}
+
+// tokensOf devuelve los tokens de la etiqueta n, construyéndolos la primera vez que
+// alguien los pide.
+func (e *scanner) tokensOf(n int) []string {
+	if e.tokens == nil {
+		e.tokens = make([][]string, len(e.norm))
+		for i, s := range e.norm {
+			e.tokens[i] = textmatch.SplitTokens(s)
+		}
+	}
+	return e.tokens[n]
+}
+
+// searchProduct corre los dos escalones deterministas sobre el texto de un PRODUCTO.
+//
+// Devuelve el hallazgo y si hubo match. El error solo puede venir del comparador
+// inyectado —la cascada por defecto no falla nunca— y aquí NO se degrada: lo registra el
+// llamante, porque taparlo convertiría todas las líneas en `unmatched` sin que nadie se
+// enterara.
+//
+// 🔴 UN PRODUCTO SE BUSCA ENTERO, NUNCA POR TROZOS. Lo contrario —n-gramas, como en los
+// añadidos— casaría «torta de chocolate» con un artículo llamado «Chocolate» y cobraría
+// una tableta en vez de una torta. La regla 1 de match.go, aplicada.
+func (s *Match) searchProduct(ctx context.Context, sc *scanner, text string) (finding, bool, error) {
+	if text == "" {
+		return finding{}, false, nil
+	}
+	if f, ok := byKey(sc.idx, text); ok {
+		return f, true, nil
+	}
+	return s.sweep(ctx, sc, text)
+}
+
+// byKey son los cuatro accesos O(1) del índice, del más específico al menos.
+//
+// Los dos criterios de desempate, que es donde vive el «nunca inventa»:
+//
+//   - **etiqueta**: con varios artículos que normalizan a la MISMA etiqueta gana el
+//     primero del documento. No es elegir entre dos cosas distintas: los dos se llaman
+//     igual, y un catálogo con etiquetas duplicadas es un defecto del catálogo que el
+//     dueño ve en la bandeja.
+//   - **variante y tag**: con más de uno NO se decide y se sigue bajando. «Grande» puede
+//     ser la variante de cinco artículos y «vegano» el tag de veinte; elegir uno sería
+//     inventar cuál pidió el cliente.
+func byKey(idx *indice.Indice, text string) (finding, bool) {
+	// El sku NO se normaliza: es la clave opaca con la que el dueño nombra su producto,
+	// y normalizarla colapsaría "TORTA-CHOC" con "torta choc".
+	if c, ok := idx.PorSKU(text); ok {
+		return finding{c, MatchProvenance{Strategy: StrategySKU, Confidence: 1}}, true
+	}
+	if cs := idx.PorEtiqueta(text); len(cs) > 0 {
+		return finding{cs[0], MatchProvenance{Strategy: StrategyExact, Confidence: 1}}, true
+	}
+	if cs := idx.PorVariante(text); len(cs) == 1 {
+		return finding{cs[0], MatchProvenance{Strategy: StrategyVariant, Confidence: 1}}, true
+	}
+	if cs := idx.PorTag(text); len(cs) == 1 {
+		return finding{cs[0], MatchProvenance{Strategy: StrategyTag, Confidence: 1}}, true
+	}
+	return finding{}, false
+}
+
+// askGrayZone es el TERCER escalón, y se llama COMO MUCHO UNA VEZ por ítem que los
+// deterministas no cubrieron. Sin zona gris cableada no hace nada.
+//
+// # LOS CANDIDATOS SE PRESELECCIONAN POR SOLAPE DE TOKENS, NO POR DISTANCIA
+//
+// Y no es un detalle de implementación: es la razón de que el escalón exista. Si
+// llegamos aquí es porque la distancia de edición ya dijo que no, y suele decirlo porque
+// los dos textos miden cosas distintas —el cliente escribe «torta de chocolate» (18
+// runas) y el catálogo dice «Torta chocolate húmedo + crema choc.» (33)—. Ordenar por
+// distancia volvería a traer justo lo que ya se descartó. El solape de tokens sí ve que
+// comparten «torta» y «chocolate».
+//
+// # UN FALLO DEL MODELO DEGRADA EL ÍTEM, NO EL JOB
+//
+// Devuelve el motivo del aviso cuando la llamada falla, para que el llamante lo registre
+// y siga: el ítem cae a `unmatched` —que es lo que habría pasado sin zona gris— y los
+// demás conservan su precio. Ver la cabecera de match.go.
+func (s *Match) askGrayZone(ctx context.Context, art *MatchArtifact, sc *scanner, text string) (finding, bool, string) {
+	if s.grayZone == nil || text == "" {
+		return finding{}, false, ""
+	}
+	positions := sc.preselect(text)
+	if len(positions) == 0 {
+		// Sin nada que ofrecer, preguntar sería gastar una llamada para que el modelo
+		// conteste «ninguno» sobre una lista vacía.
+		return finding{}, false, ""
+	}
+	labels := make([]string, len(positions))
+	for i, p := range positions {
+		labels[i] = sc.idx.Etiqueta(p)
+	}
+
+	art.GrayZoneCalls++
+	d, err := s.grayZone.Resolve(ctx, text, labels)
+	if err != nil {
+		return finding{}, false, WarningGrayZoneDown
+	}
+	if d.Index < 0 || d.Index >= len(positions) {
+		return finding{}, false, "" // «ninguno corresponde», que es una respuesta válida
+	}
+	return finding{
+		match:      sc.idx.En(positions[d.Index]),
+		provenance: MatchProvenance{Strategy: s.grayZone.Name(), Confidence: d.Confidence},
+	}, true, ""
+}
+
+// preselect devuelve hasta MaxGrayZoneCandidates posiciones del catálogo, ordenadas por
+// cuántos tokens comparten con el texto y, a igualdad, por orden de documento. Un
+// candidato sin ningún token en común no entra: ofrecerlo sería pedirle al modelo que
+// elija entre cosas que no tienen nada que ver.
+func (e *scanner) preselect(text string) []int {
+	wanted := map[string]struct{}{}
+	for _, t := range textmatch.SplitTokens(text) {
+		if utf8.RuneCountInString(t) >= minTokenRunes {
+			wanted[t] = struct{}{}
+		}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
+
+	type scored struct{ pos, overlap int }
+	var ranking []scored
+	for i := range e.norm {
+		overlap := 0
+		for _, t := range e.tokensOf(i) {
+			if _, ok := wanted[t]; ok {
+				overlap++
+			}
+		}
+		if overlap > 0 {
+			ranking = append(ranking, scored{pos: i, overlap: overlap})
+		}
+	}
+	// SliceStable + criterio único: el desempate lo pone el orden de documento, que es
+	// el que ya traía el slice.
+	sort.SliceStable(ranking, func(i, j int) bool { return ranking[i].overlap > ranking[j].overlap })
+
+	if len(ranking) > MaxGrayZoneCandidates {
+		ranking = ranking[:MaxGrayZoneCandidates]
+	}
+	out := make([]int, len(ranking))
+	for i, r := range ranking {
+		out[i] = r.pos
+	}
+	return out
+}
+
+// searchNGram es el escalón que solo corre para los AÑADIDOS: parte el texto en n-gramas
+// contiguos y busca cada uno en el índice por etiqueta exacta, del más largo al más
+// corto (ver StrategyNGram).
+//
+// Un añadido llega envuelto en relleno —«extra de queso», «con queso», «más queso»— y lo
+// que identifica al artículo es el sustantivo. Un producto, en cambio, ES el texto
+// entero: partirlo casaría «torta de chocolate» con «Chocolate».
+func (e *scanner) searchNGram(text string) (finding, bool) {
+	tokens := textmatch.SplitTokens(text)
+	for l := len(tokens); l >= 1; l-- {
+		for start := 0; start+l <= len(tokens); start++ {
+			chunk := strings.Join(tokens[start:start+l], " ")
+			if cs := e.idx.PorEtiqueta(chunk); len(cs) > 0 {
+				return finding{cs[0], MatchProvenance{Strategy: StrategyNGram, Confidence: 1}}, true
+			}
+		}
+	}
+	return finding{}, false
+}

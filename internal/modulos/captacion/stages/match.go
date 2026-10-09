@@ -260,7 +260,10 @@ type MatchInput struct {
 // Match es la etapa del CRUCE CON EL CATÁLOGO (Plan 044 · T3.2). Sus piezas: el log, el
 // store donde deja el artefacto, el comparador DETERMINISTA del bucle y —opcional— la
 // zona gris.
-type Match struct{}
+type Match struct {
+	cmp      textmatch.Comparator
+	grayZone textmatch.GrayZone
+}
 
 // MatchOption (antes `OpciónMatch`) configura la etapa.
 //
