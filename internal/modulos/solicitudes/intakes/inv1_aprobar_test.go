@@ -61,19 +61,26 @@ const (
 var ownersDoor = filepath.Join("..", "..", "..", "apipublica")
 
 // automaticFlows (era flujosAutomáticos) son los directorios del código que corre SIN
-// un POST del dueño y que, por tanto, no puede aprobar ni preguntar nada. En F6 siguen
-// siendo los paquetes VIEJOS del motor y de la captación, porque son los que corren:
+// un POST del dueño y que, por tanto, no puede aprobar ni preguntar nada. Desde F7
+// (conmutar(captacion), T7.25) los de la captación son los NUEVOS de
+// internal/modulos/captacion, porque son los que corren en el arranque nuevo; los del
+// motor siguen siendo los paquetes VIEJOS hasta F8:
 //
 //   - flujos/runtime — el motor: lo que dispara un mensaje entrante del cliente, los
 //     sinks de efectos y el agregador del 044. Es el sitio donde un «ya que estamos,
 //     ciérralo» se colaría con la mejor de las intenciones.
 //   - flujos/modules/cart — el proyector del carrito, que YA cierra solicitudes por su
 //     cuenta (a `confirmed`) sin pasar por aquí: es el vecino más cercano al error.
-//   - intake/pipeline y intake/stages — el pipeline LLM. INV-2 le prohíbe responderle
-//     al cliente; aprobar es responderle al cliente con una cotización, y preguntar
-//     («no entendí esta línea, pregúntale») es el llamante más plausible de escribir
-//     sin mala intención.
-//   - intake — la máquina de los jobs (worker, reintentos, despertar).
+//   - captacion/pipeline y captacion/stages — el pipeline LLM. INV-2 le prohíbe
+//     responderle al cliente; aprobar es responderle al cliente con una cotización, y
+//     preguntar («no entendí esta línea, pregúntale») es el llamante más plausible de
+//     escribir sin mala intención.
+//   - captacion/intake — la máquina de los jobs (worker, reintentos, despertar).
+//   - captacion/reanalisis — la puerta del re-análisis. La abre el dueño, pero lo que
+//     abre es un job que corre solo: «ya que lo regeneré, apruébalo» no puede salir
+//     de aquí.
+//   - captacion/intakeahead — el pool que pide las clasificaciones por adelantado,
+//     fuera del camino del mensaje y sin nadie delante.
 //   - «.» — EL PROPIO DOMINIO. `Approve` se DEFINE aquí, y aquí vive la primera
 //     evaluación que ocurre POR EL PASO DEL TIEMPO —el plazo del presupuesto—, colgada
 //     de una LECTURA. Un «ya que ha pasado el plazo, ciérralo» escrito aquí aprobaría
@@ -81,17 +88,20 @@ var ownersDoor = filepath.Join("..", "..", "..", "apipublica")
 //     callsTo persigue CallExpr sobre un selector (`x.Approve(…)`), y una declaración
 //     no lo es.
 //
-// F7 sustituye los tres de `intake` por `../../captacion/{intake,pipeline,stages}` y
-// F8 los dos de `flujos` por `../../conversacion/{runtime,modules/cart}`.
+// F7 sustituyó los tres de `intake` viejo por `../../captacion/{intake,pipeline,stages}`
+// y añadió `../../captacion/{reanalisis,intakeahead}` (F7 `diseno.md` §6). F8 sustituirá
+// los dos de `flujos` por `../../conversacion/{runtime,modules/cart}`.
 //
 // Si uno de ellos deja de existir o de tener ficheros, el barrido CORTA en vez de dar
 // verde: significa que el código se mudó y este candado se quedó mirando a la pared.
 var automaticFlows = []string{
 	filepath.Join("..", "..", "..", "flujos", "runtime"),
 	filepath.Join("..", "..", "..", "flujos", "modules", "cart"),
-	filepath.Join("..", "..", "..", "intake"),
-	filepath.Join("..", "..", "..", "intake", "pipeline"),
-	filepath.Join("..", "..", "..", "intake", "stages"),
+	filepath.Join("..", "..", "captacion", "intake"),
+	filepath.Join("..", "..", "captacion", "pipeline"),
+	filepath.Join("..", "..", "captacion", "stages"),
+	filepath.Join("..", "..", "captacion", "reanalisis"),
+	filepath.Join("..", "..", "captacion", "intakeahead"),
 	".",
 }
 
