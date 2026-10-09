@@ -9,8 +9,6 @@ package store
 import (
 	"context"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // GetTenantSettings implementa Repository: devuelve la config sembrada para
@@ -22,7 +20,12 @@ import (
 // default. Los defaults salen de la MISMA función que usa el repo Postgres, de modo
 // que los dos no pueden divergir.
 func (r *MemoryRepository) GetTenantSettings(ctx context.Context, tenantID string) (TenantSettings, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.GetTenantSettings"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if s, ok := r.settings[tenantID]; ok {
+		return s, nil
+	}
+	return DefaultTenantSettings(tenantID), nil
 }
 
 // SetTenantSettings siembra la config del carrito para un tenant. Es un helper de
@@ -43,7 +46,9 @@ func (r *MemoryRepository) GetTenantSettings(ctx context.Context, tenantID strin
 // la producción vería UNO. Este repo NO parchea ceros a propósito (misma regla que el
 // Postgres): parte de DefaultTenantSettings.
 func (r *MemoryRepository) SetTenantSettings(s TenantSettings) {
-	panic(pendiente.Implementar("store.MemoryRepository.SetTenantSettings"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.settings[s.TenantID] = s
 }
 
 // TouchContact implementa WelcomeStore en memoria con la MISMA semántica que el
@@ -54,7 +59,14 @@ func (r *MemoryRepository) SetTenantSettings(s TenantSettings) {
 // dos maneras distintas es irrelevante: lo que tiene que coincidir es lo que ve el
 // llamante, y lo vigila reads_conformance_test.go.
 func (r *MemoryRepository) TouchContact(ctx context.Context, key Key, now time.Time) (WelcomeMark, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.TouchContact"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	k := stateKey(key)
+	previous := r.welcomes[k] // cero si no existía: «nunca habló, nunca se le saludó».
+	current := previous
+	current.LastIncomingAt = now
+	r.welcomes[k] = current
+	return previous, nil
 }
 
 // MarkWelcomed implementa WelcomeStore en memoria con el MISMO compare-and-set que
@@ -65,11 +77,22 @@ func (r *MemoryRepository) TouchContact(ctx context.Context, key Key, now time.T
 // filas). No la crea: MarkWelcomed solo puede llegar después de un TouchContact, que
 // es quien la crea, y fabricarla aquí taparía un orden de llamadas equivocado.
 func (r *MemoryRepository) MarkWelcomed(ctx context.Context, key Key, witness WelcomeMark, now time.Time) (bool, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.MarkWelcomed"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	k := stateKey(key)
+	current, ok := r.welcomes[k]
+	if !ok || !current.WelcomedAt.Equal(witness.WelcomedAt) {
+		return false, nil
+	}
+	current.WelcomedAt = now
+	r.welcomes[k] = current
+	return true, nil
 }
 
 // Welcome devuelve el estado de la bienvenida de una conversación. Helper de test:
 // es el equivalente a mirar la fila de conversation_welcomes con SQL directo.
 func (r *MemoryRepository) Welcome(key Key) WelcomeMark {
-	panic(pendiente.Implementar("store.MemoryRepository.Welcome"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.welcomes[stateKey(key)]
 }

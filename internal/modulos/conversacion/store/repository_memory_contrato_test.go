@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package store_test
 
 import (
@@ -13,8 +11,8 @@ import (
 )
 
 // La suite de contrato contra el gemelo en memoria. Va en fichero propio porque ejercita los
-// CUATRO trozos de repository_memory a la vez: lleva la etiqueta `pendiente` hasta que el último
-// (repository_memory_settings.go) está en verde.
+// CUATRO trozos de repository_memory a la vez: llevó la etiqueta `pendiente` hasta que el último
+// (repository_memory_settings.go) estuvo en verde.
 
 // ofTenant filtra por tenant lo que un mirador del gemelo devuelve de todos.
 func ofTenant[T any](all []T, tenant string, tenantOf func(T) string) []T {
