@@ -66,12 +66,45 @@ La spec nombra en español lo que el código nuevo lleva en inglés. Textos obse
 ## Bloque B · `stages` · 🌐❓ · sesión F7-02 · T7.7–T7.9, T7.16–T7.17
 Para cuando: 10 ficheros de `stages` en verde · puente (import) 1 declarado · `ci-local` rc=0 · PR.
 
-- [ ] **T7.7 · rojo(captacion): etapas LLM** · 🌐❓ · dep. T7.15 · `plazo.go`, `p2.go`, `p3.go`, `tope.go`, `p4.go`, `fechas.go` + tests · R-03, R-11 en los contratos; 🔶 lectura de `p2/p3/p4/tope/fechas/audio_jamas_al_llm_test` y del AST de `p4_test.go` · **Commit**: `rojo(captacion): contratos de P2, P3 y P4`
-- [ ] **T7.8 · rojo(captacion): match** · 🌐❓ · dep. T7.7 · `match.go`, `match_cascada.go`, `match_lineas.go` (sin exportados: su test nace con el verde, E-4) · R-04, R-05; 🔶 `match_*_test` (cascada, cota, dobles, rendimiento) · **Commit**: `rojo(captacion): contratos del match`
-- [ ] **T7.9 · rojo(captacion): draft y puente (import) 1** · 🌐❓ · dep. T7.8 · cumple R7.6.a
+- [x] **T7.7 · rojo(captacion): etapas LLM** — `1a5219e` (+ `7711a55`, `deadline.go`, nivel simple en una pasada; `tope.go` no pudo ir en una pasada: su lógica es de `P3`, hallazgo 18) · 🌐❓ · dep. T7.15 · `plazo.go`, `p2.go`, `p3.go`, `tope.go`, `p4.go`, `fechas.go` + tests · R-03, R-11 en los contratos; 🔶 lectura de `p2/p3/p4/tope/fechas/audio_jamas_al_llm_test` y del AST de `p4_test.go` · **Commit**: `rojo(captacion): contratos de P2, P3 y P4`
+- [x] **T7.8 · rojo(captacion): match** — `3d31361` · 🌐❓ · dep. T7.7 · `match.go`, `match_cascada.go`, `match_lineas.go` (sin exportados: su test nace con el verde, E-4) · R-04, R-05; 🔶 `match_*_test` (cascada, cota, dobles, rendimiento) · **Commit**: `rojo(captacion): contratos del match`
+- [x] **T7.9 · rojo(captacion): draft y puente (import) 1** — `3d380eb` (`draft` en cuatro ficheros por tema, D-F7-6) · 🌐❓ · dep. T7.8 · cumple R7.6.a
   - **Ficheros**: `draft.go` + test; `internal/modulos/fronteras_test.go` (`captacion/stages → internal/flujos/store`, «muere F8») · R-06, R-07; 🔶 `draft_*_test` y su AST · **Commit**: `rojo(captacion): contrato de draft y su puente a flujos/store`
-- [ ] **T7.16 · verde(captacion): etapas LLM** · 🌐❓ · `plazo`, `tope`, `fechas`, `p2`, `p3`, `p4`
-- [ ] **T7.17 · verde(captacion): match y draft** · 🌐❓ · `match_cascada`, `match` (+ test de `match_lineas`: sus reglas de líneas, variantes y envío, no su fontanería), `draft` · cierra la sesión: PR
+- [x] **T7.16 · verde(captacion): etapas LLM** — `7711a55` (`deadline`), `bd25bf5` (`dates`), `864ca23` (`p2`), `0177f3d` (`p3` y `cap`, un commit: se necesitan mutuamente), `b41a6c7` (`p4`) · 🌐❓ · `plazo`, `tope`, `fechas`, `p2`, `p3`, `p4`
+- [x] **T7.17 · verde(captacion): match y draft** — `c880cd5` (`match_cascade`, con `match_cascade_sweep.go` por E-13), `705bda7` (`match` y `match_lines`, un commit), `efe219d` (los cuatro de `draft`, un commit; hallazgo 19) · 🌐❓ · `match_cascada`, `match` (+ test de `match_lineas`: sus reglas de líneas, variantes y envío, no su fontanería), `draft` · cierra la sesión: PR
+
+### Correspondencia de nombres (E-11) — F7-02 (`stages`)
+
+Valores, textos de error y de log, claves JSON y nombres de evento no cambian. `ProviderSelector`, `StageStore`, `P2`/`P3`/`P4`,
+`Match`, `Draft`, sus `New…`, `Run`, `Kind*` y `PushRevisionByID` conservan el nombre.
+
+| Tema | Viejo / spec | Nuevo |
+|---|---|---|
+| ficheros | `plazo.go` · `tope.go` · `fechas.go` | `deadline.go` · `cap.go` · `dates.go` |
+| ficheros | `match_cascada.go` · `match_lineas.go` | `match_cascade.go` + `match_cascade_sweep.go` (E-13) · `match_lines.go` |
+| ficheros | `draft.go` (1.038) | `draft.go` · `draft_revision.go` · `draft_events.go` · `draft_push.go` (D-F7-6) |
+| plazo | `Opción` · `ConPlazoPorLlamada` | `Option` · `WithCallTimeout` |
+| P2–P4 | `ErrSinCablear` · `ErrSinLiteral` · `ErrJobFueraDeProcessing` | `ErrNotWired` · `ErrNoLiteral` · `ErrJobNotProcessing` |
+| P3 | `MotivoCalidad` · `MotivoEvidencia` · `MotivoTope` | `ReasonQuality` · `ReasonEvidence` · `ReasonOverLimit` |
+| P3 | `ItemAislado` · `ArtefactoP3` · `MaxItemsPorPedido` | `IsolatedItem` · `P3Artifact` · `MaxItemsPerOrder` |
+| P4 | `ZonaPorDefecto` · `ErrSinZonaHoraria` · `ResolverFecha` | `DefaultZone` · `ErrNoTimeZone` · `ResolveDate` |
+| match | `OpciónMatch` · `ConZonaGris` · `ConComparador` | `MatchOption` · `WithGrayZone` · `WithComparator` |
+| match | `MotivoSinProducto` · `MotivoCantidadInvalida` · `MotivoIndicacionLarga` | `WarningNoProduct` · `WarningInvalidQty` · `WarningNoteTooLong` |
+| match | `MotivoZonaGrisCaida` · `MotivoRangoSinVariante` | `WarningGrayZoneDown` · `WarningRangeWithoutVariant` |
+| match | `NotaDePedido` · `SinNotaDePedido` | `OrderNote` · `NoOrderNote` |
+| match | `ErrMatchSinCablear` · `ErrSinCatalogo` · `ErrSinCantidades` | `ErrMatchNotWired` · `ErrNoCatalog` · `ErrNoQuantities` |
+| match | `OpcionVariante` · `ProcedenciaMatch` · `Linea` · `Aviso` | `VariantOption` · `MatchProvenance` · `Line` · `Warning` |
+| match | `ArtefactoMatch` · `TotalParcial` · `EntradaMatch{Cantidades, Indice, Zonas, Nota}` | `MatchArtifact` · `PartialTotal` · `MatchInput{Quantities, Index, Zones, Note}` |
+| match | `CascadaPorDefecto` · `MargenLongitud` · `MaxCandidatosZonaGris` · `Estrategia{SKU,Exacta,Variante,Tag,NGrama}` | `DefaultCascade` · `LengthMargin` · `MaxGrayZoneCandidates` · `Strategy{SKU,Exact,Variant,Tag,NGram}` |
+| draft | `OpciónDraft` · `ConReloj` · `ConEmpujeCRM` | `DraftOption` · `WithClock` · `WithCRMPush` |
+| draft | `AlmacenSolicitudes` · `EscritorRevision` · `EscritorEvento` · `EmpujadorCRM(Func)` | `IntakeStore` · `RevisionWriter` · `EventWriter` · `CRMPusher(Func)` |
+| draft | `ErrDraftSinCablear` · `ErrSinMatch` · `ErrJobSinEvento` | `ErrDraftNotWired` · `ErrNoMatch` · `ErrJobWithoutEvent` |
+| draft | `ArtefactoDraft` · `EntradaDraft{…, FechaEntrega, Analisis}` · `Analisis` | `DraftArtifact` · `DraftInput{…, DeliveryDate, Analysis}` · `Analysis` |
+| draft | `PayloadRevision` · `LineaRevision` | `RevisionPayload` · `RevisionLine` |
+| draft | `EventoBorradorCreado` · `EventoReanalizado` · `FlujoCaptacion` · `VersionFlujoCaptacion` | `EventDraftCreated` · `EventReanalyzed` · `IntakeFlowID` · `IntakeFlowVersion` |
+| draft | `OrigenHiloDelEvento` · `OrigenTextoPegado` · `OrigenAmbos` | `SourceEventThread` · `SourcePastedText` · `SourceBoth` |
+
+Lo que sigue en español porque ya estaba escrito: `indice.Indice`, `Coincidencia`, `Construir`, `VerificarNormalizador` (F5).
 
 ## Bloque C · `pipeline`, `intakeahead`, `reanalisis` · 🌐❓ · sesión F7-03 · T7.10–T7.13, T7.18–T7.20
 Para cuando: pendientes del módulo = 0 · puentes (import) declarados · un test por promesa del contrato, mutantes en lo complejo · `ci-local` rc=0 · PR.
