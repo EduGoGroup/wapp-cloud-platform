@@ -1,10 +1,13 @@
 // Copia de internal/bootstrap/arranque/fase5_captacion.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
 // salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge, e inferencia, que desde
 // F4 (T4.24, conmutar(inferencia)) es internal/modulos/inferencia: el selector de vía, su adaptador
-// local y el cargador de prompts son los nuevos. turnoacotado y reanalisis siguen viejos y reciben
-// el selector y el almacén nuevos detrás de bridge_inferencia.go. Desde F6 (T6.24,
-// conmutar(solicitudes)) el generador de cotización es el de internal/modulos/solicitudes; draft,
-// las zonas de envío y el re-análisis, que siguen viejos, leen de c.intakeStoreViejo.
+// local y el cargador de prompts son los nuevos. turnoacotado sigue viejo y recibe el selector
+// nuevo detrás de bridge_inferencia.go. Desde F6 (T6.24, conmutar(solicitudes)) el generador de
+// cotización es el de internal/modulos/solicitudes. Y desde F7 (T7.23, conmutar(captacion)) las
+// cinco etapas, el aforo, el worker y el re-análisis son los de internal/modulos/captacion, y la
+// caché del catálogo la de internal/modulos/catalogo/indice: leen del almacén NUEVO de solicitudes
+// (c.intakeStore) y de la cola NUEVA (c.intakeJobStore). Lo único viejo de captación que queda
+// aquí es el compositor del literal, de flujos/runtime (F8), cosido por bridge_captacion.go.
 package arranque
 
 import (
@@ -15,13 +18,13 @@ import (
 	"github.com/EduGoGroup/wapp-shared/textmatch"
 
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/catalogo"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/pipeline"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/stages"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/pipeline"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/reanalisis"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/stages"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/indice"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes/quotetext"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/reanalisis"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/turnoacotado"
 )
 
@@ -30,7 +33,8 @@ import (
 // Son DOS relojes y el segundo sale del primero:
 //
 //   - quoteCallTimeout es el plazo de la llamada al modelo, el que recibe quotetext.WithTimeout:
-//     el MISMO suelo por llamada que P2–P4 (hasta F7, el del pipeline viejo);
+//     el MISMO suelo por llamada que P2–P4, que desde F7 (conmutar(captacion)) se lee del
+//     pipeline NUEVO, internal/modulos/captacion/pipeline (reglas de F7, T-13);
 //   - quoteWriteDeadline es el plazo de ESCRITURA de la respuesta de G7, el que recibe la cara
 //     nueva (IntakeReportsDeps.QuoteWriteDeadline): ese plazo más quoteWriteMargin.
 //
@@ -38,9 +42,10 @@ import (
 // (`pipeline.PlazoPorLlamadaSuelo + margenDeRedacción`, 48 s + 12 s) y la cara nueva no importa
 // el pipeline: recibe el resultado. Si el suelo se mueve, G7 lo sigue sola; dos literales
 // sueltos se separarían el primer día y la respuesta de una sugerencia que tarda se cortaría
-// con el modelo todavía dentro de plazo. Lo fija TestCableado_TheQuoteWriteDeadlineIsDerived.
+// con el modelo todavía dentro de plazo. Lo fija TestCableado_TheQuoteWriteDeadlineIsDerived, y
+// que el suelo sea el del pipeline nuevo, TestCableado_TheQuoteCallTimeoutIsTheNewPipelineFloor.
 const (
-	quoteCallTimeout = pipeline.PlazoPorLlamadaSuelo
+	quoteCallTimeout = pipeline.CallTimeoutFloor
 	// quoteWriteMargin cubre lo que el handler de G7 hace fuera de la llamada al modelo: los
 	// 12 s de margenDeRedacción de la cara vieja, sin cambiar.
 	quoteWriteMargin   = 12 * time.Second
@@ -67,7 +72,7 @@ const (
 // por eso el reparto interno de esta fase en tres constructores es por LEGIBILIDAD y
 // no por aritmética del lint.
 //
-// 🔴 EL AFORO Y EL WORKER NO SALEN AL CONTENEDOR. `aforoLote` se queda dentro de su
+// 🔴 EL AFORO NO SALE AL CONTENEDOR. `aforoLote` se queda dentro de su
 // constructor porque nadie más debe tocarlo: es el entero del ADR-0046 y su único
 // dueño legítimo es el worker que lo recibe. Publicarlo invitaría a un segundo
 // consumidor, y dos dueños de un aforo son dos ideas distintas de cuántas plazas hay.
@@ -89,7 +94,13 @@ func (faseCaptacion) ejecutar(_ context.Context, c *contenedor) error {
 	//
 	// 🔴 ES EL MISMO OBJETO que consume `/reanalyze`: dos compositores serían dos
 	// `source_text` que divergen en el primer rótulo que cambie.
-	c.intakeComposer = flowruntime.NewSourceTextComposer(c.log, c.eventStore, c.intakeJobStore, c.flowDeps.cipher)
+	//
+	// 🔀 F7 · conmutar(captacion): el compositor es de flujos/runtime y sigue VIEJO hasta F8
+	// (reglas de F7, T-2), así que escribe por la instancia VIEJA de la cola
+	// (c.legacyIntakeJobs, D-F7-1): su puerto SourceTextWriter nombra el WindowKey y el
+	// SourceText del intake viejo. El re-análisis nuevo lo recibe detrás de composerBridge
+	// (bridge_captacion.go), que es este mismo objeto y no otro (T-5).
+	c.intakeComposer = flowruntime.NewSourceTextComposer(c.log, c.eventStore, c.legacyIntakeJobs, c.flowDeps.cipher)
 
 	if err := construirSelectorDeVia(c); err != nil {
 		return err
@@ -137,7 +148,7 @@ func construirSelectorDeVia(c *contenedor) error {
 		// aviso al dueño: la tabla owner_degradation_notices es para que una PERSONA
 		// lea un incidente suyo, deduplicado por ventana; esta serie es para que
 		// NOSOTROS podamos decidir si hace falta el desalojo del Mecanismo 1 —que
-		// internal/intake/pipeline/plaza.go dice por escrito que no se construye
+		// captacion/pipeline/slot.go dice por escrito que no se construye
 		// «hasta que exista la Ola 3.5 y un dato de campo»—. La fila que responde esa
 		// pregunta es {origen="turno"}: un turno interactivo que se quedó sin
 		// interpretación mientras, con K=1 por plaza, lo más probable es que una
@@ -171,14 +182,19 @@ func construirSelectorDeVia(c *contenedor) error {
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // La Ola 2 construyó las ocho piezas y las dejó APAGADAS a propósito: hasta esta
-// función, NINGÚN fichero de producción importaba `internal/intake/pipeline` ni
-// `internal/intake/stages`, y `intake_jobs` acumulaba jobs `pending` que nadie
-// reclamaba. Esto es su primer —y único— llamante de producción.
+// función, NINGÚN fichero de producción importaba el `pipeline` ni las `stages` de
+// captación, y `intake_jobs` acumulaba jobs `pending` que nadie reclamaba. Esto es su
+// primer —y único— llamante de producción.
+//
+// 🔀 F7 · conmutar(captacion): las ocho son las de internal/modulos/captacion (y el índice,
+// el de internal/modulos/catalogo/indice). Los nombres cambiaron con E-11 —`WithCallTimeout`,
+// `DefaultZone`, `WithCRMPush`, `NewCapacity`, `WithCapacity`, `WithShippingZones`—; los
+// valores, los textos y el orden de construcción, no.
 //
 // 🔴 W = 1, UNA SOLA GOROUTINE, Y ES LA DECISIÓN QUE GOBIERNA EL RESTO. El aforo
 // de abajo reparte K = 1 plaza POR EDGE; en UAT hay UN Edge, así que con W > 1 los
 // workers extra se bloquearían pidiendo el mismo asiento CON UN JOB YA RECLAMADO
-// en la mano —bloqueo en cabeza, `plaza.go` §«Esperar tiene dos precios»— sin
+// en la mano —bloqueo en cabeza, `slot.go` §«Esperar tiene dos precios»— sin
 // procesar nada más rápido. La palanca para subir W es el número de Edges activos,
 // no el volumen de trabajo. Quien arranca esa única goroutine es la fase de fondo.
 //
@@ -189,12 +205,12 @@ func construirSelectorDeVia(c *contenedor) error {
 // ventana, no hay job `pending` y este worker gira en vacío cada 5 s.
 func construirWorkerDelPipeline(c *contenedor) error {
 	// Las tres etapas comparten selector de vía y store, y las tres reciben el MISMO
-	// plazo por llamada: `stages.ConPlazoPorLlamada` es obligatoria en producción —sin
+	// plazo por llamada: `stages.WithCallTimeout` es obligatoria en producción —sin
 	// ella el adaptador cae a sus 30 s, el umbral de lento baja a 24 s y una P3 caliente
-	// de 27 s ya cuenta como lenta ante el breaker (plazo.go, «el default es COMPATIBLE,
-	// no seguro»)—. `stages.ZonaPorDefecto` es UTC y es la decisión que P4 obliga a
+	// de 27 s ya cuenta como lenta ante el breaker (deadline.go, «el default es COMPATIBLE,
+	// no seguro»)—. `stages.DefaultZone` es UTC y es la decisión que P4 obliga a
 	// escribir aquí en vez de heredar (DEUDA-044.11, sin dueño).
-	plazoLlamada := stages.ConPlazoPorLlamada(pipeline.PlazoPorLlamadaSuelo)
+	plazoLlamada := stages.WithCallTimeout(pipeline.CallTimeoutFloor)
 	etapaIdeas, err := stages.NewP2(c.log, c.llmSelector, c.intakeJobStore, plazoLlamada)
 	if err != nil {
 		return fmt.Errorf("pipeline de captación, etapa P2: %w", err)
@@ -203,7 +219,7 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	if err != nil {
 		return fmt.Errorf("pipeline de captación, etapa P3: %w", err)
 	}
-	etapaCantidades, err := stages.NewP4(c.log, c.llmSelector, c.intakeJobStore, stages.ZonaPorDefecto, plazoLlamada)
+	etapaCantidades, err := stages.NewP4(c.log, c.llmSelector, c.intakeJobStore, stages.DefaultZone, plazoLlamada)
 	if err != nil {
 		return fmt.Errorf("pipeline de captación, etapa P4: %w", err)
 	}
@@ -217,14 +233,14 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	// `intake_id`. Es el MISMO defecto que la Ola 2 tuvo que cerrar con T2.9, y por eso
 	// el test de AST de este paquete cuenta CINCO constructores y no tres.
 	//
-	// 🔴 NINGUNA DE LAS DOS LLEVA `stages.ConPlazoPorLlamada`, Y NO PUEDE LLEVARLA. No
-	// es una decisión de calibración: `OpciónMatch` y `OpciónDraft` son tipos DISTINTOS
-	// de `Opción` —la de las etapas LLM— precisamente para que un «match con plazo por
+	// 🔴 NINGUNA DE LAS DOS LLEVA `stages.WithCallTimeout`, Y NO PUEDE LLEVARLA. No
+	// es una decisión de calibración: `MatchOption` y `DraftOption` son tipos DISTINTOS
+	// de `Option` —la de las etapas LLM— precisamente para que un «match con plazo por
 	// llamada» no compile. El motivo de fondo es que ninguna de las dos llama al modelo
 	// en este cableado: `match` corre la cascada determinista `Exact → Fuzzy(0,85)` y
 	// `draft` solo escribe en la base. Un plazo de llamada aquí no acotaría nada.
 	//
-	// 🔴 Y EL MATCH VA SIN ZONA GRIS A PROPÓSITO (`stages.ConZonaGris` NO se pasa). Sin
+	// 🔴 Y EL MATCH VA SIN ZONA GRIS A PROPÓSITO (`stages.WithGrayZone` NO se pasa). Sin
 	// ella la cascada es 100 % determinista y el ítem que los dos escalones no resuelven
 	// cae a `unmatched` con su aviso — que es el renglón que el dueño precifica, no una
 	// pérdida. El TERCER escalón es el caro: una llamada al LLM por ítem no cubierto,
@@ -236,15 +252,18 @@ func construirWorkerDelPipeline(c *contenedor) error {
 		return fmt.Errorf("pipeline de captación, etapa match: %w", err)
 	}
 	// `flowStore` satisface DOS de los tres puertos del draft (la cabecera de la
-	// solicitud y el outbox de efectos) e `intakeStoreViejo` el tercero (la revisión). El
+	// solicitud y el outbox de efectos) e `intakeStore` el tercero (la revisión). El
 	// reparto no es caprichoso: la revisión es lo único que lleva literal del cliente
 	// dentro del payload, y el store que la escribe lleva el cipher del literal
 	// (T3.5). Escribirla por el otro persistiría texto en claro.
 	//
-	// 🔀 F6 · conmutar(solicitudes): es la instancia VIEJA (D-F6-1), no c.intakeStore: el
-	// puerto EscritorRevision nombra intakes.Revision del paquete viejo. Muere en F7.
+	// 🔀 F7 · conmutar(captacion): la revisión la escribe el almacén NUEVO de solicitudes
+	// (c.intakeStore, con el cipher del literal), ya no la instancia vieja de D-F6-1: el
+	// puerto RevisionWriter nombra el intakes.Revision de internal/modulos/solicitudes. Los
+	// otros dos puertos (IntakeStore, EventWriter) siguen en el flowStore VIEJO, y es un
+	// puente declarado (stages → flujos/store): mueren en F8.
 	//
-	// 🔧 `stages.ConEmpujeCRM` ES DE T4.6 (Plan 044 · Ola 4), y cierra T4.10 mitad 2.
+	// 🔧 `stages.WithCRMPush` ES DE T4.6 (Plan 044 · Ola 4), y cierra T4.10 mitad 2.
 	// Sin esta opción la etapa produce el borrador igual, pero un RE-ANÁLISIS pedido
 	// por el dueño dejaría su revisión escrita y el CRM se quedaría con la versión
 	// vieja del pedido — que es exactamente lo que D-044.19 existe para impedir. La
@@ -252,7 +271,7 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	// hasta que alguien mirase el log, así que además la custodia el test de cableado
 	// de este paquete.
 	// El empuje va GATEADO dentro de la etapa por `intake_jobs.requested_by`: el
-	// pipeline normal NO empuja, y eso es una decisión, no un olvido (ver empujarAlCRM).
+	// pipeline normal NO empuja, y eso es una decisión, no un olvido (ver draft_push.go).
 	//
 	// 🔴 EL NUDO DE CONSTRUCCIÓN DEL EMPUJE AL CRM (T4.6), dicho porque la clausura
 	// parece un rodeo y no lo es: esta etapa nace AQUÍ —cuelga del selector de vía— y
@@ -263,8 +282,8 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	// Cuando el pipeline llegue a empujar algo, el proceso lleva rato arrancado y
 	// `c.intakeService` hace mucho que existe; y aunque fuera nil, PushRevisionByID es
 	// nil-safe y calla.
-	etapaDraft, err := stages.NewDraft(c.log, c.intakeJobStore, c.flowStore, c.intakeStoreViejo, c.flowStore,
-		stages.ConEmpujeCRM(stages.EmpujadorCRMFunc(
+	etapaDraft, err := stages.NewDraft(c.log, c.intakeJobStore, c.flowStore, c.intakeStore, c.flowStore,
+		stages.WithCRMPush(stages.CRMPusherFunc(
 			func(ctx context.Context, tenantID, intakeID string, revisionNo int) error {
 				return c.intakeService.PushRevisionByID(ctx, tenantID, intakeID, revisionNo)
 			})))
@@ -277,11 +296,15 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	// El normalizador es `textmatch.Normalize` y tiene que ser EXACTAMENTE el mismo que
 	// usa la cascada del match: con dos distintos, «Café» dejaría de casar «cafe» y el
 	// ítem saldría `unmatched` sin un solo error en el log. `NewCache` no se fía y lo
-	// verifica caso a caso al arrancar (`catalogo.VerificarNormalizador`), así que un
+	// verifica caso a caso al arrancar (`indice.VerificarNormalizador`), así que un
 	// normalizador equivocado no llega al primer job de la noche: no llega al arranque.
 	//
-	// `0` en el tope deja `catalogo.MaxTenantsEnCache` (64), la cota de memoria.
-	catalogos, err := catalogo.NewCache(catalogo.NewFuenteContenido(c.flowStore, ""), textmatch.Normalize, 0)
+	// `0` en el tope deja `indice.MaxTenantsEnCache` (64), la cota de memoria.
+	//
+	// 🔀 F7 · conmutar(captacion): es el índice de internal/modulos/catalogo/indice (F5), que
+	// es el que nombra el puerto pipeline.Catalogs del worker nuevo. Con esto el arranque deja
+	// de importar internal/intake/catalogo y `catalogo` entra en Conmutados (D-R-4).
+	catalogos, err := indice.NewCache(indice.NewFuenteContenido(c.flowStore, ""), textmatch.Normalize, 0)
 	if err != nil {
 		return fmt.Errorf("pipeline de captación, caché del catálogo: %w", err)
 	}
@@ -293,12 +316,12 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	//
 	// ⚠️ ES DE PROCESO, NO DISTRIBUIDO: con dos réplicas del Cloud hay K = 2 por Edge.
 	// Decisión escrita (ADR-0046), no descuido; hoy el Cloud corre en una réplica.
-	aforoLote := pipeline.NuevoAforo(pipeline.KPorPlaza)
-	// El worker usa `c.intakeJobStore` —el MISMO `*intake.Postgres` que el agregador— y
-	// no una construcción propia: ese tipo satisface los DOS puertos, `intake.JobStore`
-	// (la cola, en línea con el mensaje) e `intake.PipelineStore` (la máquina de
-	// estados del worker, machine.go:329). Dos instancias serían dos pools de la misma
-	// base sin ganar nada.
+	aforoLote := pipeline.NewCapacity(pipeline.KPerSlot)
+	// El worker usa `c.intakeJobStore` —el MISMO `*intake.Postgres` NUEVO que las cinco
+	// etapas y que la puerta del re-análisis— y no una construcción propia: aquí entra por
+	// `intake.PipelineStore` (la máquina de estados del worker, machine.go). El agregador
+	// escribe en la MISMA tabla por la instancia vieja de la cola (D-F7-1, hasta F8): son
+	// dos tipos sobre un solo *sql.DB, no dos pools.
 	//
 	// El cipher es el descifrador del sobre del literal, y es `c.flowDeps.cipher`: el
 	// MISMO keyring del Plan 012 con el que el compositor cerró ese sobre al cerrar la
@@ -309,20 +332,21 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	// que gobierne esto, así que no se lee ninguna variable de entorno que luego nadie
 	// pueda confirmar.
 	//
-	// `pipeline.ConZonasDeEnvio(intakeStore)` cierra la última lectura por job de la
+	// `pipeline.WithShippingZones(intakeStore)` cierra la última lectura por job de la
 	// Ola 3: sin ella TODO borrador saldría con la línea de envío sin precio, también
 	// el del tenant que tiene UNA zona configurada con su tarifa plana — y eso no da
 	// error, solo un renglón que el dueño precifica a mano sin saber que ya estaba
 	// puesto. Lee las MISMAS filas que la bandeja y el carrito numérico, así que las tres
 	// vías leen la misma configuración.
 	//
-	// 🔀 F6 · conmutar(solicitudes): recibe la instancia VIEJA (D-F6-1): el puerto
-	// ZonasDeEnvio devuelve []intakes.ShippingZone del paquete viejo. Muere en F7.
+	// 🔀 F7 · conmutar(captacion): recibe el almacén NUEVO de solicitudes (c.intakeStore): el
+	// puerto ShippingZones devuelve el []intakes.ShippingZone de internal/modulos/solicitudes.
+	// La instancia vieja de D-F6-1 ya no llega aquí.
 	intakePipeline, err := pipeline.NewWorker(c.log, c.intakeJobStore,
 		etapaIdeas, etapaSpecs, etapaCantidades, etapaMatch, etapaDraft, catalogos,
 		c.flowDeps.cipher, pipeline.Config{},
-		pipeline.ConAforo(aforoLote, c.llmSelector),
-		pipeline.ConZonasDeEnvio(c.intakeStoreViejo))
+		pipeline.WithCapacity(aforoLote, c.llmSelector),
+		pipeline.WithShippingZones(c.intakeStore))
 	if err != nil {
 		return fmt.Errorf("worker del pipeline de captación: %w", err)
 	}
@@ -337,34 +361,43 @@ func construirPuertasDelDueno(c *contenedor) error {
 	// `POST /api/v1/intakes/{id}/reanalyze`. Seis dependencias y las SEIS son objetos
 	// que ya existen — no se construye ni un store nuevo:
 	//
-	//   · intakeStoreViejo → de qué evento cuelga la solicitud y por qué revisión iba. Es
-	//                       la instancia VIEJA (D-F6-1): el puerto Solicitudes devuelve el
-	//                       intakes.ReanalysisTarget del paquete viejo. Muere en F7;
+	//   · intakeStore     → de qué evento cuelga la solicitud y por qué revisión iba. Desde
+	//                       F7 es el almacén NUEVO de solicitudes: el puerto Intakes devuelve
+	//                       el intakes.ReanalysisTarget de internal/modulos/solicitudes;
 	//   · eventStore      → el hilo cifrado del evento, descifrado en el borde, y la
-	//                       fila del texto que pega el dueño (origin='owner_pasted');
-	//   · intakeJobStore  → el MISMO *intake.Postgres del agregador y del worker: aquí
-	//                       satisface un TERCER puerto, el de esta puerta, que solo
-	//                       puede preguntar por el job vivo y abrir el del re-análisis;
+	//                       fila del texto que pega el dueño (origin='owner_pasted'). Es el
+	//                       store VIEJO de flujos/events, por un puente declarado (F8);
+	//   · intakeJobStore  → el MISMO *intake.Postgres NUEVO del worker: aquí satisface
+	//                       OTRO puerto, el de esta puerta, que solo puede preguntar por
+	//                       el job vivo y abrir el del re-análisis;
 	//   · intakeComposer  → el MISMO compositor que corre al cerrar una ventana. Dos
 	//                       compositores serían dos `source_text` que divergen en el
-	//                       primer rótulo que cambie;
+	//                       primer rótulo que cambie. Es el VIEJO de flujos/runtime (F8)
+	//                       detrás de composerBridge (bridge_captacion.go), que solo
+	//                       convierte el WindowKey nuevo en el viejo (T-3, T-5);
 	//   · entResolver     → el MISMO resolver CACHEADO que gatea el resto del carril.
 	//                       Un segundo sería una segunda caché y una segunda verdad
 	//                       sobre el plan del tenant;
 	//   · tenantLLMStore  → la vía configurada y si hay credencial. Entra por el puerto
-	//                       recortado `reanalisis.ConfigLLM`, que NO tiene `APIKey`:
+	//                       recortado `reanalisis.LLMConfig`, que NO tiene `APIKey`:
 	//                       esta puerta necesita saber SI hay clave, nunca cuál es.
-	//                       Desde F4 es el almacén NUEVO detrás de llmConfigBridge
-	//                       (bridge_inferencia.go), que copia su Config al tipo viejo
-	//                       que reanalisis pide hasta F7.
+	//                       Desde F7 es el almacén NUEVO tal cual: el servicio nuevo
+	//                       pide el Config del tenantllm nuevo, y llmConfigBridge
+	//                       (bridge_inferencia.go, F4) murió con este commit.
+	//
+	// Y un OCTAVO argumento que no es una dependencia: el límite del hilo. El servicio
+	// nuevo no lo importa del runtime viejo (sería un puente más) ni trae un default (serían
+	// dos verdades con la del compositor): lo RECIBE, y aquí llega legacyThreadLimit, que
+	// bridge_captacion.go deriva de flowruntime.DefaultThreadLimit. Con ≤ 0 el constructor
+	// falla, y el arranque con él.
 	//
 	// ⚠️ Si esto devuelve error, el arranque MUERE en vez de montar la ruta a medias:
 	// un 500 a mitad de camino en una puerta que abre trabajo en la cola es peor que
-	// no arrancar. Y si el servicio no llegara a `publicapi.Deps.Reanalysis`, la ruta
-	// sencillamente no se monta y responde 404 — lo custodia el test de cableado de
+	// no arrancar. Y si el servicio no llegara a `apipublica.ReanalyzeDeps.Reanalysis`, la
+	// ruta sencillamente no se monta y responde 404 — lo custodia el test de cableado de
 	// este paquete.
-	reanalysisSvc, err := reanalisis.NewServicio(c.log, c.intakeStoreViejo, c.eventStore, c.intakeJobStore,
-		c.intakeComposer, c.entResolver, &llmConfigBridge{store: c.tenantLLMStore})
+	reanalysisSvc, err := reanalisis.NewService(c.log, c.intakeStore, c.eventStore, c.intakeJobStore,
+		&composerBridge{composer: c.intakeComposer}, c.entResolver, c.tenantLLMStore, legacyThreadLimit)
 	if err != nil {
 		return fmt.Errorf("re-análisis desde el origen: %w", err)
 	}

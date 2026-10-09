@@ -4,18 +4,21 @@ package arranque
 // solicitudes (F6 · T6.24–T6.25, R6.5.a–c, R6.6.b–c; FX TX.18). Sale de
 // solicitudes_cableado_test.go por tamaño (E-13). Sobre el arranque nuevo REAL (el contenedor de
 // la huella) afirma que cada pieza de solicitudes recibe LAS MISMAS instancias que el contenedor,
-// que la cara HTTP nueva sirve G1–G18 con ellas, que a la cara vieja solo le queda el centinela
-// de montaje de H1 (D-F6-13) y que el plazo de escritura de G7 sale del plazo del generador.
+// que la cara HTTP nueva sirve G1–G18 con ellas, que a la cara vieja no le queda nada de
+// solicitudes ni de captación (desde F7 tampoco el centinela de montaje de H1, D-F6-13) y que el
+// plazo de escritura de G7 sale del plazo del generador, que es el suelo del pipeline NUEVO (T-13).
 
 import (
 	"go/ast"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/pipeline"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 )
 
@@ -130,34 +133,33 @@ func TestIdentidad_TheNewFaceSharesTheRequestsInstances(t *testing.T) {
 	}
 }
 
-// reanalyzeRoute es H1, la ruta de captación (F7) que el centinela mantiene en la cara vieja.
-const reanalyzeRoute = "POST /api/v1/intakes/{id}/reanalyze"
+// Las tres rutas de captación (F7) y una de la bandeja (F6): ninguna puede seguir en la cara vieja.
+const (
+	reanalyzeRoute  = "POST /api/v1/intakes/{id}/reanalyze" // H1
+	getIntentsRoute = "GET /api/v1/intents"                 // E1
+	putIntentsRoute = "PUT /api/v1/intents"                 // E2
+	listIntakeRoute = "GET /api/v1/intakes"                 // G1
+)
 
-// TestCableado_TheOldFaceOnlyKeepsTheMountSentinel (FX TX.18, D-F6-13): de solicitudes, la cara
-// VIEJA no recibe nada salvo el centinela de montaje. Intakes es EXACTAMENTE un
-// oldFaceIntakesMountSentinel vacío —no un servicio, ni el nuevo ni el viejo— y los otros ocho
-// campos son nil: con un valor ahí, publicapi volvería a registrar G7 y G11–G18 detrás de la nueva.
+// TestCableado_TheOldFaceKeepsNothingOfRequestsNorCapture (FX TX.18 y TX.21; muere D-F6-13): de
+// solicitudes y de captación, la cara VIEJA no recibe NADA. Intakes es nil de verdad —ya no el
+// centinela de montaje, que existía solo para que la vieja siguiera registrando H1—, los otros
+// ocho campos de solicitudes son nil, y también Reanalysis, Intents y ConfigPush: con un valor en
+// cualquiera, publicapi volvería a registrar esa ruta detrás de la nueva.
 //
-// Y fija lo que el centinela protege, contra el publicapi viejo REAL: con las deps del arranque,
-// el mux viejo registra H1; con esas mismas deps y Intakes a nil, NO (registerIntakes vuelve
-// antes de llegar a ella). El día que la segunda mitad falle, el centinela sobra. Que G1–G6 y
-// G8–G10, que la vieja vuelve a registrar por él, queden TAPADAS por la cara nueva no se repite
-// aquí: lo afirma fila a fila TestMudanzas_HuellaPorElCompuesto sobre el compuesto real.
-func TestCableado_TheOldFaceOnlyKeepsTheMountSentinel(t *testing.T) {
+// Y lo fija contra el publicapi viejo REAL, que es lo que afirmaba el test del centinela al
+// revés: con las deps del arranque, el mux viejo NO registra H1, ni E1, ni E2, ni la bandeja (G1,
+// que con el centinela sí volvía a registrar, tapada). Esas rutas las sirve la cara nueva del
+// arranque real, con su mismo patrón.
+func TestCableado_TheOldFaceKeepsNothingOfRequestsNorCapture(t *testing.T) {
 	c := contenedorDeHuella(t, "minimo")
 
 	old := depsDeLaAPIPublica(c)
-	sentinel, ok := old.Intakes.(oldFaceIntakesMountSentinel)
-	if !ok {
-		t.Fatalf("la cara vieja recibe en Intakes un %T; se espera exactamente oldFaceIntakesMountSentinel (D-F6-13)", old.Intakes)
-	}
-	if sentinel.IntakeService != nil {
-		t.Errorf("el centinela envuelve un %T: sería un servicio real en la cara vieja; se espera vacío", sentinel.IntakeService)
-	}
 	absent := []struct {
 		name string
 		got  any
 	}{
+		{"Intakes", old.Intakes},
 		{"QuoteSuggestions", old.QuoteSuggestions},
 		{"TenantVariables", old.TenantVariables},
 		{"Integrations", old.Integrations},
@@ -166,24 +168,24 @@ func TestCableado_TheOldFaceOnlyKeepsTheMountSentinel(t *testing.T) {
 		{"CRMReflect", old.CRMReflect},
 		{"CRMNotify", old.CRMNotify},
 		{"EventTelemetry", old.EventTelemetry},
+		{"Reanalysis", old.Reanalysis},
+		{"Intents", old.Intents},
+		{"ConfigPush", old.ConfigPush},
 	}
 	for _, k := range absent {
 		if k.got != nil {
 			t.Errorf("la cara vieja recibe un %s (%T); se espera nil: esa ruta la sirve la nueva", k.name, k.got)
 		}
 	}
-	if old.Reanalysis == nil {
-		t.Fatal("la cara vieja no recibe Reanalysis: H1 no se montaría ni con el centinela")
-	}
 
-	if !oldFaceRegisters(t, c, old, reanalyzeRoute) {
-		t.Errorf("con el centinela, la cara vieja NO registra %s: la ruta habría desaparecido del :8103", reanalyzeRoute)
-	}
-	withoutSentinel := old
-	withoutSentinel.Intakes = nil
-	if oldFaceRegisters(t, c, withoutSentinel, reanalyzeRoute) {
-		t.Errorf("sin el centinela la cara vieja registra %s igualmente: oldFaceIntakesMountSentinel ya no "+
-			"hace falta (D-F6-13) y sobra", reanalyzeRoute)
+	served := c.publicCara.Patrones()
+	for _, route := range []string{reanalyzeRoute, getIntentsRoute, putIntentsRoute, listIntakeRoute} {
+		if oldFaceRegisters(t, c, old, route) {
+			t.Errorf("la cara vieja sigue registrando %s: la serviría dos veces, y la vieja con un servicio que no tiene", route)
+		}
+		if !slices.Contains(served, route) {
+			t.Errorf("la cara nueva del arranque real NO registra %s: la ruta habría desaparecido del :8103", route)
+		}
 	}
 }
 
@@ -243,4 +245,75 @@ func TestCableado_TheQuoteWriteDeadlineIsDerived(t *testing.T) {
 	if len(deadlineValue) != 1 || deadlineValue[0] != "quoteWriteDeadline" {
 		t.Errorf("QuoteWriteDeadline se cablea con %q; se espera una sola vez, con quoteWriteDeadline", deadlineValue)
 	}
+}
+
+// TestCableado_TheQuoteCallTimeoutIsTheNewPipelineFloor (reglas de F7, T-13; T7.24): al conmutar
+// captación cambia de DÓNDE se lee el suelo por llamada del que sale el plazo de G7, y tiene que
+// seguir siendo el mismo valor por el mismo camino. Se afirma la IGUALDAD —quoteCallTimeout es el
+// CallTimeoutFloor del pipeline NUEVO, y es lo que el generador de cotización guardó al recibir
+// quotetext.WithTimeout— y, por AST, que no es una coincidencia de dos números: en el fichero que
+// declara la constante, su valor es `pipeline.CallTimeoutFloor`, ese `pipeline` es el import de
+// internal/modulos/captacion/pipeline, y el pipeline viejo no se importa. Las etapas P2–P4 reciben
+// ese MISMO suelo (stages.WithCallTimeout): un solo valor para las cuatro llamadas al modelo.
+func TestCableado_TheQuoteCallTimeoutIsTheNewPipelineFloor(t *testing.T) {
+	if quoteCallTimeout != pipeline.CallTimeoutFloor {
+		t.Errorf("quoteCallTimeout = %s; se espera el CallTimeoutFloor del pipeline nuevo, %s",
+			quoteCallTimeout, pipeline.CallTimeoutFloor)
+	}
+	c := contenedorDeHuella(t, "minimo")
+	if got := time.Duration(field(t, c.quoteSvc, "timeout").Int()); got != pipeline.CallTimeoutFloor {
+		t.Errorf("quotetext.WithTimeout recibió %s; se espera el CallTimeoutFloor del pipeline nuevo, %s",
+			got, pipeline.CallTimeoutFloor)
+	}
+
+	_, files := astDelArranque(t)
+	declared, stageFloors := 0, 0
+	for _, f := range files {
+		d, s := callTimeoutFloorUses(t, f)
+		declared, stageFloors = declared+d, stageFloors+s
+	}
+	if declared != 1 {
+		t.Errorf("quoteCallTimeout se declara %d veces en la producción de internal/arranque; se espera 1", declared)
+	}
+	if stageFloors != 1 {
+		t.Errorf("stages.WithCallTimeout aparece %d veces en la producción de internal/arranque; se espera 1 (compartida por P2–P4)", stageFloors)
+	}
+}
+
+// callTimeoutFloorUses cuenta, en f, las declaraciones de quoteCallTimeout y las llamadas a
+// stages.WithCallTimeout (del stages NUEVO), y falla si alguna no toma su valor de
+// `<pipeline nuevo>.CallTimeoutFloor`, o si el fichero que declara la constante importa además
+// el pipeline viejo.
+func callTimeoutFloorUses(t *testing.T, f *ast.File) (declared, stageFloors int) {
+	t.Helper()
+	imports := importsOf(t, f)
+	floor := imports[newPipelineImportPath] + ".CallTimeoutFloor"
+	stagesLocal, hasStages := imports[newStagesImportPath]
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.ValueSpec:
+			i := slices.IndexFunc(v.Names, func(name *ast.Ident) bool { return name.Name == "quoteCallTimeout" })
+			if i < 0 {
+				return true
+			}
+			declared++
+			if _, old := imports[oldPipelineImportPath]; old {
+				t.Errorf("el fichero que declara quoteCallTimeout importa %s: el suelo saldría del pipeline viejo", oldPipelineImportPath)
+			}
+			if i >= len(v.Values) || campoCompletoDe(v.Values[i]) != floor {
+				t.Errorf("quoteCallTimeout no se declara como el CallTimeoutFloor de %s: un literal o el "+
+					"suelo de otro paquete se separaría del pipeline el primer día", newPipelineImportPath)
+			}
+		case *ast.CallExpr:
+			if !hasStages || !esLlamada(v, stagesLocal, "WithCallTimeout") {
+				return true
+			}
+			stageFloors++
+			if len(v.Args) != 1 || campoCompletoDe(v.Args[0]) != floor {
+				t.Errorf("stages.WithCallTimeout no recibe el CallTimeoutFloor de %s: P2–P4 y G7 tendrían suelos distintos", newPipelineImportPath)
+			}
+		}
+		return true
+	})
+	return declared, stageFloors
 }

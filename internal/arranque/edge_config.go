@@ -7,8 +7,8 @@ import (
 
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/filtercfg"
 	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 )
@@ -49,7 +49,8 @@ func (p jwksConfigProvider) ConfigsForConnect(ctx context.Context, tenantID stri
 
 // intentConfigStore es el puerto de LECTURA que consume intentsConfigProvider: solo
 // el Get del blob de intents del tenant. Lo satisface *intentcfg.PostgresStore
-// (producción) y *intentcfg.MemoryStore (tests).
+// (producción) y *intentcfg.MemoryStore (tests), los de internal/modulos/captacion/intentcfg
+// desde F7 (conmutar(captacion)).
 //
 // Se declara como interfaz —y no se guarda el tipo concreto— para que la CADENA REAL
 // que arma buildConfigProvider se pueda ejercer en un test sin PostgreSQL. Ese test

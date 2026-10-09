@@ -2,7 +2,10 @@
 // salvo acceso (F2, T2.31, conmutar(acceso)), edge (F3, T3.28, conmutar(edge)) e inferencia (F4,
 // T4.24, conmutar(inferencia)), que son internal/modulos/{acceso,edge,inferencia}: un solo gateway,
 // el nuevo, que recibe acceso sin adaptador, y un solo selector de vía, el nuevo. Y solicitudes (F6,
-// T6.24, conmutar(solicitudes)), que es internal/modulos/solicitudes salvo intakeStoreViejo.
+// T6.24, conmutar(solicitudes)), que es internal/modulos/solicitudes salvo intakeStoreViejo. Y captación
+// (F7, T7.23, conmutar(captacion)), que es internal/modulos/captacion salvo legacyIntakeJobs, la
+// segunda instancia vieja de la cola que bridge_captacion.go construye para el agregador y el
+// compositor de flujos/runtime (F8).
 package arranque
 
 import (
@@ -22,13 +25,14 @@ import (
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/pipeline"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
 	intakesviejo "github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intakeahead"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intentcfg"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/pipeline"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/reanalisis"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/filtercfg"
@@ -48,7 +52,6 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/reanalisis"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/turnoacotado"
 )
 
@@ -106,11 +109,12 @@ type contenedor struct {
 	integrationsStore *integrations.Postgres
 	// intakeStoreViejo es la SEGUNDA instancia, VIEJA, del almacén de solicitudes (D-F6-1,
 	// mantenida por Jhoan el 2026-10-07): internal/intakes sobre el mismo pool y el mismo cipher.
-	// No tiene estado propio. Existe porque cuatro puertos de paquetes viejos nombran tipos del
-	// intakes viejo en su firma y el almacén nuevo no los satisface: el proyector del carrito
-	// (cart.NewProjector, args 2 y 3), la etapa draft (stages.NewDraft), las zonas de envío del
-	// pipeline (pipeline.ConZonasDeEnvio) y el re-análisis (reanalisis.NewServicio). Muere en F7
-	// (los tres de captación) y F8 (el carrito). Nadie más lo lee: todo lo demás usa intakeStore.
+	// No tiene estado propio. Existe porque dos puertos de un paquete viejo nombran tipos del
+	// intakes viejo en su firma y el almacén nuevo no los satisface: los argumentos 2 y 3 del
+	// proyector del carrito (cart.NewProjector, fase 7). Es su ÚNICO lector desde F7
+	// (conmutar(captacion)): la etapa draft, las zonas de envío del pipeline y el re-análisis, que
+	// eran los otros tres, son ya los de internal/modulos/captacion y leen de intakeStore. Muere
+	// en F8, con el carrito.
 	intakeStoreViejo *intakesviejo.Postgres
 	// tenantVars es el único almacén de variables del tenant: lo leen G11–G12 de la cara nueva
 	// (fase 8) y el worker del puente CRM (fase 9), que antes construían uno cada una.
@@ -118,8 +122,18 @@ type contenedor struct {
 	tenantLLMStore      *tenantllm.Postgres
 	degradationStore    *degradation.Postgres
 	degradationNotifier *degradation.Notifier
-	intakeJobStore      *intake.Postgres
-	eventStore          *events.Store
+	// intakeJobStore es la cola del pipeline de captación, la NUEVA (internal/modulos/captacion/
+	// intake) desde F7: la leen el worker y la puerta del re-análisis.
+	intakeJobStore *intake.Postgres
+	// legacyIntakeJobs es la SEGUNDA instancia, VIEJA, de esa misma cola (D-F7-1): internal/intake
+	// sobre el mismo pool, sin estado propio. Existe porque el agregador y el compositor de
+	// flujos/runtime (F8) nombran el WindowKey, el Append y el SourceText del intake viejo en sus
+	// puertos y la cola nueva no los satisface. El tipo es un alias que declara
+	// bridge_captacion.go, que es también quien la construye: así este fichero no importa el
+	// paquete viejo. Sus DOS lectores son el compositor (fase 5) y el agregador (fase 7). Muere
+	// en F8, con el adaptador.
+	legacyIntakeJobs *legacyIntakeJobs
+	eventStore       *events.Store
 
 	// ─── Fase 4 · gateway ───────────────────────────────────────────────────
 	inferStats *inferstats.Store
@@ -130,7 +144,7 @@ type contenedor struct {
 	llmSelector      *llmvia.Selector
 	intakePipeline   *pipeline.Worker
 	consultaResolver *turnoacotado.Resolver
-	reanalysisSvc    *reanalisis.Servicio
+	reanalysisSvc    *reanalisis.Service
 	quoteSvc         *quotetext.Service
 
 	// ─── Fase 6 · solicitudes ───────────────────────────────────────────────
@@ -154,8 +168,8 @@ type contenedor struct {
 	intakeAhead        *intakeahead.Pool
 	// 🔴 EL OTRO CAMPO DIFERIDO, y el mismo patrón por el mismo motivo: el agregador
 	// PIDE por el pool (intakeAhead) y el pool RESPONDE al agregador, así que se
-	// necesitan mutuamente. La clausura SinkFunc que recibe el pool lee este campo al
-	// llamar. La alternativa era un setter público sobre el agregador, o sea dejar el
+	// necesitan mutuamente. La clausura SinkFunc que recibe el pool (classifiedSink,
+	// bridge_captacion.go) lee este campo al llamar. La alternativa era un setter público sobre el agregador, o sea dejar el
 	// cable mutable en caliente para arreglar un problema que solo existe durante el
 	// arranque.
 	intakeAggregator *flowruntime.IntakeAggregator

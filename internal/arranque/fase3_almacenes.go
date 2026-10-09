@@ -4,6 +4,8 @@
 // el nuevo, que recibe acceso sin adaptador, y un solo selector de vía, el nuevo. Y solicitudes (F6,
 // T6.24, conmutar(solicitudes)): los almacenes de solicitudes, del puente CRM y de las variables son
 // los de internal/modulos/solicitudes; del intakes viejo queda una segunda instancia, intakeStoreViejo.
+// Y captación (F7, T7.23, conmutar(captacion)): el store de intenciones y la cola del pipeline son los
+// de internal/modulos/captacion; de la cola vieja queda una segunda instancia, legacyIntakeJobs.
 package arranque
 
 import (
@@ -13,10 +15,10 @@ import (
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
 	intakesviejo "github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/receipts"
@@ -149,8 +151,9 @@ func (faseAlmacenes) ejecutar(ctx context.Context, c *contenedor) error {
 	// arranque nuevo que construye algo de internal/intakes. Va con las MISMAS dos opciones que
 	// llevaba el almacén hasta F6: la etapa draft escribe por ella el literal cifrado (sin cipher,
 	// InsertRevision lo rechaza) y con el mismo keyring no hay una rotación más. Sin estado: mismo
-	// pool, mismo SQL. Sirve a los cuatro puertos viejos que nombran tipos del intakes viejo
-	// (carrito, draft, zonas de envío, re-análisis) y a nadie más; muere en F7 y F8.
+	// pool, mismo SQL. Desde F7 (conmutar(captacion)) sirve SOLO al proyector del carrito, cuyos
+	// puertos nombran tipos del intakes viejo: draft, las zonas de envío y el re-análisis, que
+	// eran los otros tres, leen ya del almacén nuevo. Muere en F8.
 	c.intakeStoreViejo = intakesviejo.NewPostgres(c.db,
 		intakesviejo.ConCifraDeLiteral(c.flowDeps.cipher),
 		intakesviejo.ConLogDeRetencion(c.log),
@@ -196,11 +199,18 @@ func (faseAlmacenes) ejecutar(ctx context.Context, c *contenedor) error {
 	// puede escribir literal aunque alguien se lo pida, y eso es lo que sostiene
 	// D-044.26 por construcción.
 	//
-	// 🔴 UNA SOLA INSTANCIA PARA TRES PUERTOS: la cola en línea con el mensaje
-	// (`intake.JobStore`), la máquina de estados del worker (`intake.PipelineStore`,
-	// machine.go) y la puerta del re-análisis. Dos instancias serían dos pools contra
-	// la misma base sin ganar nada.
+	// 🔴 UNA INSTANCIA NUEVA PARA LOS DOS PUERTOS DE CAPTACIÓN: la máquina de estados del
+	// worker (`intake.PipelineStore`, machine.go) y la puerta del re-análisis. Dos instancias
+	// nuevas serían dos caminos al mismo SQL sin ganar nada.
+	//
+	// 🔀 F7 · conmutar(captacion): es la cola de internal/modulos/captacion/intake. El TERCER
+	// puerto, la cola en línea con el mensaje (`JobStore`), lo consumen el agregador y el
+	// compositor de flujos/runtime, que siguen viejos hasta F8 y nombran los tipos del intake
+	// viejo: para ellos, y solo para ellos, va la segunda instancia de abajo (D-F7-1). Las dos
+	// guardan el MISMO *sql.DB y nada más —no hay segundo pool ni estado que pueda divergir—,
+	// y la construye bridge_captacion.go para que ninguna fase importe el paquete viejo.
 	c.intakeJobStore = intake.NewPostgres(c.db)
+	c.legacyIntakeJobs = newLegacyIntakeJobs(c.db)
 	// El almacén del EVENTO conversacional (Plan 043 · Ola 1) reusa el MISMO cipher
 	// que los contactos y los datos del comprador: el historial del evento guarda
 	// texto literal del cliente y va cifrado con el keyring versionado del Plan 012.

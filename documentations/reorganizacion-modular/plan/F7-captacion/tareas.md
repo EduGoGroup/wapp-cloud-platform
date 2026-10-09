@@ -160,18 +160,38 @@ pueden quedar «verdes sin tocarlos» (hallazgo 28): `pipeline.ConAforo`, `pipel
 ## Bloque D · cara HTTP y conmutar · 🌐❓ · sesión F7-04 · T7.21–T7.26 (= **TX.19–TX.21** + intenciones)
 Para cuando: `reanalyze.go`, `intents.go` en verde · `bridge_captacion.go` con test de cableado completo · huella igual · candados verdes · PR (y traspaso si aplica).
 
-- [ ] **T7.21 = TX.19 · rojo(apipublica): `reanalyze.go` e `intents.go`** · 🌐❓ · dep. T7.20 · cumple R7.4.d, R7.7.a
+- [x] **T7.21 = TX.19 · rojo(apipublica): `reanalyze.go` e `intents.go`** — `a688ca4` (los dos contratos sin lógica y sus tests tras la etiqueta `pendiente`, un commit; la cara **no** promete «el 400 de forma antes de los 403»: el servicio nuevo parte el 400 en dos, hallazgo 44; `IntentsDeps` lleva además `DBTimeout`, hallazgo 45) · 🌐❓ · dep. T7.20 · cumple R7.4.d, R7.7.a
   - **Hecho cuando**: `reanalyze.go` sin gate en la cadena y con el 400 de forma antes de los 403 (T-8 de FX); `intents.go` con `C/intentcfg`, gate `llm_intent` dentro del handler y `ConfigPush` best-effort (D-FX-1 alternativa: **no** hay puente que retirar); tests viejos `reanalyze_test` (16), `intents_test` (6), `intents_aditividad_test` (2) leídos · **Commit**: `rojo(apipublica): re-análisis e intenciones`
-- [ ] **T7.22 = TX.20 · verde(apipublica): `reanalyze`, `intents`** · 🌐❓ · un commit por fichero
-- [ ] **T7.23 · conmutar(captacion): el arranque nuevo cablea captación** · 🌐❓ · dep. T7.22 · cumple R7.2.a, R7.6.b
+- [x] **T7.22 = TX.20 · verde(apipublica): `reanalyze`, `intents`** — `068a202` (`reanalyze.go`, 392 líneas, 17 tests) y `9d7fb94` (`intents.go`, 299 líneas, 21 tests); códigos, cuerpos y textos, literales del viejo; las conductas heredadas de E1–E2 quedan fijadas con test (hallazgo 43) y no se portan las dos ramas 500 de dependencia nil · 🌐❓ · un commit por fichero
+- [x] **T7.23 · conmutar(captacion): el arranque nuevo cablea captación** — `6bdbe70` (**el mismo commit que T7.24**: no son separables, hallazgo 39; tocó más ficheros que los de esta ficha, 39; «`pipeline_captacion_cableado_test` y `calentamiento_cableado_test` verdes sin tocarlos» resultó **falso**: se editaron esos y otros cinco candados, hallazgos 28 y 40; el índice del catálogo se conmutó aquí y `catalogo` entró en `Conmutados`, 41; la instancia vieja es un alias de tipo del adaptador, 42) · 🌐❓ · dep. T7.22 · cumple R7.2.a, R7.6.b
   - **Ficheros**: `internal/arranque/{fase3_almacenes,fase5_captacion,fase7_flujos,fase9_fondo}.go`; `internal/arranque/bridge_captacion.go` + `bridge_captacion_test.go` (`aheadBridge`, `composerBridge`, la clausura del sink; ida y vuelta de `WindowKey`) — nivel **simple**, una pasada; `internal/arranque/captacion_cableado_test.go`; `bridge_inferencia.go` pierde `llmConfigBridge` (el `reanalisis` nuevo recibe el `tenantllm` nuevo)
   - **Hecho cuando**: tabla de `arquitectura.md` §4 y §6 aplicada; segunda instancia **vieja** de `intake.Postgres` solo para agregador y compositor («muere F8»); **test de cableado completo** (`05` §4.2): afirma que el arranque construye worker, aforo, `Pool`, servicio de re-análisis y store de intenciones **nuevos** *y* que ninguna fase de `internal/arranque` importa `internal/{intake,intakeahead,reanalisis,intentcfg}` viejos fuera de `bridge_captacion.go` (grep por ruta de import; por eso la segunda instancia vieja se construye **dentro** del adaptador), no solo el campo del contenedor; `pipeline_captacion_cableado_test` y `calentamiento_cableado_test` verdes sin tocarlos; `captacion` **no** se añade a `Conmutados` (entra en F8)
   - **Gate**: `make ci-local` rc=0 · huella verde · **Commit**: `conmutar(captacion): el arranque nuevo cablea captacion`
-- [ ] **T7.24 = TX.21 · conmutar(captacion): H1, E1 y E2** · 🌐❓ · dep. T7.23 · cumple R7.7.a
+- [x] **T7.24 = TX.21 · conmutar(captacion): H1, E1 y E2** — `6bdbe70` (**el mismo commit que T7.23**, hallazgo 39; `FaseActual = 7`, 54 rutas por la cara nueva; en la vieja `Reanalysis`, `Intents`, `ConfigPush` e `Intakes` se **omiten**, no se escriben a `nil`, hallazgo 40; muere el centinela `oldFaceIntakesMountSentinel`, 47) · 🌐❓ · dep. T7.23 · cumple R7.7.a
   - **Hecho cuando**: H1, E1, E2 por la nueva; `Reanalysis` e `Intents` = `nil` en la vieja; G7 y `quotetext.ConPlazo` leen `PlazoPorLlamadaSuelo` del `pipeline` **nuevo** (aserción de igualdad); `reanalisis_cableado_test` mira la cara nueva; `ConfigPush` = `nil` en la vieja (E2 ya no la usa); `FaseActual = 7`. FX TX.21 ya está escrita así (reconciliada el 2026-09-29)
   - **Gate**: el de TX.7 · **Commit**: parte del `conmutar(captacion)`
-- [ ] **T7.25 · refactor(solicitudes): INV-1 vigila la captación nueva** · 🌐❓ · dep. T7.23 · cumple R7.6.c · lista de `diseno.md` §6; guarda anti-hueco intacta · **Commit**: `refactor(solicitudes): el candado INV-1 mira captacion`
-- [ ] **T7.26 · Traspaso** · 🌐❓ · solo mientras existan los dos entornos (si la sesión corrió en local, se tacha) · `traspasos/TRASPASO-F7-captacion.md`; §7: puentes (import) y adaptador con fecha de muerte, SQL no corrido, `casebank` sin prueba de extremo a extremo (D-F7-2)
+- [x] **T7.25 · refactor(solicitudes): INV-1 vigila la captación nueva** — `94f0648` (los tres paquetes viejos de `internal/intake` pasan a `modulos/captacion/{intake,pipeline,stages}` y se añaden `reanalisis` e `intakeahead`; los dos del motor siguen siendo los viejos hasta F8) · 🌐❓ · dep. T7.23 · cumple R7.6.c · lista de `diseno.md` §6; guarda anti-hueco intacta · **Commit**: `refactor(solicitudes): el candado INV-1 mira captacion`
+- ~~**T7.26 · Traspaso** · 🌐❓ · solo mientras existan los dos entornos (si la sesión corrió en local, se tacha) · `traspasos/TRASPASO-F7-captacion.md`; §7: puentes (import) y adaptador con fecha de muerte, SQL no corrido, `casebank` sin prueba de extremo a extremo (D-F7-2)~~ — tachada: F7-04 corrió en local (2026-10-09), no hay traspaso
+
+### Correspondencia de nombres (E-11) — F7-04 (cara HTTP y arranque)
+
+Códigos, cuerpos y textos de respuesta, permisos (`intakes.write`, `intents.read`, `intents.write`) y la feature
+`llm_intent` no cambian. Se conservan `ReanalysisService`, `IntentConfigStore` y `ConfigPusher`.
+
+| Dónde | Viejo / spec | Nuevo |
+|---|---|---|
+| `apipublica` (H1) | `ReanalysisService.Reanalizar` | `ReanalysisService.Reanalyze` |
+| `apipublica` (H1) | `reanalyzeIntakeHandler` · `writeReanalyzeError` | `reanalyzeHandler` · `reanalyzeWriteError` (no exportados, prefijo `reanalyze…`) |
+| `apipublica` (H1) | — (nuevos) | `ReanalyzeDeps{Reanalysis}` · `MountReanalyze` |
+| `apipublica` (E1–E2) | `FeatureChecker` | `entitlements.Resolver` |
+| `apipublica` (E1–E2) | `getIntentsHandler` · `putIntentsHandler` | `intentsGetHandler` · `intentsPutHandler` (no exportados, prefijo `intents…`) |
+| `apipublica` (E1–E2) | — (nuevos) | `IntentsDeps{Intents, Entitlements, ConfigPush, DBTimeout}` · `MountIntents` |
+| `arranque` (`bridge_inferencia.go`) | `llmConfigBridge` · `llmConfigReader` · `toLegacyLLMConfig` | — (mueren: el re-análisis nuevo recibe el `tenantllm` nuevo) |
+| `arranque` (`bridge_captacion.go`) | — (nacen; mueren en F8) | `legacyIntakeJobs` · `newLegacyIntakeJobs` · `aheadBridge` · `composerBridge` · `classifiedSink` · `legacyThreadLimit` |
+| `arranque` (cara) | — (nacen) | `captureFaceDeps` · `captureDepsOfTheNewFace` · `reanalysisServicePort` · `configPusherPort` |
+| `arranque` (cara) | `oldFaceIntakesMountSentinel` (D-F6-13) | — (muere, hallazgo 47) |
+| `arranque` (tests) | `TestCableado_TheOldFaceOnlyKeepsTheMountSentinel` | `TestCableado_TheOldFaceKeepsNothingOfRequestsNorCapture` |
+| `arranque` (tests) | `TestCableado_TheFourOldConsumersReadTheOldStore` | `TestCableado_OnlyTheCartReadsTheOldStore` |
 
 ## Bloque E · cierre local · 💻 · sesión F7-05 · T7.27–T7.29
 Para cuando: suites contra Postgres y procesos verdes contra los dos binarios, 0 SKIP · `dev` empujado · `ESTADO.md`.

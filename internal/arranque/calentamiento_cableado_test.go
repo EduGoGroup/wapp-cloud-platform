@@ -1,4 +1,6 @@
-// Copia de internal/bootstrap/arranque/calentamiento_cableado_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/calentamiento_cableado_test.go @ 80807ba (F0 · 05 §6). Desde F7
+// (T7.23, conmutar(captacion)) el pool es el de internal/modulos/captacion/intakeahead, que conserva el nombre
+// corto (T-6); la opción del interruptor cambió con E-11: WithCalentamiento → WithWarmup (hallazgo 28 de F7).
 package arranque
 
 import (
@@ -73,7 +75,7 @@ func TestInterruptoresLLMCableados(t *testing.T) {
 	// G101 de gosec («potential hardcoded credentials») por la palabra Tokens.
 	cables := []struct{ opcion, valor string }{
 		{"local.WithMaxOutputTokens", "cfg.LLM.MaxOutputTokensEnabled"},
-		{"intakeahead.WithCalentamiento", "cfg.LLM.WarmupEnabled"},
+		{"intakeahead.WithWarmup", "cfg.LLM.WarmupEnabled"},
 	}
 	visto := map[string]bool{}
 	inspecciona(ficheros, func(n ast.Node) bool {

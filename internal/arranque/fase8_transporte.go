@@ -3,7 +3,9 @@
 // T4.24, conmutar(inferencia)), que son internal/modulos/{acceso,edge,inferencia}: un solo gateway,
 // el nuevo, que recibe acceso sin adaptador; de inferencia, aquí solo viajan sus almacenes hacia la cara nueva.
 // Desde F6 (T6.25, conmutar(solicitudes)) las 18 rutas de solicitudes (G1–G18) las sirve la cara nueva
-// con los objetos de internal/modulos/solicitudes que arma requestsDepsOfTheNewFace.
+// con los objetos de internal/modulos/solicitudes que arma requestsDepsOfTheNewFace. Y desde F7 (T7.24,
+// conmutar(captacion)) las 3 de captación (H1, E1, E2), con los de internal/modulos/captacion que arma
+// captureDepsOfTheNewFace.
 package arranque
 
 import (
@@ -20,8 +22,10 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/reanalisis"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/filtercfg"
+	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
@@ -103,6 +107,7 @@ func (faseTransporte) ejecutar(_ context.Context, c *contenedor) error {
 			edge:      edgeDepsOfTheNewFace(c),
 			inference: inferenceDepsOfTheNewFace(c),
 			requests:  requestsDepsOfTheNewFace(c),
+			capture:   captureDepsOfTheNewFace(c),
 		},
 		platformRepo: c.platformRepo,
 	})
@@ -198,8 +203,8 @@ func servidorAdmin(c *contenedor) *http.Server {
 // SIN asignar (nil) A PROPÓSITO: con nil, publicapi no registra D2–D6, que sirve la cara
 // nueva con lo que arma edgeDepsOfTheNewFace; D1 la registra SIEMPRE (no tiene condición
 // de montaje) pero queda tapada por la nueva en el compuesto. Con ellos se van los campos
-// que solo leían esas rutas (Health, DiagnosticsBundleTTL). ConfigPush e Intents SIGUEN
-// puestos: E1–E2 viven en la cara vieja hasta F7 y empujan por el MISMO gateway nuevo.
+// que solo leían esas rutas (Health, DiagnosticsBundleTTL). ConfigPush e Intents siguieron
+// puestos hasta F7 (ver más abajo).
 //
 // 🔀 F4 · conmutar(inferencia) (FX TX.14): la cara VIEJA ya no sirve F1–F4. TenantLLM y
 // DegradationNotices se quedan SIN asignar (nil) A PROPÓSITO: con nil, publicapi no registra
@@ -216,11 +221,26 @@ func servidorAdmin(c *contenedor) *http.Server {
 // (`…/intakes/{id}`) que, sola en la cara nueva, taparía los literales G9 y G10 de la vieja (son
 // dos ServeMux; FX mapa §4.2). No es solo orden: el Service, los almacenes y el notificador del
 // contenedor son ya los de internal/modulos/solicitudes y no satisfacen los puertos viejos.
-// Reanalysis e Intents SIGUEN puestos: son de captación (F7). Entitlements y DBTimeout también:
-// los leen las rutas que la vieja conserva.
+// Entitlements y DBTimeout SIGUEN puestos: los leen las rutas que la vieja conserva.
 //
-// 🔴 Intakes es la EXCEPCIÓN y NO va a nil: recibe oldFaceIntakesMountSentinel, un centinela sin
-// implementación (D-F6-13). Ver su comentario: sin él la cara vieja deja de registrar H1.
+// 🔀 F7 · conmutar(captacion) (FX TX.21): la cara VIEJA ya no sirve H1, E1 ni E2. Reanalysis,
+// Intents y ConfigPush se quedan SIN asignar (nil) A PROPÓSITO: con nil, publicapi no registra ni
+// `POST /api/v1/intakes/{id}/reanalyze` (H1) ni las dos de `/api/v1/intents` (E1–E2), que sirve la
+// cara nueva con lo que arma captureDepsOfTheNewFace. ConfigPush solo lo leía E2 (medido: su
+// único lector en publicapi es putIntentsHandler), así que se va con ella. No es solo orden: el
+// servicio de re-análisis y el store de intenciones del contenedor son ya los de
+// internal/modulos/captacion y no satisfacen los puertos viejos (Reanalizar ≠ Reanalyze; el Config
+// de otro paquete).
+//
+// 🔴 Los tres campos se OMITEN, no se escriben con `nil`: el candado de cableado del re-análisis
+// lee el AST de este paquete y da por rota cualquier clave `Reanalysis:` con valor nil, que es
+// justo el modo de fallo que vigila (la ruta que no se monta y responde 404 sin un error).
+//
+// Y con H1 fuera, Intakes vuelve a nil DE VERDAD: murió oldFaceIntakesMountSentinel, el centinela
+// sin implementación de D-F6-13 que existía solo para que la vieja siguiera registrando H1 (en
+// publicapi, registerIntakes guarda toda su función tras `d.Intakes == nil`). Con él se van las
+// nueve rutas de la bandeja que la vieja volvía a registrar tapadas por la nueva, y el pánico de
+// puntero nil que había detrás de cada una si alguna quedaba destapada.
 func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 	return publicapi.Deps{
 		FlowDeps: publicapi.FlowDeps{
@@ -237,15 +257,7 @@ func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 		},
 		Triggers:            c.triggerStore,
 		TriggersDurableFlow: c.durableFlowChecker,
-		Intents:             c.intentStore,
 		Entitlements:        c.entResolver,
-		// El re-análisis va APARTE de la bandeja y no como método suyo: cruza cinco
-		// fronteras que la bandeja no cruza (T4.6, ver internal/reanalisis). Se queda en la
-		// cara vieja hasta F7, aunque la bandeja (G1–G10) ya la sirva la nueva.
-		Reanalysis: c.reanalysisSvc,
-		// 🔴 NO es un servicio: es el centinela de montaje de H1 (D-F6-13). La bandeja la sirve
-		// la cara nueva; ver oldFaceIntakesMountSentinel.
-		Intakes: oldFaceIntakesMountSentinel{},
 		// La bandeja de EVENTOS conversacionales (Plan 043 · T3.9b) lee del MISMO
 		// store que el motor y el despachador: es la misma consulta de rescatables
 		// leída desde el lado del dueño, y una segunda instancia sería un segundo
@@ -257,41 +269,11 @@ func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 		// ya viene armado con WithEventStore y WithIntakeAbandoner; sin este cable la
 		// ruta POST …/{id}/cancel no se monta.
 		EventCanceller: c.flowRuntime,
-		// El gateway NUEVO, el único del proceso: el PUT de intents (E2) empuja por él.
-		ConfigPush: c.gw,
 		// El plazo de las consultas a BD de estos handlers (Plan 050 · Ola 3): un
 		// solo valor de config para todos, porque lo que hay que respetar es la SUMA
 		// con el reloj del Ack, no cada consulta por separado.
 		DBTimeout: c.cfg.PublicAPIDBTimeout,
 	}
-}
-
-// oldFaceIntakesMountSentinel es lo que recibe publicapi.Deps.Intakes desde F6: un valor NO nil
-// que NO implementa nada. Existe SOLO para que la cara vieja siga registrando H1
-// (`POST /api/v1/intakes/{id}/reanalyze`), que es de captación y no se muda hasta F7.
-//
-// Por qué hace falta: en el publicapi viejo, registerIntakes guarda TODA su función tras
-// `d.Intakes == nil || d.Entitlements == nil` (internal/publicapi/publicapi.go:648-651), y H1 se
-// registra DENTRO de ella (:741-743). Con Intakes a nil, que es lo que pedía la spec de F6, H1
-// desaparece del :8103 sin un solo error (medido: la huella baja de 73 a 72 rutas), contra lo que
-// dice F7-captacion/arquitectura.md:166 («monta si Reanalysis ≠ nil, no depende de Intakes»). El
-// código viejo no se toca (E-1) y H1 no puede adelantarse a F6, así que la condición se satisface
-// desde aquí. Decidido por Jhoan el 2026-10-08 (D-F6-13).
-//
-// Lo que arrastra: con un Intakes no nil la vieja vuelve a registrar también G1–G6 y G8–G10 (G7
-// no: QuoteSuggestions sigue a nil). Quedan TAPADAS por la cara nueva, que registra esos mismos
-// nueve patrones y va delante en el compuesto, igual que la D1 vieja desde F3; lo vigila el
-// candado de mudanzas fila a fila (TestMudanzas_HuellaPorElCompuesto) y
-// TestCableado_TheOldFaceOnlyKeepsTheMountSentinel.
-//
-// 🔴 Si una de esas nueve dejara de estar tapada, la petición llegaría a un handler viejo que
-// llamaría a un método de la interfaz embebida, que es nil: PÁNICO de puntero nil (net/http lo
-// contiene por conexión), no una respuesta equivocada. No se le escriben métodos con un pánico
-// legible porque sus firmas nombran tipos del intakes viejo y habría que importarlo aquí.
-//
-// Muere en F7, cuando H1 se mude a la cara nueva (TX.21) y Reanalysis pase a nil en la vieja.
-type oldFaceIntakesMountSentinel struct {
-	publicapi.IntakeService
 }
 
 // edgeDepsOfTheNewFace reúne lo que la cara NUEVA necesita para servir D1–D6 (F3 ·
@@ -373,8 +355,8 @@ func inferenceDepsOfTheNewFace(c *contenedor) inferenceFaceDeps {
 //
 // 🔴 Las condiciones de montaje no cambian respecto a la cara vieja: todos estos punteros se
 // construyen siempre en sus fases, así que las 18 rutas se montan siempre. Una ausencia NO da
-// error, y desde D-F6-13 es peor que un 404 en nueve de ellas: G1–G6 y G8–G10 caerían al
-// handler viejo que cuelga de oldFaceIntakesMountSentinel (pánico). Lo vigilan el candado de
+// error: la ruta no se monta y responde el 404 de ruta inexistente (desde F7 ya no hay centinela
+// en la cara vieja, D-F6-13, detrás del que cayera una de la bandeja). Lo vigilan el candado de
 // mudanzas y solicitudes_cableado_test.go. Los Now se dejan en nil (time.Now).
 func requestsDepsOfTheNewFace(c *contenedor) requestsFaceDeps {
 	return requestsFaceDeps{
@@ -438,4 +420,62 @@ func crmStatusNotifierPort(n *intakes.Notifier) apipublica.CRMStatusNotifier {
 		return nil
 	}
 	return n
+}
+
+// captureDepsOfTheNewFace reúne lo que la cara NUEVA necesita para servir H1, E1 y E2 (F7 ·
+// conmutar(captacion), FX TX.21), con los MISMOS objetos del contenedor que usa el resto del
+// arranque: el único servicio de re-análisis (fase 5), el store de intenciones del que también
+// leen el pool de clasificaciones y el push de config al conectar (fase 3), el único resolver de
+// derechos (una sola caché) y el único gateway del proceso. Aquí no se construye nada.
+//
+// 🔴 Las condiciones de montaje no cambian respecto a la cara vieja: H1 se monta si hay servicio
+// de re-análisis, y ya NO depende de que haya bandeja (era el accidente de publicapi que D-F6-13
+// tuvo que rodear con un centinela); E1–E2, si hay store de intenciones y resolver de derechos.
+// Los cuatro punteros se construyen siempre en sus fases, así que las tres se montan siempre. Una
+// ausencia NO da error: la ruta no se monta y responde 404. Lo vigilan el candado de mudanzas y
+// reanalisis_cableado_test.go.
+func captureDepsOfTheNewFace(c *contenedor) captureFaceDeps {
+	return captureFaceDeps{
+		// H1 · el re-análisis va APARTE de la bandeja y no como método suyo: cruza cinco
+		// fronteras que la bandeja no cruza (T4.6, ver captacion/reanalisis).
+		reanalyze: apipublica.ReanalyzeDeps{
+			Reanalysis: reanalysisServicePort(c.reanalysisSvc),
+		},
+		// E1–E2 · la config de intenciones (Plan 029). El gate `llm_intent` vive dentro del
+		// handler de E2, y por eso viaja el resolver. El PUT empuja el ConfigUpdate por el
+		// gateway NUEVO, el único del proceso, best-effort: sin sesiones vivas no es un error.
+		// El plazo de la lectura es el de config (Plan 050 · Ola 3), el mismo que recibía E1 en
+		// la cara vieja.
+		intents: apipublica.IntentsDeps{
+			Intents:      c.intentStore,
+			Entitlements: c.entResolver,
+			ConfigPush:   configPusherPort(c.gw),
+			DBTimeout:    c.cfg.PublicAPIDBTimeout,
+		},
+	}
+}
+
+// reanalysisServicePort entrega el servicio de re-análisis a H1 como su puerto, o un nil DE
+// INTERFAZ si no hay servicio. MountReanalyze decide «no monto la ruta» comparando Reanalysis con
+// nil, y un *reanalisis.Service nil metido en la interfaz NO es nil: la ruta se montaría y el
+// primer POST reventaría sobre un receptor nil. Hoy la fase 5 construye siempre el servicio (o
+// aborta el arranque); la costura existe para que el día que sea opcional el cable no cambie de
+// significado sin que nadie lo vea. Mismo cuidado que crmStatusNotifierPort.
+func reanalysisServicePort(svc *reanalisis.Service) apipublica.ReanalysisService {
+	if svc == nil {
+		return nil
+	}
+	return svc
+}
+
+// configPusherPort entrega el gateway a E2 como su puerto de push, o un nil DE INTERFAZ si no hay
+// gateway. E2 decide «no empujo» comparando ConfigPush con nil (el push es best-effort y opcional),
+// y un *edgegrpc.Server nil metido en la interfaz NO es nil: el PUT guardaría la config y luego
+// reventaría al empujarla. Hoy la fase 4 construye siempre el gateway; por la misma razón que
+// reanalysisServicePort.
+func configPusherPort(gw *edgegrpc.Server) apipublica.ConfigPusher {
+	if gw == nil {
+		return nil
+	}
+	return gw
 }

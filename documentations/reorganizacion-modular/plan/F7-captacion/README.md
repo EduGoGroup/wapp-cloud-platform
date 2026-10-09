@@ -2,7 +2,7 @@
 
 > **Estado: en curso** — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
 > ese día ([`diseno.md`](diseno.md) §1.2). **F7-01 hecha** (bloque A): `evidence`, `anclaje`, `intake`, `intentcfg` y `casebank` en verde
-> (19 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). **F7-02 hecha** (bloque B): `stages` en verde (14 ficheros de producción, hallazgo 18) y el puente `captacion/stages → internal/flujos/store` declarado. **F7-03 hecha** (bloque C, 2026-10-09): `pipeline`, `intakeahead` y `reanalisis` en verde (14 ficheros de producción y un doble, hallazgo 27), el puente `captacion/reanalisis → internal/flujos/events` declarado y el de `flujos/runtime` evitado; **pendientes del módulo = 0**. Falta la cara HTTP y conmutar (F7-04) y el cierre contra Postgres (F7-05). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
+> (19 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). **F7-02 hecha** (bloque B): `stages` en verde (14 ficheros de producción, hallazgo 18) y el puente `captacion/stages → internal/flujos/store` declarado. **F7-03 hecha** (bloque C, 2026-10-09): `pipeline`, `intakeahead` y `reanalisis` en verde (14 ficheros de producción y un doble, hallazgo 27), el puente `captacion/reanalisis → internal/flujos/events` declarado y el de `flujos/runtime` evitado; **pendientes del módulo = 0**. **F7-04 hecha** (bloque D, 2026-10-09): H1, E1 y E2 por la cara nueva (`apipublica/reanalyze.go`, `apipublica/intents.go`; `FaseActual = 7`, 54 rutas), el arranque nuevo cablea `captacion` con `bridge_captacion.go` hacia el agregador y el compositor viejos, `llmConfigBridge` muere, el candado INV-1 mira la captación nueva y `catalogo` entra en `Conmutados` (hallazgos 39–49); huella igual. Falta el cierre contra Postgres y contra los dos binarios (F7-05): nada de F7-04 corrió contra una base ni contra un binario (hallazgo 49). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.5 y §2.8
 > (H1, y E1–E2 por **D-FX-1** resuelta en su alternativa: las intenciones se mudan **aquí**).
@@ -69,7 +69,7 @@ estado en memoria) → [`diseno.md`](diseno.md) → [`reglas.md`](reglas.md) →
 | **A** · [`F7-01`](../sesiones/F7-01-web-inventario-y-hojas.md) · inventario E-12 + hojas | 🌐❓ | T7.1–T7.6, T7.14–T7.15 | inventario **aprobado por Jhoan** · `evidence`, `intake`, `anclaje`, `intentcfg`, `casebank` en verde con sus suites en memoria |
 | **B** · [`F7-02`](../sesiones/F7-02-web-stages.md) · `stages` | 🌐❓ | T7.7–T7.9, T7.16–T7.17 | 10 ficheros de `stages` en verde; puente (import) a `flujos/store` declarado |
 | **C** · [`F7-03`](../sesiones/F7-03-web-pipeline-reanalisis.md) · `pipeline`, `intakeahead`, `reanalisis` | 🌐❓ | T7.10–T7.13, T7.18–T7.20 | pendientes del módulo = 0; 2 puentes (import) (3 si T7.12 no evita el de `runtime`) — ✅ hecha el 2026-10-09: 2 puentes, el de `runtime` evitado |
-| **D** · [`F7-04`](../sesiones/F7-04-web-cara-http-y-conmutar.md) · cara HTTP + conmutar | 🌐❓ | T7.21–T7.26 (= TX.19–TX.21) | `reanalyze.go`, `intents.go` en verde · `bridge_captacion.go` con test de cableado · huella igual · INV-1 re-tocado |
+| **D** · [`F7-04`](../sesiones/F7-04-web-cara-http-y-conmutar.md) · cara HTTP + conmutar | 🌐❓ | T7.21–T7.26 (= TX.19–TX.21) | `reanalyze.go`, `intents.go` en verde · `bridge_captacion.go` con test de cableado · huella igual · INV-1 re-tocado — ✅ hecha el 2026-10-09: T7.23 y T7.24 en un solo commit, `catalogo` en `Conmutados`, T7.26 tachada (sesión local) |
 | **E** · [`F7-05`](../sesiones/F7-05-cli-cierre.md) · cierre local | 💻 | T7.27–T7.29 | suites contra Postgres · P4 y P8 (T9.28) contra los dos binarios · `dev` · `ESTADO.md` |
 
 Cada sesión: un bloque de 45–90 min y cierre de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos
@@ -412,4 +412,69 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     sub-agente que porta un fichero corre, además de su paquete y de `./internal/modulos/`, los candados de invariante de
     `05` §3.2 que barren el árbol (`go test ./internal/modulos/inferencia/llmvia/ -run TestC2`), o los corre el
     orquestador antes de aceptar el verde.
+39. **T7.23 y T7.24 no son separables: van en un solo commit** (`6bdbe70`; contra `tareas.md`, que las daba en serie).
+    Al cambiar los tipos del contenedor a los de `modulos/captacion`, los campos `Intents` y `Reanalysis` de la cara
+    vieja dejan de compilar: el cableado y la mudanza de rutas son el mismo cambio. Y la conmutación tocó más ficheros
+    que los de T7.23 y `arquitectura.md` §6: además `contenedor.go`, `edge_config.go`, `mudanzas.go`,
+    `bridge_inferencia.go`, `fase8_transporte.go` y `filters_config_test.go`. `fase4_gateway.go` y `fase9_fondo.go`
+    quedaron sin cambios de texto.
+40. **Los candados a re-tocar eran más que los del hallazgo 28** (F7-04). Además de los tres de F0:
+    `solicitudes_cableado_test.go` (la lista de lectores del almacén viejo: `c.intakeStoreViejo` pasa de 6 menciones a 3,
+    su construcción y las dos lecturas de `cart.NewProjector`, hasta F8), `solicitudes_cableado_identidad_test.go`,
+    `inference_wiring_test.go` (campos `slots` y `warmer`; `llmConfigBridge` fuera), `gateway_wiring_test.go` y
+    `mudanzas_test.go`. **Ninguno se debilitó.** `reanalisis_cableado_test` quedó más fuerte: exige
+    `Reanalysis: reanalysisServicePort(c.reanalysisSvc)` en `apipublica.ReanalyzeDeps` y sigue fallando ante cualquier
+    `Reanalysis: nil` del arranque; por eso en la cara vieja los campos se **omiten**, no se escriben a `nil`
+    (contra la letra de T7.24, «`= nil` en la vieja»).
+41. **El índice del catálogo se conmutó aquí** (contra `arquitectura.md` §6, «ya lo cambió F5»).
+    `fase5_captacion.go` seguía construyendo la caché del match con `internal/intake/catalogo`; hoy es `indice.NewCache`,
+    de `modulos/catalogo`. Con eso **`catalogo` entró en `Conmutados`** (D-R-4 ✎ 2026-10-07; F5 `reglas.md` §4.10), que
+    queda en `{"acceso","edge","catalogo"}`; la regla 3 pasó sin forzar. `captacion` **no** entra: lo hará en F8, cuando
+    muera su adaptador.
+42. **«La instancia vieja dentro del adaptador» se resolvió con un alias de tipo** (T7.23, D-F7-1):
+    `type legacyIntakeJobs = intakeviejo.Postgres`, con `newLegacyIntakeJobs`. El compositor (fase 5) y el agregador
+    (fase 7) la necesitan los dos, y el contenedor no puede importar el paquete viejo. Los adaptadores (`aheadBridge`,
+    `composerBridge`, la clausura de `classifiedSink`) guardan puertos mínimos locales, testeables sin objetos reales,
+    con aserciones de compilación contra los tipos viejos. La identidad del compositor se comprueba además por el límite
+    del hilo: `legacyThreadLimit` es el del compositor (`flowruntime.DefaultThreadLimit`, 200), y pasar `WithThreadLimit`
+    al compositor sin tocar el adaptador rompe ese test, a propósito. **Hueco declarado**: la clausura del sink no se
+    invoca contra un agregador real; lo cubre el AST y lo verá P4 de F9.
+43. 🟡 **Conductas heredadas de E1–E2, portadas literales y fijadas con test** (F7-04; manda el viejo; para Jhoan, sin
+    bloquear). (a) Un fallo del resolver de derechos en E2 es **500**, no *fail-closed*, aunque el comentario viejo
+    (`internal/publicapi/intents.go:119-126`) dijera lo contrario. (b) El gate `llm_intent` va **antes** de leer el
+    cuerpo: sin la feature, un blob inválido o gigante recibe 403, no 400 ni 413. (c) El push usa el contexto de la
+    petición (`internal/publicapi/intents.go:167`): un cliente que cuelga puede cancelarlo. D3 ya lo corrigió para el
+    perfil con `WithoutCancel` (`internal/apipublica/sessionadmin.go:82-93`): **candidato a decisión**; el test a
+    invertir es `TestMountIntents_PutPushUsesTheRequestContext`. (d) E1 no lleva gate de feature. (e) El 403 de E2 es
+    prosa, no `feature_not_enabled`, y deja auditoría `failure`. (f) Se guarda y se empuja el cuerpo byte a byte, y la
+    versión sale del normalizado. (g) La rama 400 `el cuerpo debe ser JSON válido` es inalcanzable tras
+    `ParseAndValidate`: portada como defensa, sin test. **No se portaron** las dos ramas 500 de dependencia nil: el
+    montaje las hace inalcanzables.
+44. **H1: la cara no promete «todo 400 antes de todo 403»** (contra la letra de T7.21 y T-8 de FX). El servicio nuevo
+    parte el 400 en dos —el `invalid_via` de coincidencia va **tras** el gate `llm_intake`—: un tenant sin `llm_intake`
+    que mande `{"via":"api"}` recibe 403. T-8 se prueba desde la cara por estructura: `ReanalyzeDeps` tiene un solo
+    campo y un tenant sin ninguna feature llega al servicio. El comentario viejo
+    (`internal/publicapi/publicapi.go:730-731`) cita dos tests que no existen en `publicapi`. **Promesa nueva**: el
+    orden del `switch` de errores («gana el primero», `TestMountReanalyze_FirstMatchWins`); el viejo lo llamaba
+    indiferente. Un **puntero** a un error con nombre cae al 500: son tipos valor y se leen con `errors.As`.
+45. **`IntentsDeps` lleva `DBTimeout`**, que no estaba en la forma prevista (T7.21): el arranque le pasa
+    `PublicAPIDBTimeout`, como recibía E1 en la vieja. Deuda menor del banco de la cara: `wantOneAudit` está fijado a
+    `messages.send`, así que cada área escribió el suyo.
+46. **El binario modular sigue enlazando captación vieja** (F7-04):
+    `internal/{intake,intake/pipeline,intake/stages,intake/catalogo,intake/anclaje,intentcfg,reanalisis,evidence}`
+    entran por `internal/publicapi` (la cara vieja de respaldo) y por `internal/flujos`. Ninguna fase la importa —lo
+    afirma `TestCableado_OnlyTheBridgeImportsTheOldCapture`—, pero un `grep` de lo viejo sobre `go list -deps` no dará 0
+    hasta F8/F10. La prueba de lo nuevo es la otra: `go list -deps ./cmd/server-modular | grep -c modulos/captacion` = 8;
+    sobre `./cmd/server`, 0.
+47. **Murió el centinela `oldFaceIntakesMountSentinel`** (D-F6-13; hallazgo 55 de F6): la cara vieja ya no registra H1,
+    E1, E2 ni G1–G10. `ConfigPush` solo lo leía E2 (`internal/publicapi/publicapi.go:574`), así que también queda sin
+    asignar en la vieja.
+48. **Técnica de orquestación: tres sub-agentes en el MISMO árbol, por paquete, sin commitear** (F7-04). El rojo conjunto
+    y los verdes por fichero los compuso el orquestador desde una instantánea del rojo que cada sub-agente dejó **fuera**
+    del árbol. Coste: un candado del árbol (`un_fichero_un_test`) estuvo rojo unos minutos para los otros sub-agentes
+    mientras el adaptador no tenía su test (como el hallazgo 14).
+49. 🔴 **Para F7-05: nada de esta sesión corrió contra Postgres ni contra un binario.** Lo primero que hay que intentar
+    refutar: P4 y P8 contra `nuevo` (es la primera vez que el worker, el `Pool`, el índice de F5 y el re-análisis nuevos
+    corren de extremo a extremo), E1–E2 contra el JSONB real, y la clausura del sink con el agregador vivo (el hueco del
+    hallazgo 42).
 

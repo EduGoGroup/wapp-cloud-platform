@@ -1,7 +1,10 @@
 // Copia de internal/bootstrap/arranque/fase7_flujos.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
 // salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge. Desde F6 (T6.24,
 // conmutar(solicitudes)) el motor viejo recibe los objetos NUEVOS de solicitudes por sus puertos
-// estructurales; solo el proyector del carrito sigue leyendo de c.intakeStoreViejo.
+// estructurales; solo el proyector del carrito sigue leyendo de c.intakeStoreViejo. Desde F7 (T7.23,
+// conmutar(captacion)) el pool que pide las clasificaciones es el de internal/modulos/captacion; el
+// agregador de ventanas, que es de flujos/runtime y sigue viejo hasta F8, se cose a él por
+// bridge_captacion.go y escribe por la instancia vieja de la cola (c.legacyIntakeJobs).
 package arranque
 
 import (
@@ -22,8 +25,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/survey"
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intakeahead"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
 )
@@ -149,18 +151,23 @@ func (faseFlujos) ejecutar(_ context.Context, c *contenedor) error {
 // llamar en vez de al construir. La alternativa era un setter público sobre el
 // agregador, es decir, dejar el cable mutable en caliente para arreglar un problema
 // que solo existe durante el arranque.
+//
+// 🔀 F7 · conmutar(captacion): el pool es el NUEVO y el agregador sigue VIEJO (es de
+// flujos/runtime, F8), y cada uno nombra SU WindowKey: mismos cuatro campos, dos tipos que
+// el compilador no mezcla (reglas de F7, T-3). Los dos sentidos del nudo pasan por
+// bridge_captacion.go, que es el único sitio donde se convierte la clave: classifiedSink
+// para la respuesta (pool → agregador) y aheadBridge para la petición (agregador → pool).
+// La clausura sigue resolviéndose al llamar; solo cambió de fichero.
 func cablearVentanaDeCaptacion(c *contenedor) {
 	c.intakeAhead = intakeahead.New(c.log, c.intentStore, c.llmSelector,
-		intakeahead.SinkFunc(func(key intake.WindowKey, intent string, confidence float64) {
-			c.intakeAggregator.OnClassified(key, intent, confidence)
-		}),
+		classifiedSink(c),
 		// EL CALENTAMIENTO DE LA CACHÉ DE PREFIJO (T1.7-4). El emisor es el MISMO
 		// selector de vía, porque decidir si un tenant tiene caché que calentar es
 		// preguntar por la vía y eso se hace en un solo sitio (C2). Sin este cable el
 		// pipeline funciona igual: solo vuelve a pagar el prefill frío (~50 s) en la
 		// primera inferencia de cada prefijo nuevo.
-		intakeahead.WithCalentador(c.llmSelector),
-		intakeahead.WithCalentamiento(c.cfg.LLM.WarmupEnabled))
+		intakeahead.WithWarmer(c.llmSelector),
+		intakeahead.WithWarmup(c.cfg.LLM.WarmupEnabled))
 
 	// El OTRO extremo del mismo cable, y va aquí por el nudo de construcción: el
 	// gateway se arma ANTES que el pool (el selector necesita el gateway y el pool
@@ -187,7 +194,10 @@ func cablearVentanaDeCaptacion(c *contenedor) {
 		"max_output_tokens_env", "WAPP_LLM_MAX_OUTPUT_TOKENS_ENABLED")
 
 	// El AGREGADOR DE VENTANAS (T1.1/T1.2). Tres dependencias y ninguna más:
-	//   - intakeJobStore, para escribir la ventana (UNA sentencia por entrante);
+	//   - legacyIntakeJobs, para escribir la ventana (UNA sentencia por entrante). Es la
+	//     instancia VIEJA de la cola (D-F7-1, bridge_captacion.go): el puerto JobStore del
+	//     agregador nombra los tipos del intake viejo. Misma tabla y mismo *sql.DB que la
+	//     cola nueva del worker; muere en F8;
 	//   - flowStore, para leer `aggregation_window_seconds` EN EL BARRIDO (nunca en
 	//     línea con el mensaje: eso sería el SELECT que D-044.26 prohíbe);
 	//   - entResolver, el MISMO resolver CACHEADO CON TTL que ya usan el hilo y el
@@ -208,10 +218,11 @@ func cablearVentanaDeCaptacion(c *contenedor) {
 	// que hasta la Ola 1.6 llegaba adjunta al mensaje (D-044.31 mató el push). Sin
 	// ella el agregador no adelanta nunca y toda ventana cierra por su reloj — que es
 	// una forma legítima (T1.7), no una avería, pero deja sobre la mesa el minuto de
-	// latencia que esta ola existe para recortar.
-	c.intakeAggregator = flowruntime.NewIntakeAggregator(c.log, c.intakeJobStore, c.flowStore, c.entResolver,
+	// latencia que esta ola existe para recortar. Desde F7 quien pide es el pool NUEVO
+	// detrás de aheadBridge, que convierte la clave vieja del agregador en la nueva.
+	c.intakeAggregator = flowruntime.NewIntakeAggregator(c.log, c.legacyIntakeJobs, c.flowStore, c.entResolver,
 		flowruntime.WithSourceComposer(c.intakeComposer),
-		flowruntime.WithAheadRequester(c.intakeAhead))
+		flowruntime.WithAheadRequester(&aheadBridge{pool: c.intakeAhead}))
 
 	// EL DISPARADOR POR EVENTO (D-044.43). Mismo molde que `gw.OnWarmup` de arriba y
 	// sobre el MISMO objeto que se registra en el servidor gRPC de la fase de
@@ -220,10 +231,10 @@ func cablearVentanaDeCaptacion(c *contenedor) {
 	// jobs de un Edge que acaba de recuperar su Ollama esperarían a que venciera su
 	// backoff, hasta 5 minutos, sin que nada lo dijera.
 	//
-	// `Despertar` cumple la única exigencia del hook —volver en el acto—: es un envío
-	// no bloqueante a un canal con buffer, y el hook corre INLINE en la goroutine del
+	// `Wake` (antes `Despertar`) cumple la única exigencia del hook —volver en el acto—: es
+	// un envío no bloqueante a un canal con buffer, y el hook corre INLINE en la goroutine del
 	// Recv del stream.
-	c.gw.OnEdgeReady = c.intakePipeline.Despertar
+	c.gw.OnEdgeReady = c.intakePipeline.Wake
 }
 
 // construirRuntimeDeFlujos arma el runtime del Motor con sus opciones. Es la lista de

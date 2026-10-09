@@ -7,8 +7,8 @@ package arranque
 // almacenes y el generador de cotización son los de internal/modulos/solicitudes; que de cada uno
 // hay UNA construcción, la nueva; que, por ruta de import, ningún fichero de internal/arranque
 // —de producción o de test— toca los paquetes viejos de solicitudes fuera del sitio declarado
-// para la segunda instancia vieja del almacén (D-F6-1); y que esa instancia la leen los cuatro
-// consumidores viejos que la necesitan y nadie más.
+// para la segunda instancia vieja del almacén (D-F6-1); y que esa instancia la lee el único
+// consumidor viejo que la necesita desde F7 (el carrito) y nadie más.
 //
 // La mitad de IDENTIDAD (mismas instancias en el contenedor, en la cara nueva y en la vieja, el
 // centinela de H1 y el plazo de G7) vive en solicitudes_cableado_identidad_test.go; se parten por
@@ -64,8 +64,8 @@ const oldIntakesAlias = "intakesviejo"
 // internal/arranque que pueden importar un paquete viejo de solicitudes, con las ÚNICAS rutas que
 // cada uno puede importar. Es el sitio declarado de la segunda instancia vieja del almacén
 // (D-F6-1): el TIPO del campo contenedor.intakeStoreViejo y su única construcción, en la fase 3.
-// Los dos salen de aquí cuando muera esa instancia: F7 (draft, zonas de envío, re-análisis) y F8
-// (el carrito).
+// Los dos salen de aquí cuando muera esa instancia, en F8 (el carrito); sus tres lectores de
+// captación ya la dejaron en F7.
 var oldRequestsImporters = map[string][]string{
 	"contenedor.go":      {oldIntakesImportPath},
 	"fase3_almacenes.go": {oldIntakesImportPath},
@@ -286,65 +286,88 @@ func goRunsOf(f *ast.File, worker string) int {
 	return runs
 }
 
-// oldStoreReaders son los CUATRO consumidores viejos que reciben la segunda instancia vieja del
-// almacén (arquitectura.md §4 de F6), con la posición del argumento —desde 0— en la que la
-// reciben. Sus puertos nombran tipos del intakes viejo, así que el almacén nuevo no los satisface.
-var oldStoreReaders = []struct {
+// requestsStoreReaders son los consumidores de producción cuyo almacén de solicitudes vigila este
+// candado, con la posición del argumento —desde 0— en la que lo reciben y CUÁL reciben.
+//
+// El proyector del carrito es el ÚNICO que sigue leyendo de la segunda instancia vieja
+// (arquitectura.md §4 de F6): sus puertos nombran tipos del intakes viejo, así que el almacén
+// nuevo no los satisface. Muere en F8. Eran cuatro hasta F7: los tres de captación reciben desde
+// conmutar(captacion) el almacén NUEVO (c.intakeStore) en el MISMO argumento, porque sus puertos
+// nombran ya los tipos de internal/modulos/solicitudes. Sus nombres son los de E-11
+// (ConZonasDeEnvio → WithShippingZones, NewServicio → NewService).
+var requestsStoreReaders = []struct {
 	pkg, fn string
 	args    []int
-	dies    string
+	store   string
+	why     string
 }{
-	{"stages", "NewDraft", []int{3}, "F7"},
-	{"pipeline", "ConZonasDeEnvio", []int{0}, "F7"},
-	{"reanalisis", "NewServicio", []int{1}, "F7"},
-	{"cart", "NewProjector", []int{1, 2}, "F8"},
+	{"cart", "NewProjector", []int{1, 2}, oldRequestsStoreField, "D-F6-1; muere en F8"},
+	{"stages", "NewDraft", []int{3}, newRequestsStoreField, "desde F7 captación lee del almacén NUEVO"},
+	{"pipeline", "WithShippingZones", []int{0}, newRequestsStoreField, "desde F7 captación lee del almacén NUEVO"},
+	{"reanalisis", "NewService", []int{1}, newRequestsStoreField, "desde F7 captación lee del almacén NUEVO"},
 }
 
-// TestCableado_TheFourOldConsumersReadTheOldStore (D-F6-1): por AST, cada uno de los cuatro
-// consumidores viejos recibe c.intakeStoreViejo en su argumento, y en toda la producción del
-// arranque ese campo se nombra exactamente SEIS veces: su construcción y esas cinco lecturas
-// (el carrito lo recibe dos veces). Una séptima sería alguien más leyendo del almacén viejo, que
-// es justo lo que la conmutación quita. Y, sobre el arranque real, el re-análisis guarda ESA
-// instancia.
-func TestCableado_TheFourOldConsumersReadTheOldStore(t *testing.T) {
-	const oldStore = "c.intakeStoreViejo"
+// Los dos campos del contenedor que guardan un almacén de solicitudes, como se escriben.
+const (
+	oldRequestsStoreField = "c.intakeStoreViejo"
+	newRequestsStoreField = "c.intakeStore"
+)
+
+// TestCableado_OnlyTheCartReadsTheOldStore (D-F6-1, y F7 · conmutar(captacion)): por AST, el
+// proyector del carrito recibe c.intakeStoreViejo en sus dos argumentos, y en toda la producción
+// del arranque ese campo se nombra exactamente TRES veces: su construcción y esas dos lecturas.
+// Una cuarta sería alguien más leyendo del almacén viejo, que es justo lo que la conmutación
+// quita (eran seis hasta F7, con las tres de captación). Los tres consumidores de captación
+// reciben c.intakeStore, el NUEVO, en el argumento donde recibían el viejo. Y, sobre el arranque
+// real, el re-análisis, el worker y la etapa draft guardan ESA instancia nueva.
+func TestCableado_OnlyTheCartReadsTheOldStore(t *testing.T) {
 	fset, files := astDelArranque(t)
-	seen := make(map[string]int, len(oldStoreReaders))
+	seen := make(map[string]int, len(requestsStoreReaders))
 	mentions := 0
 	inspecciona(files, func(n ast.Node) bool {
-		if sel, ok := n.(*ast.SelectorExpr); ok && campoCompletoDe(sel) == oldStore {
+		if sel, ok := n.(*ast.SelectorExpr); ok && campoCompletoDe(sel) == oldRequestsStoreField {
 			mentions++
 		}
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		for _, r := range oldStoreReaders {
+		for _, r := range requestsStoreReaders {
 			if !esLlamada(call, r.pkg, r.fn) {
 				continue
 			}
 			seen[r.pkg+"."+r.fn]++
 			for _, i := range r.args {
-				if i >= len(call.Args) || campoCompletoDe(call.Args[i]) != oldStore {
-					t.Errorf("%s: el argumento %d de %s.%s no es %s (D-F6-1; muere en %s)",
-						fset.Position(call.Pos()), i+1, r.pkg, r.fn, oldStore, r.dies)
+				if i >= len(call.Args) || campoCompletoDe(call.Args[i]) != r.store {
+					t.Errorf("%s: el argumento %d de %s.%s no es %s (%s)",
+						fset.Position(call.Pos()), i+1, r.pkg, r.fn, r.store, r.why)
 				}
 			}
 		}
 		return true
 	})
-	for _, r := range oldStoreReaders {
+	for _, r := range requestsStoreReaders {
 		if n := seen[r.pkg+"."+r.fn]; n != 1 {
 			t.Errorf("%s.%s aparece %d veces en la producción de internal/arranque; se espera 1", r.pkg, r.fn, n)
 		}
 	}
-	if mentions != 6 {
-		t.Errorf("%s se nombra %d veces en la producción de internal/arranque; se esperan 6 (su construcción y "+
-			"las cinco lecturas de sus cuatro consumidores): nadie más puede leer del almacén viejo", oldStore, mentions)
+	if mentions != 3 {
+		t.Errorf("%s se nombra %d veces en la producción de internal/arranque; se esperan 3 (su construcción y "+
+			"las dos lecturas del proyector del carrito): nadie más puede leer del almacén viejo", oldRequestsStoreField, mentions)
 	}
 
 	c := contenedorDeHuella(t, "minimo")
-	if !sameInstance(field(t, c.reanalysisSvc, "solicitudes"), c.intakeStoreViejo) {
-		t.Error("el re-análisis no lee de c.intakeStoreViejo")
+	kept := []struct {
+		name string
+		got  reflect.Value
+	}{
+		{"el re-análisis (reanalisis.Intakes)", field(t, c.reanalysisSvc, "intakes")},
+		{"el worker, para las zonas de envío (pipeline.ShippingZones)", field(t, c.intakePipeline, "zones")},
+		{"la etapa draft, para la revisión (stages.RevisionWriter, R-06)", inner(t, field(t, c.intakePipeline, "draft"), "revisions")},
+	}
+	for _, k := range kept {
+		if !sameInstance(k.got, c.intakeStore) {
+			t.Errorf("%s no lee de c.intakeStore, el almacén NUEVO de solicitudes", k.name)
+		}
 	}
 }

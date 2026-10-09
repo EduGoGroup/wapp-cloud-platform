@@ -1,4 +1,9 @@
-// Copia de internal/bootstrap/arranque/pipeline_captacion_cableado_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/pipeline_captacion_cableado_test.go @ 80807ba (F0 · 05 §6). Desde F7
+// (T7.23, conmutar(captacion)) lo que vigila son los paquetes NUEVOS de internal/modulos/captacion y el índice de
+// internal/modulos/catalogo/indice, que conservan el nombre corto (T-6). Los textos que busca cambiaron con E-11
+// (hallazgo 28 de F7): ConAforo → WithCapacity, ConZonasDeEnvio → WithShippingZones, Despertar → Wake,
+// catalogo.NewCache → indice.NewCache. Lo que afirma cada criterio no cambió. Que el `pipeline`, las `stages` y el
+// `indice` que se nombran sean los nuevos y no un alias de los viejos lo afirma captacion_cableado_test.go.
 package arranque
 
 import (
@@ -15,11 +20,11 @@ import (
 // 🔴 POR QUÉ UN TEST DE AST, mismo molde y mismo motivo que TestCalentamientoCableado:
 // las tres cosas que custodia son OMISIBLES SIN ERROR. `Server.OnEdgeReady` es un hook
 // opcional con cero-valor útil (nil = «nadie se entera del flanco», que es como nació);
-// `go w.Run(ctx)` es una línea suelta que nadie espera ni comprueba; y `ConAforo` es una
+// `go w.Run(ctx)` es una línea suelta que nadie espera ni comprueba; y `WithCapacity` es una
 // opción variádica cuya ausencia el worker solo GRITA en un Warn del arranque que ningún
 // test lee. Olvidar cualquiera de las tres compila, pasa el vet, pasa el lint y deja
 // TODOS los demás tests en verde — los del paquete `pipeline` se construyen su propio
-// worker y le llaman a `Despertar`/`Drenar` a mano, así que ninguno puede notar que
+// worker y le llaman a `Wake`/`Drain` a mano, así que ninguno puede notar que
 // producción no los une.
 //
 // Y el síntoma en campo de cada una es distinto y ninguno da error:
@@ -43,7 +48,7 @@ import (
 //     `NewDraft` el worker ya no compila (T3.8 los hizo obligatorios), pero eso solo
 //     protege de omitirlos: NO protege de que alguien construya la etapa y no la pase,
 //     ni de que la caché del catálogo se sustituya por otra cosa;
-//   - (e) `pipeline.ConZonasDeEnvio`, que sí es omisible sin error: sin ella TODO
+//   - (e) `pipeline.WithShippingZones`, que sí es omisible sin error: sin ella TODO
 //     borrador sale con la línea de envío sin precio, también el del tenant que tiene
 //     su tarifa plana configurada, y el único síntoma es un Warn del arranque.
 //
@@ -66,14 +71,14 @@ func TestPipelineCaptacionCableado(t *testing.T) {
 
 // cableadoDelPipeline lleva la cuenta de las cosas que hay que ver en bootstrap.go.
 type cableadoDelPipeline struct {
-	asignado  bool // (a) gw.OnEdgeReady = intakePipeline.Despertar
+	asignado  bool // (a) gw.OnEdgeReady = intakePipeline.Wake
 	arranques int  // (b) cuántas veces se hace `go intakePipeline.Run(ctx)`
-	conAforo  bool // (c) pipeline.NewWorker(..., pipeline.ConAforo(...))
+	conAforo  bool // (c) pipeline.NewWorker(..., pipeline.WithCapacity(...))
 	// piezas son los constructores del criterio (d) vistos en el fichero. Se cuenta el
 	// CONJUNTO y no una lista ordenada: lo que importa es que no falte ninguno, no en
 	// qué orden se escribieron.
 	piezas   map[string]bool
-	conZonas bool // (e) pipeline.NewWorker(..., pipeline.ConZonasDeEnvio(...))
+	conZonas bool // (e) pipeline.NewWorker(..., pipeline.WithShippingZones(...))
 }
 
 // piezasDelPipeline son los constructores que bootstrap.go TIENE que llamar para que un
@@ -87,7 +92,7 @@ var piezasDelPipeline = map[string]string{
 		"— y ésta es EXACTAMENTE la que la Ola 3 dejó escrita y sin llamante",
 	"stages.NewDraft": "sin el draft no nace la solicitud ni su revisión: el job termina en `done` sin `intake_id` " +
 		"y el dueño no ve NADA en la bandeja, sin un solo error en el log",
-	"catalogo.NewCache": "sin la caché del catálogo el match no tiene índice que consultar y devuelve ErrSinCatalogo " +
+	"indice.NewCache": "sin la caché del catálogo el match no tiene índice que consultar y devuelve ErrSinCatalogo " +
 		"en cada job: la cadena entera muere por infraestructura",
 }
 
@@ -124,13 +129,13 @@ func (c *cableadoDelPipeline) anotaHook(t *testing.T, fset *token.FileSet, asig 
 	if len(asig.Lhs) != 1 || len(asig.Rhs) != 1 || campo(asig.Lhs[0]) != "gw.OnEdgeReady" {
 		return
 	}
-	// No basta con que se asigne ALGO. Tiene que ser `Despertar` del worker: es el único
+	// No basta con que se asigne ALGO. Tiene que ser `Wake` del worker: es el único
 	// que empuja la plaza al buzón que `Run` atiende, y el único que cumple la exigencia
 	// del hook —volver en el acto, porque corre inline en la goroutine del Recv del
 	// stream—. Cualquier otra función aquí dejaría el flanco sin efecto o, peor, pararía
 	// la recepción de ese Edge.
-	if quien := campo(asig.Rhs[0]); quien != "intakePipeline.Despertar" {
-		t.Fatalf("gw.OnEdgeReady se asigna con %q y no con intakePipeline.Despertar: solo ese "+
+	if quien := campo(asig.Rhs[0]); quien != "intakePipeline.Wake" {
+		t.Fatalf("gw.OnEdgeReady se asigna con %q y no con intakePipeline.Wake: solo ese "+
 			"avisa al worker del pipeline sin bloquear el bucle Recv del stream, que es lo "+
 			"único que el hook exige (%s)", quien, fset.Position(asig.Pos()))
 	}
@@ -145,16 +150,16 @@ func (c *cableadoDelPipeline) anotaAforo(t *testing.T, fset *token.FileSet, llam
 	}
 	for _, arg := range llamada.Args {
 		opt, ok := arg.(*ast.CallExpr)
-		if !ok || campo(opt.Fun) != "pipeline.ConAforo" {
+		if !ok || campo(opt.Fun) != "pipeline.WithCapacity" {
 			continue
 		}
 		// El segundo argumento tiene que ser el MISMO selector de vía que usan las
 		// etapas: él es quien resuelve a qué Edge apunta una inferencia (y quien sabe
 		// que por vía API no hay plaza que tomar). 🔴 Y un `nil` ahí NO da error: la
-		// propia ConAforo lo trata como «sin aforo» y vuelve sin hacer nada, así que el
+		// propia WithCapacity lo trata como «sin aforo» y vuelve sin hacer nada, así que el
 		// entero desaparecería sin que nada lo dijera salvo un Warn del arranque.
 		if len(opt.Args) != 2 || campo(opt.Args[1]) != "llmSelector" {
-			t.Fatalf("pipeline.ConAforo no recibe llmSelector como resolutor de plazas: el "+
+			t.Fatalf("pipeline.WithCapacity no recibe llmSelector como resolutor de plazas: el "+
 				"aforo indexaría por una dirección distinta de la que enruta la inferencia, "+
 				"o quedaría desactivado en silencio (%s)", fset.Position(opt.Pos()))
 		}
@@ -162,13 +167,13 @@ func (c *cableadoDelPipeline) anotaAforo(t *testing.T, fset *token.FileSet, llam
 	}
 	for _, arg := range llamada.Args {
 		opt, ok := arg.(*ast.CallExpr)
-		if !ok || campo(opt.Fun) != "pipeline.ConZonasDeEnvio" {
+		if !ok || campo(opt.Fun) != "pipeline.WithShippingZones" {
 			continue
 		}
-		// Un `nil` aquí tampoco da error: ConZonasDeEnvio lo trata como «sin lector» y
-		// vuelve sin hacer nada, igual que ConAforo. Por eso no basta con verla escrita.
+		// Un `nil` aquí tampoco da error: WithShippingZones lo trata como «sin lector» y
+		// vuelve sin hacer nada, igual que WithCapacity. Por eso no basta con verla escrita.
 		if len(opt.Args) != 1 || campo(opt.Args[0]) == "nil" {
-			t.Fatalf("pipeline.ConZonasDeEnvio no recibe un lector utilizable: la opción se traga el nil "+
+			t.Fatalf("pipeline.WithShippingZones no recibe un lector utilizable: la opción se traga el nil "+
 				"y el worker se queda sin zonas en silencio (%s)", fset.Position(opt.Pos()))
 		}
 		c.conZonas = true
@@ -185,7 +190,7 @@ func (c *cableadoDelPipeline) exige(t *testing.T) {
 			"demás tests siguen verdes, por eso existe este.")
 	}
 	if !c.conAforo {
-		t.Error("pipeline.NewWorker se construye SIN pipeline.ConAforo.\n" +
+		t.Error("pipeline.NewWorker se construye SIN pipeline.WithCapacity.\n" +
 			"Sin el aforo no existe el K por Edge: dos cadenas de lote del mismo Edge pueden " +
 			"solaparse y la espera de un turno interactivo deja de estar acotada a UNA llamada " +
 			"de lote (ADR-0046 · Mecanismo 1). El worker lo dice en un Warn del arranque y en " +
@@ -201,7 +206,7 @@ func (c *cableadoDelPipeline) exige(t *testing.T) {
 			pieza, sintoma)
 	}
 	if !c.conZonas {
-		t.Error("pipeline.NewWorker se construye SIN pipeline.ConZonasDeEnvio.\n" +
+		t.Error("pipeline.NewWorker se construye SIN pipeline.WithShippingZones.\n" +
 			"Sin ese lector la etapa `match` recibe CERO zonas y todo borrador sale con la línea " +
 			"de envío «Envío por confirmar» a precio vacío — también el del tenant que tiene UNA " +
 			"zona configurada con su tarifa plana, que la perdería sin enterarse. No falla: el dueño " +
