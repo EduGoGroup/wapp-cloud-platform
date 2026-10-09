@@ -117,7 +117,6 @@ type intentsPusherSpy struct {
 	calls                 int
 	tenant, kind, version string
 	payload               []byte
-	ctx                   context.Context //nolint:containedctx // el test mira el contexto que recibió el push
 	ctxErr                error
 	remaining             time.Duration
 	tenantInCtx           string
@@ -125,7 +124,6 @@ type intentsPusherSpy struct {
 
 func (p *intentsPusherSpy) PushConfig(ctx context.Context, tenantID, kind, version string, payload []byte) error {
 	p.calls++
-	p.ctx = ctx
 	p.ctxErr, p.remaining = ctx.Err(), tenantVarRemaining(ctx)
 	if id, ok := httpapi.IdentityFromContext(ctx); ok {
 		p.tenantInCtx = id.TenantID

@@ -123,9 +123,11 @@ type IntentsDeps struct {
 //  7. si d.ConfigPush no es nil: PushConfig(tenant, intentcfg.Kind, version, cuerpo), UNA vez y
 //     best-effort. Su error NO cambia la respuesta: solo deja en k.Log (si no es nil) el Warn
 //     "intents: push de config best-effort falló (persistida; reconcilia al conectar)" con
-//     "tenant_id", "version" y "error". Conducta heredada: el push usa el contexto de la
-//     PETICIÓN (no uno desligado con context.WithoutCancel), así que un cliente que cuelga
-//     puede cancelarlo; el push al conectar reconcilia;
+//     "tenant_id", "version" y "error". ✎ Divergencia con la cara vieja, a propósito
+//     (D-F7-12, Jhoan, 2026-10-09; hallazgo 43 (c) de F7): el contexto del push NO es el de la
+//     petición, es context.WithoutCancel de ella —conserva sus valores (la Identity, el
+//     request-id) y suelta su cancelación— con un plazo propio, intentsPushTimeout (5 s). Un
+//     cliente que cuelga ya no se lleva el push por delante. La cara vieja pasa r.Context();
 //  8. 200 {"version":<la version>}.
 //
 // Un PUT cortado en los pasos 1–5 no llama a Upsert ni a PushConfig; uno cortado en el 6 no
@@ -199,6 +201,15 @@ func intentsGetHandler(store IntentConfigStore, dbTimeout time.Duration, log sha
 	})
 }
 
+// intentsPushTimeout acota el push de la config de intents, desenganchado del contexto de la
+// petición (D-F7-12). Es constante PROPIA y no profilePushTimeout (sessionadmin.go) aunque hoy
+// valgan lo mismo: son dos pushes distintos —este es solo el fan-out de un ConfigUpdate a las
+// sesiones vivas del tenant, ya acotado por sesión con WAPP_GRPC_PUSH_TIMEOUT; el de perfil lee
+// antes de Postgres— y atar uno al otro haría que ajustar el del perfil moviera este sin que
+// nadie lo decidiera. Cinco segundos es techo holgado y a la vez tope duro: soltar la
+// cancelación del cliente no puede significar «sin límite».
+const intentsPushTimeout = 5 * time.Second
+
 // intentsPutHandler (putIntentsHandler en la cara vieja) sirve E2: exige la feature llm_intent
 // (gate de verdad, ADR-0022), valida el blob con wapp-shared/intents, fija la version de
 // entidad (hash del blob normalizado), persiste y empuja el ConfigUpdate a las sesiones vivas
@@ -269,9 +280,20 @@ func intentsPutHandler(store IntentConfigStore, ents entitlements.Resolver, push
 		// Push best-effort a las sesiones vivas del tenant (ADR-0021). Un fallo NO invalida el
 		// PUT: la config ya está persistida y el push al conectar reconcilia (hace de
 		// reintento; no hay reintentos aquí). El error se registra pero no se propaga al
-		// cliente. Va con el contexto de la PETICIÓN, como en la cara vieja.
+		// cliente.
+		//
+		// ✎ EL CONTEXTO NO ES EL DE LA PETICIÓN (D-F7-12; la cara vieja sí pasa r.Context()).
+		// Con él, un cliente que colgaba durante el push —cerrar la pestaña, un timeout del
+		// proxy— lo cancelaba y dejaba la config PERSISTIDA con el Edge clasificando con el
+		// catálogo viejo hasta reconectar. Es el mismo defecto y el mismo arreglo que
+		// pushProfileBestEffort (sessionadmin.go): WithoutCancel conserva los valores y suelta
+		// la cancelación; el plazo propio impide que el handler espere para siempre. El
+		// best-effort no cambia: el push sigue sin poder alterar la respuesta.
 		if pusher != nil {
-			if perr := pusher.PushConfig(r.Context(), id.TenantID, intentcfg.Kind, version, body); perr != nil && log != nil {
+			pushCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), intentsPushTimeout)
+			perr := pusher.PushConfig(pushCtx, id.TenantID, intentcfg.Kind, version, body)
+			cancel()
+			if perr != nil && log != nil {
 				log.Warn("intents: push de config best-effort falló (persistida; reconcilia al conectar)",
 					"tenant_id", id.TenantID, "version", version, "error", perr)
 			}
