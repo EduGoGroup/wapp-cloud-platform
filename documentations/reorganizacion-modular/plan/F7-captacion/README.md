@@ -2,7 +2,7 @@
 
 > **Estado: en curso** — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
 > ese día ([`diseno.md`](diseno.md) §1.2). **F7-01 hecha** (bloque A): `evidence`, `anclaje`, `intake`, `intentcfg` y `casebank` en verde
-> (19 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). Falta `stages` (F7-02). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
+> (19 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). **F7-02 hecha** (bloque B): `stages` en verde (14 ficheros de producción, hallazgo 18) y el puente `captacion/stages → internal/flujos/store` declarado. Falta `pipeline`, `intakeahead` y `reanalisis` (F7-03). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.5 y §2.8
 > (H1, y E1–E2 por **D-FX-1** resuelta en su alternativa: las intenciones se mudan **aquí**).
@@ -117,6 +117,7 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
    en `flujos/runtime` (T-2 de [`reglas.md`](reglas.md)), así que si es una carrera, la mitad del arreglo es de F8. Antes
    de portar `p2.go`, reproducir bajo carga (`TestP4_WindowRules` en bucle con la suite entera en paralelo) guardando el
    log del servidor.
+   ✎ **F7-02**: mirado por lectura de código antes de portar `p2.go`: la carrera existe y **no pasa por `stages`** (hallazgo 17).
 
 9. **`intake.MemoryStore` no implementa `PipelineStore`** (F7-01, T7.1), contra `diseno.md` §2.2 y §3 («corre las dos
    suites»): es el gemelo de `JobStore` y nada más. El viejo lo declara a propósito (`internal/intake/machine.go:378`:
@@ -140,6 +141,7 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
 | D-F7-4 | Las rutas de intenciones E1–E2 | **F7** (D-FX-1 alternativa, confirmada por el orquestador): la cara vieja las sirve hasta aquí con el gw nuevo inyectado por `publicapi.ConfigPusher` (estructural) |
 | D-F7-5 | *(F7-01, contradicción 9)* ¿Quién corre `ContratoMaquina` en memoria, si `MemoryStore` no implementa `PipelineStore`? | **Decidida (Jhoan, 2026-10-08)**: el doble de `PipelineStore` se porta de `pipeline/memoria.go` (`StoreEnMemoria`) a `intake/intakehelpertest/`; `CatalogoEnMemoria` va a `pipelinehelpertest/` en F7-03. La verdad de los guards SQL sigue siendo la suite contra Postgres (F7-05) |
 | D-F7-6 | *(F7-01, contradicción 10)* ¿Manda E-13 sobre el «`draft.go` no se parte» de esta spec? | **Decidida (Jhoan, 2026-10-08)**: manda E-13; `draft.go`, `pipeline.go` y `reanalisis.go` se parten por tema al reconstruirlos |
+| D-F7-9 | *(F7-02, hallazgo 17)* ¿El worker nuevo se defiende de la carrera `CloseWindow` → `PutSourceText` o se porta tal cual? | **Decidida (Jhoan, 2026-10-08)**: se porta tal cual en F7-03; la causa se arregla en F8, con el agregador |
 | D-F7-8 | *(F7-01, hallazgos 1 y 7)* ¿Se cierran en el código nuevo los tres agujeros de PII del anonimizador y la clave de ventana incompleta que el gemelo aceptaba? | **Decidida (Jhoan, 2026-10-08)**: sí, los cuatro (mejora clara; divergencia deliberada del viejo), un commit por decisión |
 
 ## Hallazgos de la ejecución
@@ -231,3 +233,77 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
 16. **El lint por paquete necesita la toolchain fijada**: `.bin/golangci-lint run ./…/<paquete>/...` a pelo da rc=1 por
     `typecheck` contra la stdlib de go1.27.1; con `GOTOOLCHAIN=go1.26.5` delante, `0 issues.`. La skill
     `reconstruir-modulo` lo lleva así desde esta sesión.
+17. ✅ **Contradicción 8, mirada antes de portar `p2.go` (F7-02): la carrera existe por lectura de código y no pasa por
+    `stages`.** No se reprodujo bajo carga; se leyó el código viejo. El agregador hace `CloseWindow` (`aggregator.go:892`;
+    `postgres.go:108-123`, autocommit: el job ya es `pending` y reclamable) y **después** `ComposeAtFlush`
+    (`aggregator.go:906`), que lee el hilo, compone, cifra y solo entonces llama a `PutSourceText`
+    (`source_composer.go:347-377`). El reclamo no exige sobre (`machine_postgres.go:81-99` y `:121-139`: solo `pending`).
+    Si un tic del worker (5 s) o un flanco READY cae en ese hueco, `literalDe` devuelve `ErrSinLiteral`
+    (`pipeline.go:713-714`: **el texto observado lo emite el worker, no P2**; las guardas de `p2.go:149`, `p3.go:251` y
+    `p4.go:171` no se alcanzan por esta vía) y `causaDe` lo da por permanente (`backoff.go:91`): `failed` sin reintento.
+    `stages` se portó tal cual. **Firmas de log para distinguirla** al reproducir: carrera → solo el `Debug` «la ventana
+    ya tenía literal; no se sobrescribe» (`source_composer.go:381-387`), sin `Warn` ni `Error`; hilo vacío → `Warn` «la
+    ventana cerró sin una sola línea del hilo»; fallo al componer → `Error` «la ventana se cerró pero el literal no se pudo
+    componer». **Reparto**: la causa es de `flujos/runtime` (F8: cierre y sobre no son un solo acto); la defensa, de
+    `pipeline` y del reclamo (**F7-03**: hoy «sobre aún no escrito» y «sobre que nunca llegará» son lo mismo). Un
+    `IS NOT NULL` a secas en el reclamo no vale: el sobre NULL es una forma legítima y definitiva (ventana solo de media,
+    hilo apagado). ✅ **Decidido por Jhoan (2026-10-08, D-F7-9): se porta tal cual** en F7-03, dicho en el contrato de
+    `pipeline`; el arreglo de la causa (cierre y sobre en un solo acto) lo hereda **F8**, con el agregador.
+18. **`stages` son 14 ficheros de producción, no 10** (F7-02): `draft.go` en cuatro por tema (D-F7-6: `draft.go` 405 l,
+    `draft_revision.go` 336, `draft_events.go` 236, `draft_push.go` 98) y `match_cascade.go` en dos (el barrido y su
+    prefiltro en `match_cascade_sweep.go`, sin exportados, porque pasaba de 500). El mayor es `match.go`, 484; el mayor
+    test, `p3_test.go`, 495 (sin margen). **`tope.go` no pudo ser nivel simple** (contra `diseno.md` §1.2): su lógica son
+    métodos de `P3` y su promesa solo se ve por `P3.Run`; fue en rojo y pasó a verde con `p3.go`. `plazo.go` sí
+    (`deadline.go`, una pasada).
+19. **Tres commits de verde llevan más de un fichero, y uno intermedio no pasa el lint** (F7-02). `p3.go` con `cap.go`
+    (`0177f3d`), `match.go` con `match_lines.go` (`705bda7`) y los cuatro de `draft` (`efe219d`): no compilan o no tienen
+    llamante por separado; el cuerpo de cada commit lo explica. `c880cd5` (`match_cascade.go`) compila y pasa los tests,
+    pero su lint da 13 `unused` (los auxiliares de la cascada no tienen llamante hasta `Run`, que llega en `705bda7`); en
+    HEAD, `0 issues.`. Para F7-03: en ficheros que se necesitan mutuamente, un commit con los dos antes que uno a medias.
+20. **Los tres tests con `go/ast` de `stages` no eran candados** (🔶 de `diseno.md` §6, resuelto): `TestStages_NoLeenElReloj`
+    (`p4_test.go:368`) y `TestDraft_ElRelojSoloEntraPorElConstructor` (`draft_test.go:365`) no están en `05` §3.2 y
+    protegen testabilidad, no una regla de negocio. Sustituidos por conducta: fechas contra un `message_ts` fijo, dos
+    pasadas con artefacto idéntico byte a byte, `elapsed_ms` exacto con reloj inyectado. **Se pierde** la mitad que miraba
+    `p2.go`/`p3.go` (ahí el reloj no tiene conducta observable) y `assertFixtureLejosDeHoy`, que leía el reloj real.
+21. **R-03 («match y draft con plazo no compilan») no tenía ningún test en el viejo**: vivía en un comentario
+    (`match.go:321`). Un test que compile no puede probar que algo no compila: quedó fijado con `reflect` (los tipos
+    `Option`, `MatchOption` y `DraftOption` no son asignables ni convertibles entre sí). **I-CP-1** tampoco tenía test en
+    `stages` (vive en `inferencia/prompts`): aquí queda la promesa vista desde la etapa (lo que P4 persiste pasa su propio
+    validador por todos los caminos).
+22. 🟡 **Conductas raras del viejo, conservadas y fijadas en los corpus** (F7-02; manda el viejo; para Jhoan, sin bloquear;
+    ninguna tiene efecto nuevo: es lo que corre en UAT). **Match**: (a) la negación de un añadido solo se ve si el texto
+    normalizado empieza por `"sin "` (`match_lineas.go:324`): «sin-sal», «sin,,sal» o «sin sal» con un espacio de ancho
+    cero o un BOM delante **cobran «Sal»**; «nada de sal» y «queso sin sal» también salen como línea; (b) un sku mal
+    escrito («pack-30», o con guion Unicode) puede casar por fuzzy la etiqueta de **otro** artículo (0,857); (c) «1.5 kg»
+    se lee como los enteros 1 y 5 (`numerosDe`, `:277`): un rango 5–5 resuelve esa variante; (d) dígitos de otra escritura
+    e invisibles cuentan como una edición y casan en etiquetas largas. **Fechas** (`fechas.go`): una regla que reconoce su
+    patrón y no puede fechar no corta («el miércoles 31 de febrero» da el miércoles próximo); un año de 3 cifras se toma
+    literal; «29/02» sin año no busca el bisiesto; marcas y días se buscan como subcadena («en el hoyo» da hoy). **Draft**:
+    la quinta clave de la métrica entra con `RequestedBy != ""` y todo lo demás usa `IsFromOwner()` (`draft.go:852`); dos
+    o más adjuntos huérfanos suben a la cabecera en el orden de iteración de un mapa (`:742-750`); si `SaveStage` falla,
+    solicitud, revisión, empuje y eventos ya están escritos y el reintento escribe otra revisión (`:594-596`).
+23. **El test viejo de rendimiento del match no medía el barrido** (`match_rendimiento_test.go:201`): con sus sondas el
+    prefiltro lo descartaba todo y el comparador se llamaba 0 veces, así que el «~110x» y el p99 eran los de un bucle sin
+    distancias de edición: **D-044.44 no está acreditado por ese test**. El nuevo cuenta comparaciones con un espía (2.000
+    artículos × 10 ítems con sondas que casi casan: como mucho 2.000 de 20.000; medido contra el viejo, 888). El absoluto
+    de 5 ms y `WAPP_PERF_ABSOLUTO` no se portaron (medida de hardware). Tampoco es portable
+    `TestMatch_ElSKUDeVarianteEsElMISMOQueElDelCart` (compara con `cart.PriceListOf`, viejo): el `#` y el ` — ` quedan
+    fijados con literales y duplicados; F8, al reconstruir el carrito, es quien los ata.
+24. **Cosas menores de `stages`, para quien venga detrás** (F7-02). (i) El texto de `ErrNoTimeZone` sigue nombrando
+    `stages.ZonaPorDefecto`, que hoy es `DefaultZone`: es texto observable y se copió literal. (ii)
+    `stages.RevisionWriter` duplica la firma de `intakes.RevisionWriter` (F6): el viejo lo declaraba del lado del
+    consumidor y así quedó; un test afirma que el de `intakes` lo satisface. (iii) `diseno.md` §2.4 atribuye
+    `VerificarNormalizador` a `match_cascada.go`: vive en `catalogo/indice` y lo llama el arranque; en `stages` queda la
+    regla R-05 y un test de que el barrido usa `textmatch.Normalize`. (iv) Tres tests de `draft` importan
+    `internal/flujos/store` por los tipos de los puertos; los cubre el mismo puente y se re-tocan en F8. (v) El e2e que
+    corría el `match` real dentro de los tests de `draft` queda para el proceso P4 de F9 (T-10). (vi) Tres bloques de
+    comentario histórico no se portaron por caducados (el «plazo que esta etapa no fija» de `p3.go:16-62`, las cuentas de
+    `tope.go` y la búsqueda de zona en `tenant_settings` de `p4.go`); ninguna regla de código quedó fuera. (vii) Un
+    backslash-u escrito en los argumentos de **cualquier** herramienta llega al disco como el carácter literal (amplía el
+    hallazgo 14): los corpus se generaron ejecutando el paquete viejo y se tocan solo por script.
+25. **Lo que F7-03 necesita de `stages`**: `NewDraft(log, StageStore, IntakeStore, RevisionWriter, EventWriter,
+    …DraftOption)`; `IntakeStore` y `EventWriter` los satisface el almacén viejo de `flujos/store` (puente), `RevisionWriter`
+    **solo** el de `solicitudes/intakes` (R-06: el tipo no lo impide si alguien añade `InsertRevision` al otro), y
+    `WithCRMPush` se cablea con `CRMPusherFunc` resuelta al llamar, porque `Draft` se construye antes que el `Service`
+    (R-07). `Run` de `draft` no es idempotente en la revisión: lo evita el worker saltándose la etapa al reanudar.
+    `Media.ByLine` nil es válido (D-6). `Analysis.Provider` lo rellena el worker con la vía.

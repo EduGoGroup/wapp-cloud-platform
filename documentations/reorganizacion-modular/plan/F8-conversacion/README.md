@@ -96,6 +96,16 @@ Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (med
 | **D-F8-5** | El ciclo de negocio `conversacion ↔ captacion` y `conversacion → solicitudes`, `solicitudes/…/telemetria → conversacion` (D-7, congelado) queda como **aristas permitidas** entre módulos nuevos | **Sí**, en la lista blanca de `fronteras_test.go`, arista a arista (§5 de [`arquitectura.md`](arquitectura.md)). Cortarlo es otro plan |
 | **D-F8-6** | Deudas D-16 (`writeJSON` ×5) y D-17 (`rows.Close` ×41, 4 en `store/repository_postgres.go`) | **Se portan como están** en F8. Arreglarlas es cambiar dos cosas a la vez |
 
+## Heredado de otras fases
+
+- **D-F7-9 (Jhoan, 2026-10-08; hallazgo 17 de [F7](../F7-captacion/README.md))**: el agregador pone el job en `pending`
+  (`CloseWindow`, `aggregator.go:892`) y solo después compone y escribe el literal (`ComposeAtFlush` → `PutSourceText`,
+  `aggregator.go:906`, `source_composer.go:347-377`), en dos sentencias sin atomicidad. Si el worker del pipeline reclama
+  el job en ese hueco, queda `failed` sin reintento. F7 portó el worker **tal cual**; **el arreglo es de esta fase**, al
+  reconstruir el agregador y el compositor: que cierre y sobre sean un solo acto, o que el sobre preceda a la
+  visibilidad (hoy `PutSourceText` exige `status='pending'`, así que invertir el orden toca esa guarda). Es una
+  divergencia deliberada del viejo: va en su propio commit y con su caso en el proceso P4 de F9.
+
 ## Contradicciones encontradas (medidas contra el código)
 
 1. **`04` §2.2 y `05` §4 («dos agregadores con ventanas en memoria partirían las ráfagas»)**: las
