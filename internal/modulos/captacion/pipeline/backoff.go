@@ -3,7 +3,15 @@
 package pipeline
 
 import (
+	"crypto/rand"
+	"encoding/binary"
+	"errors"
 	"time"
+
+	"github.com/EduGoGroup/wapp-shared/llm"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/stages"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -83,6 +91,23 @@ const (
 	CauseInvalidJob = "job_invalido"
 )
 
+// causeOf (antes `causaDe`) clasifica el error de una etapa. Es la ÚNICA función que
+// decide de qué familia es un fallo, y por eso el resto del worker no repite `errors.Is`
+// por su cuenta: dos clasificaciones distintas del mismo error es la forma clásica de que
+// una política se aplique a medias.
+//
+// ⚠️ Un 23505 de NUMERACIÓN de revisiones no llega hasta aquí: `intakes.InsertRevision`
+// lo reintenta él mismo releyendo el máximo y solo escala cuando ya no es una carrera.
+func causeOf(err error) string {
+	if errors.Is(err, llm.ErrLLMQuality) {
+		return CauseQuality
+	}
+	if errors.Is(err, stages.ErrNoLiteral) || postgres.IsPermanentFailure(err) {
+		return CauseInvalidJob
+	}
+	return CauseInfra
+}
+
 // Los valores por defecto de la política. Están como constantes exportadas y no
 // escondidas dentro de Config para que un operador que lea el log de arranque pueda
 // comparar el número que ve con el que dice el código sin abrir un depurador.
@@ -124,3 +149,33 @@ const (
 	// 🔴 NO CONFUNDIR CON EL REINTENTO DE P3: aquél es del ÍTEM y no llega hasta aquí.
 	DefaultMaxQualityAttempts = 3
 )
+
+// maxBackoffShift acota el exponente de la curva: 2^12 × 30 s ya excede cualquier tope
+// razonable, y el clamp existe para que el desplazamiento no desborde si alguien pone un
+// techo de intentos alto.
+const maxBackoffShift = 12
+
+// backoffFor (antes `espera`) calcula cuánto se empuja `next_attempt_at` tras el intento
+// `attempt` (1-based: el número del intento que ACABA de fallar).
+//
+// LA FORMA ES UN CALCO DELIBERADO del backoff de webhooks: exponencial base 2 desde
+// `base`, topada en `ceiling`, con jitter ±20 % desde `crypto/rand`. Se copia la FORMA y
+// no se reutiliza la función porque dos políticas con destinatarios distintos no deben
+// compartir perilla: subir el tope del CRM no debe alargar la espera de un cliente de
+// WhatsApp.
+func backoffFor(attempt int, base, ceiling time.Duration) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	shift := min(attempt-1, maxBackoffShift)
+	d := min(base*time.Duration(1<<uint(shift)), ceiling)
+
+	var b [2]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// Sin jitter antes que sin backoff. Que no haya jitter agrupa reintentos; que no
+		// haya backoff es la tormenta.
+		return d
+	}
+	jitter := 0.8 + float64(binary.BigEndian.Uint16(b[:])%400)/1000.0
+	return time.Duration(float64(d) * jitter)
+}
