@@ -1,6 +1,6 @@
 # F7 · `captacion` — la cola que convierte una conversación en borrador (P2→P4, match, draft)
 
-> **Estado: cerrada** el 2026-10-09 (sesión F7-05 💻, cierre local sobre `dev` @ `53e8f51`, PR #55–#58 integrados; cuatro commits de código, `30b0cf4`, `51d1bbb`, `fb33953` y `ca222ed` —tests y, en el último, el doble en memoria de `intake`; `ca222ed` es de la ampliación pedida por Jhoan en el mismo PR, #59, y es el último commit de código de la fase—; último commit de producción de la fase `94f0648`; `captacion` sigue fuera de `Conmutados` hasta F8; hallazgos 50–60 e informe de fase al final). Antes, en curso — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
+> **Estado: cerrada** el 2026-10-09 (sesión F7-05 💻, cierre local sobre `dev` @ `53e8f51`, PR #55–#58 integrados; siete commits de código, `30b0cf4`, `51d1bbb`, `fb33953`, `ca222ed`, `b0056a4`, `a1a19ed` y `3d5fa59` —los cuatro primeros, tests y, en `ca222ed`, el doble en memoria de `intake`; `ca222ed` y los tres últimos son de la ampliación pedida por Jhoan en el mismo PR, #59; `b0056a4` y `a1a19ed` son el rojo y el verde de D-F7-12 (hallazgo 61); `3d5fa59` arregla una carrera del arnés en el test de P8 (hallazgo 62)—; último commit de código de la fase `3d5fa59`, y de producción `a1a19ed`; `captacion` sigue fuera de `Conmutados` hasta F8; hallazgos 50–62 e informe de fase al final). Antes, en curso — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
 > ese día ([`diseno.md`](diseno.md) §1.2). **F7-01 hecha** (bloque A): `evidence`, `anclaje`, `intake`, `intentcfg` y `casebank` en verde
 > (19 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). **F7-02 hecha** (bloque B): `stages` en verde (14 ficheros de producción, hallazgo 18) y el puente `captacion/stages → internal/flujos/store` declarado. **F7-03 hecha** (bloque C, 2026-10-09): `pipeline`, `intakeahead` y `reanalisis` en verde (14 ficheros de producción y un doble, hallazgo 27), el puente `captacion/reanalisis → internal/flujos/events` declarado y el de `flujos/runtime` evitado; **pendientes del módulo = 0**. **F7-04 hecha** (bloque D, 2026-10-09): H1, E1 y E2 por la cara nueva (`apipublica/reanalyze.go`, `apipublica/intents.go`; `FaseActual = 7`, 54 rutas), el arranque nuevo cablea `captacion` con `bridge_captacion.go` hacia el agregador y el compositor viejos, `llmConfigBridge` muere, el candado INV-1 mira la captación nueva y `catalogo` entra en `Conmutados` (hallazgos 39–49); huella igual. Falta el cierre contra Postgres y contra los dos binarios (F7-05): nada de F7-04 corrió contra una base ni contra un binario (hallazgo 49). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
@@ -445,7 +445,8 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     cuerpo: sin la feature, un blob inválido o gigante recibe 403, no 400 ni 413. (c) El push usa el contexto de la
     petición (`internal/publicapi/intents.go:167`): un cliente que cuelga puede cancelarlo. D3 ya lo corrigió para el
     perfil con `WithoutCancel` (`internal/apipublica/sessionadmin.go:82-93`): **candidato a decisión**; el test a
-    invertir es `TestMountIntents_PutPushUsesTheRequestContext`. (d) E1 no lleva gate de feature. (e) El 403 de E2 es
+    invertir es `TestMountIntents_PutPushUsesTheRequestContext`. ✅ **(c) resuelto en F7-05**: Jhoan decidió corregirlo
+    (D-F7-12) y está hecho, hallazgo 61. (d) E1 no lleva gate de feature. (e) El 403 de E2 es
     prosa, no `feature_not_enabled`, y deja auditoría `failure`. (f) Se guarda y se empuja el cuerpo byte a byte, y la
     versión sale del normalizado. (g) La rama 400 `el cuerpo debe ser JSON válido` es inalcanzable tras
     `ParseAndValidate`: portada como defensa, sin test. **No se portaron** las dos ramas 500 de dependencia nil: el
@@ -545,16 +546,18 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     `RC=0 · PASS=1111 · SKIP=0` y **viejo `RC=1 · PASS=1109 · FAIL=2`**: `TestP6_CRMBridge/callback_body_adversarial`,
     `p6_crm_test.go:270`, «write: broken pipe» al mandar el cuerpo grande tras 76 «rate-limit excedido». Es la
     intermitencia **ya anotada** (hallazgo 52 de F2 y README de F9; el mismo fallo en el cierre de F3), en código que F7 no
-    toca y con el binario viejo sin cambios. Sobre `fb33953`, pasada intermedia verde: viejo y nuevo `RC=0 · PASS=1115 · FAIL=0 · SKIP=0`. Final, sobre `13d2e59` (último commit de código, `ca222ed`): viejo y nuevo `RC=0 · PASS=1116 · FAIL=0 · SKIP=0` (104 tests de nivel superior, sin carga en la máquina; 0 apariciones de «el job no trae literal»). La carrera `CloseWindow` →
-    `PutSourceText` (hallazgo 17, D-F7-9, «el job no trae literal que analizar») **no apareció en ninguna pasada** de la
-    sesión (0 apariciones en todos los logs). Sigue siendo de F8.
+    toca y con el binario viejo sin cambios. Sobre `fb33953`, pasada intermedia verde: viejo y nuevo `RC=0 · PASS=1115 · FAIL=0 · SKIP=0`. Sobre `13d2e59` (entonces el último commit de código era `ca222ed`), verde: viejo y nuevo `RC=0 · PASS=1116 · FAIL=0 · SKIP=0` (104 tests de nivel superior, sin carga en la máquina; 0 apariciones de «el job no trae literal»). La carrera `CloseWindow` →
+    `PutSourceText` (hallazgo 17, D-F7-9, «el job no trae literal que analizar») no había aparecido en ninguna pasada hasta
+    ahí (0 apariciones en todos esos logs). ✎ **Apareció una vez después**, en la primera pasada tras el 43 (c), sobre
+    `a1a19ed`: esa pasada, las siguientes y la final —sobre `3d5fa59`, viejo y nuevo `RC=0 · PASS=1116 · FAIL=0 · SKIP=0`,
+    0 apariciones—, en el hallazgo 62. Sigue siendo de F8.
 55. **Dato operativo: un fichero partido de contrato en `test/procesos` tiene que TERMINAR en `_contrato_test.go`**
     (F7-05). `intake_claim_contrato_test.go` vale; `intake_contrato_tabla_test.go` no valdría: el candado `ProcessImports`
     le prohibiría importar el helpertest.
 56. **Dato operativo: los mutantes con testcontainers no se corren en paralelo con los gates que cuentan** (F7-05).
     Hacerlo junto a `make test-procesos` sube la carga y despierta la intermitencia del rate-limit de P6 (hallazgo 54). Los
     gates que cuentan se corren **sin carga**.
-57. **Gates e invariantes de cierre** (F7-05; rc leído del log). **Finales, sobre `13d2e59`** (último commit de código, `ca222ed`; máquina sin carga): `GOWORK=off make ci-local` `GATE_RC=0` (209 `ok`, lint `0 issues.`; cobertura, informe: `FICHEROS_EVALUADOS=300`, `POR_DEBAJO=7`); `make vet-pendiente` rc=0; `make test-pendiente` rc=0, `PENDIENTES=0 · ROJOS=0`; `-v` del código nuevo rc=0, 8.355 PASS, **0 SKIP**; `make test-procesos`, en el hallazgo 54. Corridas también (en el primer cierre quedaban como «No corrido») la integración vieja, `GOFLAGS=-v INTEGRATION_PG_PORT=55432 make test-integration` (Postgres 16 efímero del propio target, `WAPP_TEST_REQUIRE_DB=1`): rc=0, 14.756 `--- PASS`, 0 FAIL, **0 `--- SKIP`** contados con `-v`; y `make ci-docker`: rc=0, lint `0 issues.`. Pasada intermedia, verde, sobre `fb33953`: `ci-local` `GATE_RC=0` y 8.353 PASS, 0 SKIP en el `-v`. Antes, sobre `30b0cf4` y
+57. **Gates e invariantes de cierre** (F7-05; rc leído del log). ✎ **Finales, sobre `3d5fa59`** (último commit de código tras los hallazgos 61 y 62; el último de producción es `a1a19ed`): `make test-procesos` viejo y nuevo `RC=0 · PASS=1116 · FAIL=0 · SKIP=0` (104 tests de nivel superior; 0 apariciones de «el job no trae literal»); `GOWORK=off make ci-local` `GATE_RC=0` (209 `ok`, lint `0 issues.`; cobertura, informe: `FICHEROS_EVALUADOS=300`, `POR_DEBAJO=7`); `make vet-pendiente` rc=0; `make test-pendiente` rc=0, `PENDIENTES=0 · ROJOS=0`; `-v` de `./internal/modulos/... ./internal/nucleo/... ./internal/arranque/... ./internal/apipublica/...` rc=0, 9.865 PASS, **0 SKIP** (sube respecto a las 8.355 anteriores porque ahora la cuenta incluye `apipublica`, no por tests nuevos); `make ci-docker`, verde sobre `a1a19ed` (rc=0, lint `0 issues.`) y no repetido sobre `3d5fa59`, que solo cambia un test de `test/procesos`; la integración vieja (`make test-integration`), corrida sobre `13d2e59` (rc=0, 14.756 PASS, 0 SKIP) y no repetida después: el 43 (c) solo toca la cara nueva. Las pasadas rojas intermedias, sobre `a1a19ed`, en el hallazgo 62. **Antes, finales del primer cierre, sobre `13d2e59`** (entonces el último commit de código era `ca222ed`; máquina sin carga): `GOWORK=off make ci-local` `GATE_RC=0` (209 `ok`, lint `0 issues.`; cobertura, informe: `FICHEROS_EVALUADOS=300`, `POR_DEBAJO=7`); `make vet-pendiente` rc=0; `make test-pendiente` rc=0, `PENDIENTES=0 · ROJOS=0`; `-v` del código nuevo rc=0, 8.355 PASS, **0 SKIP**; `make test-procesos`, en el hallazgo 54. Corridas también (en el primer cierre quedaban como «No corrido») la integración vieja, `GOFLAGS=-v INTEGRATION_PG_PORT=55432 make test-integration` (Postgres 16 efímero del propio target, `WAPP_TEST_REQUIRE_DB=1`): rc=0, 14.756 `--- PASS`, 0 FAIL, **0 `--- SKIP`** contados con `-v`; y `make ci-docker`: rc=0, lint `0 issues.`. Pasada intermedia, verde, sobre `fb33953`: `ci-local` `GATE_RC=0` y 8.353 PASS, 0 SKIP en el `-v`. Antes, sobre `30b0cf4` y
     `51d1bbb`: `GOWORK=off make ci-local` **`GATE_RC=0`** (209 `ok`, lint `0 issues.`; cobertura, informe:
     `FICHEROS_EVALUADOS=300`, `POR_DEBAJO=7`); `make vet-pendiente` rc=0; `-v` del código nuevo rc=0, **8.352 PASS, 0
     SKIP**. Invariantes de `reglas.md` §cierre (R7.7.c): `git diff 8d875ab..HEAD -- cmd/server cmd/casebank
@@ -562,8 +565,8 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     sobre `./cmd/server`; `captacion` fuera de `Conmutados`, que sigue en `{"acceso","edge","catalogo"}`. **No corrido**:
     el arranque real de `cmd/server-modular` fuera del arnés y UAT (F10).
 58. **Para F8: lo que F7 deja heredado** (F7-05). (i) El mutante vivo y declarado de `intake` (hallazgo 52, e): el `<=`/`<`
-    de `ClaimNext`, equivalente en la práctica (el del `ORDER BY` de `PutSourceText` lo mató `ca222ed`, hallazgo 59). (ii) La carrera `CloseWindow` → `PutSourceText` (D-F7-9, hallazgo 17): portada tal cual, no vista en F7-05;
-    el arreglo es de F8. (iii) 🟡 El hallazgo 43, pendiente de decisión de Jhoan, sin bloquear. (iv) `captacion` entra en
+    de `ClaimNext`, equivalente en la práctica (el del `ORDER BY` de `PutSourceText` lo mató `ca222ed`, hallazgo 59). (ii) La carrera `CloseWindow` → `PutSourceText` (D-F7-9, hallazgo 17): portada tal cual y vista una vez en F7-05, con su firma (hallazgo 62);
+    el arreglo es de F8. (iii) 🟡 El hallazgo 43, pendiente de decisión de Jhoan, sin bloquear (✎ su (c) ya está decidido y corregido: D-F7-12, hallazgo 61). (iv) `captacion` entra en
     `Conmutados` en F8, cuando muera su adaptador `bridge_captacion.go` (hallazgo 41). (v) 🟡 Las marcas cruzadas de
     `PutSourceText`, alcanzables por `Release`/`Retry` (hallazgo 60).
 59. **Ampliación de F7-05, pedida por Jhoan en el mismo PR: el mutante del `ORDER BY` de `PutSourceText`, muerto**
@@ -592,18 +595,70 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     carrera `CloseWindow` → `PutSourceText` (hallazgo 17, D-F7-9): mismo origen, cierre y sobre no son un solo acto. Lo
     hereda F8 con el agregador.
 
+61. ✅ **El push de E2 sobrevive a la cancelación de la petición** (F7-05, en el mismo PR #59; D-F7-12, decisión de Jhoan
+    del 2026-10-09 sobre el hallazgo 43 (c)). `b0056a4` (rojo) y `a1a19ed` (verde). En `internal/apipublica/intents.go` el
+    push best-effort de `PUT /api/v1/intents` deja de ir con `r.Context()`: va con
+    `context.WithTimeout(context.WithoutCancel(r.Context()), intentsPushTimeout)`, el mismo patrón que
+    `pushProfileBestEffort`. `intentsPushTimeout` es constante propia, 5 s: no se reutiliza `profilePushTimeout` para que
+    ajustar un push no mueva el otro. **No cambia**: el best-effort (el push no altera la respuesta; el `Warn` es el
+    mismo, literal) ni el `Upsert`, que sigue con el contexto de la petición y sin plazo. ✎ **Divergencia con el viejo, a
+    propósito**: `internal/publicapi/intents.go` no se toca y sigue pasando `r.Context()`; sin efecto en UAT hasta F10.
+    Sale `TestMountIntents_PutPushUsesTheRequestContext` y entra
+    `TestMountIntents_PutPushSurvivesTheRequestCancellation` (`intents_put_test.go`): la petición se cancela justo
+    después de persistir (gancho `afterUpsert` del doble) y el push se hace igual, con un contexto vivo, con la
+    `Identity` de la petición y con un plazo de entre 4 y 5 s; el `Upsert`, una vez y sin plazo. El rojo nació en un
+    fichero aparte tras `//go:build pendiente` y convivió con el test viejo, que seguía siendo verdad del código; el
+    verde borró ese fichero y el test viejo. Mutantes sobre el verde, revertidos, los cuatro en rojo: volver a
+    `r.Context()`; quitar el plazo (solo `WithoutCancel`); plazo de 30 s; `context.Background()` en vez de
+    `WithoutCancel` (pierde la `Identity`). Ningún otro test, candado ni proceso afirmaba la conducta vieja; la huella
+    del arranque no cambia. Del hallazgo 43 siguen pendientes con Jhoan (a), (b), (d) y (e).
+62. 🟡 **Intermitencias vistas al repetir los gates tras el 43 (c)** (F7-05, PR #59; rc leído del log). Los gates se
+    repitieron sobre `a1a19ed` y salieron tres rojos, **ninguno del 43 (c)**:
+    (a) **La carrera `CloseWindow` → `PutSourceText` (hallazgo 17, D-F7-9), por fin vista.** Primera pasada de
+    `make test-procesos`: viejo `RC=0 · PASS=1116 · SKIP=0` y **nuevo `RC=1 · PASS=1113 · FAIL=3`**:
+    `TestP8_Reanalysis/aprobada` (y `cierre`), `p8_reanalisis_door_test.go:158`, «el borrador de la ráfaga de … no llegó
+    en 1m0s: el job quedó en "failed/-/0"». Su firma, en el log del servidor: `pipeline: job FAILED`,
+    `causa=job_invalido`, `stage=ninguna`, `intento=1`, «stages: el job no trae literal que analizar (el compositor del
+    flush no llegó a escribir el sobre)». Es la **primera vez que aparece en la sesión** (0 apariciones en las pasadas
+    anteriores, hallazgo 54) y no volvió a aparecer. No es del 43 (c): P8 no publica intents. Portada tal cual por
+    D-F7-9; el arreglo es de F8, que ya tiene con qué reconocerla.
+    (b) **Una carrera del arnés en el test de P8, arreglada en `3d5fa59`.** Repetición, `BINARIO=nuevo make
+    test-procesos`: otra vez rojo y por otra causa, **`RC=1 · PASS=1114 · FAIL=2`**: `TestP8_Reanalysis/reanalisis`,
+    `p8_reanalisis_test.go:296` (la línea del llamador; el aserto está en `open`, ≈ :107-110), «el log trae 0 líneas
+    "reanalisis: job abierto a petición del dueño" de este job con vía local y origen event_thread, quería 1»; 0
+    apariciones de la carrera del literal. El servidor escribe esa línea **antes** de responder, pero el arnés captura
+    su salida de forma asíncrona y el test la contaba con `p9LogLines` nada más recibir el 200. `3d5fa59`
+    (`procesos(captacion): P8 espera la línea del re-análisis antes de contarla`, `test/procesos/p8_reanalisis_test.go`,
+    ≈ :107-114): espera con `p9WaitLogLines` y **sigue exigiendo exactamente 1**. Arreglo del test, no del servidor.
+    (c) **Un test de rendimiento del código viejo, en `make ci-docker`.** En la primera tanda, **rc=2**:
+    `TestRendimiento_P99PorItem` de `internal/intake/catalogo`, «el p99 por ítem sobre 2000 artículos es 8.145166ms y el
+    criterio de D-044.44 es 5ms», dentro del contenedor y con la máquina cargada. Repetido: **rc=0** (lint `0 issues.`).
+    Ese test no estaba citado en la documentación (`grep` sin resultados): intermitencia **nueva de anotar**, sensible a
+    la carga, en código que F7 no toca y que muere en F10.
+    En esa primera tanda, verdes: `GOWORK=off make ci-local` `GATE_RC=0` (209 `ok`, lint `0 issues.`),
+    `make vet-pendiente` rc=0 y `make test-pendiente` rc=0 (`PENDIENTES=0 · ROJOS=0`). Después: P8 aislado
+    (`-run TestP8_Reanalysis -count=5`) sobre `a1a19ed`, nuevo y viejo `RC=0`, 5 de 5; tercera pasada completa de
+    `make test-procesos` sobre `a1a19ed`, viejo y nuevo `RC=0 · PASS=1116 · FAIL=0 · SKIP=0`; y la final, sobre
+    `3d5fa59`, viejo y nuevo `RC=0 · PASS=1116 · FAIL=0 · SKIP=0` (104 tests de nivel superior; 0 apariciones de la
+    carrera del literal; el resto de gates finales, en el hallazgo 57). **Lección**: los dos rojos de P8 solo salen con
+    la suite entera en paralelo —aislado ×5 es verde con los dos binarios—, así que un P8 aislado en verde no descarta
+    ninguna de las dos carreras; y un gate rojo se lee antes de repetirlo: aquí eran tres causas distintas, no una.
+
 ### Informe de fase (al cerrar F7)
 
 - **Sesiones**: F7-01 y F7-02 (2026-10-08) · F7-03 (2026-10-08/09) · F7-04 y F7-05 (2026-10-09). Minutos de pared (D-R-6):
   F7-01 ≈ 50 + ≈ 25 de los arreglos de D-F7-8; F7-02 ≈ 100; F7-03 ≈ 106; F7-04 ≈ 20 de ejecución; F7-05 ≈ 60 el cierre + ≈ 50 la ampliación pedida por
-  Jhoan en el mismo PR, casi todo espera de gates.
+  Jhoan en el mismo PR + ≈ 65 el 43 (c), sus gates y la investigación de las intermitencias (hallazgo 62); casi todo,
+  espera de gates.
 - **Pendientes en cada cierre**: `PENDIENTES=0 · ROJOS=0` en los cierres de F7-01, F7-02, F7-03 y F7-04.
 - **Lo que no cuadró con la spec**: cinco suites, no cuatro (hallazgo 2); `stages` son 14 ficheros de producción, no 10
   (18); `pipeline`, `intakeahead` y `reanalisis` son 14 y un doble, no 8 (27); los candados de cableado de F0 no quedaron
   «verdes sin tocarlos» (28 y 40); T7.23 y T7.24 en un commit (39); el índice del catálogo se conmutó aquí, no en F5
   (41); «lo verá P4» era falso (42 → 51).
 - **Mutantes**: los de cada sesión, en sus hallazgos (11 y 36); contra Postgres, hallazgos 52 y 59 (78 sembrados, 1 vivo
-  declarado y equivalente en la práctica).
-- **Lo que queda abierto de F7**: las 🟡 de los hallazgos 15, 22 y 43; lo heredado por F8 (hallazgos 58 y 60); y `casebank`
+  declarado y equivalente en la práctica); los cuatro del push de E2, en el hallazgo 61.
+- **Lo que queda abierto de F7**: las 🟡 de los hallazgos 15, 22 y 43 (del 43, (a), (b), (d) y (e): el (c) se decidió y
+  se corrigió, D-F7-12, hallazgo 61); lo heredado por F8 (hallazgos 58 y 60, y la carrera de D-F7-9, vista una vez:
+  hallazgo 62); el test de rendimiento viejo de `ci-docker`, sensible a la carga (62, c); y `casebank`
   sin efecto en UAT hasta F10 (D-F7-2, hallazgo 1).
 
