@@ -6,23 +6,21 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
-	"time"
 
 	legacyllm "github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia"
 	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
-	legacytenantllm "github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
 )
 
-// Los tests de este fichero se derivan de los comentarios de turneroBridge y llmConfigBridge (una
-// aserción por promesa). Sin BD y sin Edge: turneroBridge se prueba sobre un *llmvia.Selector
-// NUEVO de verdad, armado con dobles de su almacén y de su frame; llmConfigBridge, sobre un doble
-// del almacén.
+// Los tests de este fichero se derivan del comentario de turneroBridge (una aserción por
+// promesa). Sin BD y sin Edge: turneroBridge se prueba sobre un *llmvia.Selector NUEVO de verdad,
+// armado con dobles de su almacén y de su frame. Los cuatro de llmConfigBridge murieron con él en
+// F7 (conmutar(captacion)).
 
-// fakeLLMStore es el doble del almacén nuevo de tenant_llm: sirve de llmvia.Store al selector y
-// de llmConfigReader al adaptador. Captura lo que recibe Get y devuelve lo que se le dice.
+// fakeLLMStore es el doble del almacén nuevo de tenant_llm: sirve de llmvia.Store al selector.
+// Captura lo que recibe Get y devuelve lo que se le dice.
 type fakeLLMStore struct {
 	gotCtx      context.Context
 	gotTenantID string
@@ -33,10 +31,7 @@ type fakeLLMStore struct {
 	err   error
 }
 
-var (
-	_ llmvia.Store    = (*fakeLLMStore)(nil)
-	_ llmConfigReader = (*fakeLLMStore)(nil)
-)
+var _ llmvia.Store = (*fakeLLMStore)(nil)
 
 func (f *fakeLLMStore) Get(ctx context.Context, tenantID string) (tenantllm.Config, bool, error) {
 	f.calls++
@@ -277,87 +272,5 @@ func TestTurneroBridge_ForeignErrors_PassThrough(t *testing.T) {
 				t.Errorf("el error ajeno casa con el centinela viejo: turnoacotado lo tomaría por «sin resolutor»")
 			}
 		})
-	}
-}
-
-// Promesa: Get copia el Config nuevo en el viejo campo a campo, los ocho.
-func TestLLMConfigBridge_Config_CopiesEveryField(t *testing.T) {
-	at := time.Date(2026, 10, 7, 9, 30, 0, 0, time.UTC)
-	cfg := tenantllm.Config{
-		TenantID:    bridgeTenantID,
-		Via:         tenantllm.ViaAPI,
-		Provider:    "anthropic",
-		Model:       "modelo-de-prueba",
-		HasAPIKey:   true,
-		ConsentedAt: at,
-		CreatedAt:   at.Add(time.Hour),
-		UpdatedAt:   at.Add(2 * time.Hour),
-	}
-	assertSameFields(t, cfg, toLegacyLLMConfig(cfg))
-	// Y en el otro sentido: un campo que solo existiera en el Config viejo se quedaría a cero.
-	assertSameFields(t, toLegacyLLMConfig(cfg), cfg)
-}
-
-// Promesa: los vocabularios de Via que el adaptador copia sin traducir valen lo mismo en los dos
-// paquetes; si divergieran, reanalisis leería una vía que no reconoce.
-func TestLLMConfigBridge_RouteVocabularyMatches(t *testing.T) {
-	if tenantllm.ViaLocal != legacytenantllm.ViaLocal || tenantllm.ViaAPI != legacytenantllm.ViaAPI {
-		t.Errorf("vocabulario de vías: nuevo (%q, %q), viejo (%q, %q)",
-			tenantllm.ViaLocal, tenantllm.ViaAPI, legacytenantllm.ViaLocal, legacytenantllm.ViaAPI)
-	}
-}
-
-// Promesa: Get delega con el mismo ctx y tenantID, convierte la configuración y devuelve found
-// tal cual (false = «sin fila», que reanalisis lee como la vía por defecto).
-func TestLLMConfigBridge_Get_DelegatesAndConverts(t *testing.T) {
-	row := tenantllm.Config{TenantID: bridgeTenantID, Via: tenantllm.ViaAPI, Provider: "gemini", Model: "m", HasAPIKey: true}
-	cases := []struct {
-		name  string
-		store *fakeLLMStore
-		want  legacytenantllm.Config
-	}{
-		{"row found", &fakeLLMStore{found: true, cfg: row},
-			legacytenantllm.Config{TenantID: bridgeTenantID, Via: legacytenantllm.ViaAPI, Provider: "gemini", Model: "m", HasAPIKey: true}},
-		{"no row", &fakeLLMStore{}, legacytenantllm.Config{}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			b := &llmConfigBridge{store: c.store}
-
-			got, found, err := b.Get(markedCtx(t), bridgeTenantID)
-			if err != nil {
-				t.Fatalf("Get: %v; quiere la configuración del almacén sin error", err)
-			}
-			if found != c.store.found {
-				t.Errorf("found = %v; quiere el del almacén, %v", found, c.store.found)
-			}
-			if got != c.want {
-				t.Errorf("Get = %+v; quiere %+v", got, c.want)
-			}
-			if c.store.calls != 1 {
-				t.Fatalf("el almacén recibió %d lecturas; quiere 1", c.store.calls)
-			}
-			if ctxMarker(c.store.gotCtx) != "marker" || c.store.gotTenantID != bridgeTenantID {
-				t.Errorf("el almacén no recibió el mismo ctx y tenant que el adaptador (tenant %q)", c.store.gotTenantID)
-			}
-		})
-	}
-}
-
-// Promesa: un error del almacén pasa INTACTO, junto a un Config vacío y found false.
-func TestLLMConfigBridge_Get_ErrorPassesThrough(t *testing.T) {
-	storeErr := errors.New("pq: connection refused")
-	b := &llmConfigBridge{store: &fakeLLMStore{err: storeErr, found: true, cfg: tenantllm.Config{TenantID: bridgeTenantID}}}
-
-	got, found, err := b.Get(t.Context(), bridgeTenantID)
-
-	if err != storeErr { //nolint:errorlint // se afirma identidad: pasa sin envolver
-		t.Errorf("err = %v; quiere exactamente el error del almacén, sin envolver", err)
-	}
-	if found {
-		t.Error("found = true junto a un error; quiere false")
-	}
-	if got != (legacytenantllm.Config{}) {
-		t.Errorf("junto al error devolvió %+v; quiere un Config vacío", got)
 	}
 }

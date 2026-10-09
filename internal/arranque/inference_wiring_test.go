@@ -6,7 +6,7 @@ package arranque
 // por tamaño, E-13). No basta mirar el tipo de un campo del contenedor: se afirma, sobre el
 // arranque nuevo REAL (las fases 2–8 del contenedor de la huella, sin red ni BD), que el selector
 // de vía y los almacenes son los NUEVOS, que hay UN solo selector y que todos sus consumidores
-// —también los dos que lo reciben detrás de un adaptador— apuntan a esa MISMA instancia; y, por
+// —también el que lo recibe detrás de un adaptador— apuntan a esa MISMA instancia; y, por
 // ruta de import, que ningún fichero de internal/arranque, de producción o de test, toca la
 // inferencia vieja fuera del adaptador. También que las dos áreas de la cara HTTP nueva (FX TX.14)
 // reciben los mismos almacenes.
@@ -175,11 +175,12 @@ func inner(t *testing.T, v reflect.Value, name string) reflect.Value {
 	return f
 }
 
-// TestIdentidad_TheBridgesWrapTheContainerInstances (R4.7.c): lo que reciben turnoacotado.New y
-// reanalisis.NewServicio son los adaptadores de bridge_inferencia.go, y envuelven LAS MISMAS
-// instancias que el contenedor: el turno acotado pregunta al único selector y el re-análisis lee
-// del único almacén. Además, el puerto del llmConfigBridge guarda el *tenantllm.Postgres NUEVO
-// concreto: el adaptador lo declara como interfaz mínima solo para poder probarse sin BD.
+// TestIdentidad_TheBridgesWrapTheContainerInstances (R4.7.c): lo que recibe turnoacotado.New es
+// el adaptador de bridge_inferencia.go, y envuelve LA MISMA instancia que el contenedor: el turno
+// acotado pregunta al único selector. Y el re-análisis, que desde F7 (conmutar(captacion)) es el
+// NUEVO, ya no lee detrás de ningún adaptador: su LLMConfig ES c.tenantLLMStore, el
+// *tenantllm.Postgres nuevo, el mismo del que lee el selector. Murió llmConfigBridge; lo que este
+// test afirmaba de él (un solo camino al SQL de tenant_llm) se afirma ahora sin intermediario.
 func TestIdentidad_TheBridgesWrapTheContainerInstances(t *testing.T) {
 	c := contenedorDeHuella(t, "minimo")
 
@@ -192,15 +193,11 @@ func TestIdentidad_TheBridgesWrapTheContainerInstances(t *testing.T) {
 	}
 
 	config := field(t, c.reanalysisSvc, "config")
-	if config.IsNil() || config.Elem().Type() != reflect.TypeFor[*llmConfigBridge]() {
-		t.Fatalf("el ConfigLLM del re-análisis no es un *llmConfigBridge (bridge_inferencia.go)")
+	if config.IsNil() || config.Elem().Type() != reflect.TypeFor[*tenantllm.Postgres]() {
+		t.Fatalf("el LLMConfig del re-análisis no es el *tenantllm.Postgres nuevo, sin adaptador (llmConfigBridge murió en F7)")
 	}
-	store := inner(t, config, "store")
-	if store.IsNil() || store.Elem().Type() != reflect.TypeFor[*tenantllm.Postgres]() {
-		t.Fatalf("el almacén del llmConfigBridge no es el *tenantllm.Postgres nuevo")
-	}
-	if !sameInstance(store, c.tenantLLMStore) {
-		t.Error("el llmConfigBridge no envuelve c.tenantLLMStore: habría un segundo camino al SQL de tenant_llm")
+	if !sameInstance(config, c.tenantLLMStore) {
+		t.Error("el re-análisis no lee de c.tenantLLMStore: habría un segundo camino al SQL de tenant_llm")
 	}
 }
 
@@ -222,10 +219,10 @@ func TestIdentidad_EveryConsumerSharesTheOneSelector(t *testing.T) {
 		{"la etapa P2 del pipeline", inner(t, field(t, c.intakePipeline, "p2"), "sel")},
 		{"la etapa P3 del pipeline", inner(t, field(t, c.intakePipeline, "p3"), "sel")},
 		{"la etapa P4 del pipeline", inner(t, field(t, c.intakePipeline, "p4"), "sel")},
-		{"el resolutor de plazas del aforo (pipeline.ConAforo)", field(t, c.intakePipeline, "plazas")},
+		{"el resolutor de plazas del aforo (pipeline.WithCapacity)", field(t, c.intakePipeline, "slots")},
 		{"el generador de cotización (quotetext.Service, el de solicitudes)", field(t, c.quoteSvc, "selector")},
 		{"el adelanto de ventana (intakeahead.Pool)", field(t, c.intakeAhead, "sel")},
-		{"el calentador del adelanto de ventana", field(t, c.intakeAhead, "calentador")},
+		{"el calentador del adelanto de ventana", field(t, c.intakeAhead, "warmer")},
 		{"el turno acotado, detrás de turneroBridge", inner(t, field(t, c.consultaResolver, "turnero"), "sel")},
 	}
 	for _, k := range consumers {

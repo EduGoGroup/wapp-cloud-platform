@@ -1,4 +1,5 @@
-// Copia de internal/bootstrap/arranque/filters_config_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/filters_config_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo el store de intenciones, que desde F7 (conmutar(captacion)) es el de internal/modulos/captacion/intentcfg.
 package arranque
 
 import (
@@ -7,9 +8,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements/entitlementshelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
 	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 )

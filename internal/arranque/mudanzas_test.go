@@ -186,9 +186,10 @@ func TestMudanzas_ElMapa(t *testing.T) {
 // además las 4 de inferencia (F1–F4). Desde F5 (conmutar(catalogo)), FaseActual = 5 y siguen
 // siendo 33: catalogo no muda ninguna ruta (I14–I17 se quedan en la vieja hasta F8). Desde F6
 // (conmutar(solicitudes)), FaseActual = 6 y sirve 51: además las 18 de solicitudes (G1–G18).
+// Desde F7 (conmutar(captacion)), FaseActual = 7 y sirve 54: además las 3 de captación (H1, E1–E2).
 func TestMudanzas_FaseActual(t *testing.T) {
-	if FaseActual != 6 {
-		t.Fatalf("FaseActual = %d; conmutar(solicitudes) la deja en 6 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
+	if FaseActual != 7 {
+		t.Fatalf("FaseActual = %d; conmutar(captacion) la deja en 7 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
 	}
 	filas := leerMapa(t)
 	cara := caraNueva(newFaceDepsWithDoubles())
@@ -204,8 +205,8 @@ func TestMudanzas_FaseActual(t *testing.T) {
 			esperadas = append(esperadas, f.patron)
 		}
 	}
-	if len(esperadas) != 51 {
-		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2), edge 6 (D1–D6), inferencia 4 (F1–F4) y solicitudes 18 (G1–G18): 51", len(esperadas), FaseActual)
+	if len(esperadas) != 54 {
+		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2), edge 6 (D1–D6), inferencia 4 (F1–F4), solicitudes 18 (G1–G18) y captación 3 (H1, E1–E2): 54", len(esperadas), FaseActual)
 	}
 	patrones := cara.Patrones()
 	slices.Sort(patrones)
@@ -327,6 +328,19 @@ func newFaceDepsWithDoubles() newFaceDeps {
 				EventTelemetry: struct {
 					apipublica.EventTelemetryReader
 				}{},
+			},
+		},
+		// F7 · captación: H1 con su servicio; E1–E2 con el store de intenciones y el resolver de
+		// derechos (el push es opcional y no enciende ninguna ruta, pero se pone: todo lo que la
+		// fase puede montar).
+		capture: captureFaceDeps{
+			reanalyze: apipublica.ReanalyzeDeps{
+				Reanalysis: struct{ apipublica.ReanalysisService }{},
+			},
+			intents: apipublica.IntentsDeps{
+				Intents:      struct{ apipublica.IntentConfigStore }{},
+				Entitlements: entitlementshelpertest.NewFake(),
+				ConfigPush:   struct{ apipublica.ConfigPusher }{},
 			},
 		},
 	}

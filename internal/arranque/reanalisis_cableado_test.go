@@ -1,7 +1,10 @@
-// Copia de internal/bootstrap/arranque/reanalisis_cableado_test.go @ 80807ba (F0 · 05 §6): el
-// re-análisis y la etapa draft siguen siendo paquetes VIEJOS (hasta F7). Desde F6 (T6.24,
-// conmutar(solicitudes)) el c.intakeService cuya PushRevisionByID llama la clausura es el Service
-// de internal/modulos/solicitudes; el texto que este test busca no cambia (reglas.md T-6, T-7).
+// Copia de internal/bootstrap/arranque/reanalisis_cableado_test.go @ 80807ba (F0 · 05 §6). Desde F6
+// (T6.24, conmutar(solicitudes)) el c.intakeService cuya PushRevisionByID llama la clausura es el
+// Service de internal/modulos/solicitudes. Y desde F7 (T7.23–T7.24, conmutar(captacion)) el
+// re-análisis y la etapa draft son los de internal/modulos/captacion: el texto que este test busca
+// cambió con E-11 (`reanalisis.NewService`, `stages.WithCRMPush`; hallazgo 28 de F7) y el campo
+// `Reanalysis` se exige en las deps de la cara NUEVA (apipublica.ReanalyzeDeps), no en las de
+// publicapi, que ya no lo lleva.
 package arranque
 
 // reanalisis_cableado_test.go — QUE EL RE-ANÁLISIS ESTÉ ENCHUFADO (Plan 044 · Ola 4 ·
@@ -17,10 +20,10 @@ package arranque
 //
 // T4.6 deja DOS cables que fallan EN SILENCIO si faltan:
 //
-//   - `stages.ConEmpujeCRM`: sin él, un re-análisis escribe su revisión y el CRM se
+//   - `stages.WithCRMPush`: sin él, un re-análisis escribe su revisión y el CRM se
 //     queda con la versión vieja del pedido. La etapa lo grita con un log.Error, pero
 //     nadie mira el log hasta que el integrador reclama.
-//   - `reanalisis.NewServicio` + `Deps.Reanalysis`: sin ellos la ruta NO SE MONTA y
+//   - `reanalisis.NewService` + `ReanalyzeDeps.Reanalysis`: sin ellos la ruta NO SE MONTA y
 //     `POST /api/v1/intakes/{id}/reanalyze` responde 404 de ruta inexistente. Nada
 //     falla, nada avisa: el botón «Regenerar» de la consola simplemente no hace nada.
 //
@@ -49,9 +52,9 @@ func TestCableado_ElReanalisisEstaEnchufado(t *testing.T) {
 }
 
 type cableadoDelReanalisis struct {
-	servicio  bool // (a) reanalisis.NewServicio(...)
-	enDeps    bool // (b) publicapi.Deps{... Reanalysis: ...}
-	empujeCRM bool // (c) stages.NewDraft(..., stages.ConEmpujeCRM(...))
+	servicio  bool // (a) reanalisis.NewService(...)
+	enDeps    bool // (b) apipublica.ReanalyzeDeps{Reanalysis: reanalysisServicePort(c.reanalysisSvc)}
+	empujeCRM bool // (c) stages.NewDraft(..., stages.WithCRMPush(...))
 	clausura  bool // (d) la clausura llama a PushRevisionByID del Service
 }
 
@@ -60,7 +63,7 @@ func (c *cableadoDelReanalisis) anota(t *testing.T, fset *token.FileSet, n ast.N
 	switch v := n.(type) {
 	case *ast.CallExpr:
 		switch campoDe(v.Fun) {
-		case "reanalisis.NewServicio":
+		case "reanalisis.NewService":
 			c.servicio = true
 		case "stages.NewDraft":
 			c.anotaEmpuje(t, fset, v)
@@ -72,31 +75,57 @@ func (c *cableadoDelReanalisis) anota(t *testing.T, fset *token.FileSet, n ast.N
 			c.clausura = true
 		}
 	case *ast.KeyValueExpr:
-		if campoDe(v.Key) == "Reanalysis" {
-			if campoDe(v.Value) == "nil" {
-				t.Fatalf("publicapi.Deps.Reanalysis se cablea a nil: la ruta no se montaría (%s)",
-					fset.Position(v.Pos()))
-			}
-			c.enDeps = true
+		// En CUALQUIER literal del arranque: una clave `Reanalysis` escrita a nil es la ruta que
+		// no se monta. En la cara vieja el campo se OMITE (F7); no se escribe con nil.
+		if campoDe(v.Key) == "Reanalysis" && campoDe(v.Value) == "nil" {
+			t.Fatalf("el campo Reanalysis se cablea a nil: la ruta no se montaría (%s)",
+				fset.Position(v.Pos()))
 		}
+	case *ast.CompositeLit:
+		c.anotaDeps(t, fset, v)
+	}
+}
+
+// anotaDeps exige que el servicio llegue a la cara NUEVA: el literal apipublica.ReanalyzeDeps
+// lleva la clave Reanalysis, y su valor es el servicio del contenedor pasado por la costura que
+// conserva el nil de verdad (reanalysisServicePort). Un `Reanalysis:` en otro literal —el de la
+// cara vieja, que desde F7 no lo lleva— NO cuenta: allí no monta la ruta que hoy sirve H1.
+func (c *cableadoDelReanalisis) anotaDeps(t *testing.T, fset *token.FileSet, lit *ast.CompositeLit) {
+	t.Helper()
+	if campoDe(lit.Type) != "apipublica.ReanalyzeDeps" {
+		return
+	}
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok || campoDe(kv.Key) != "Reanalysis" {
+			continue
+		}
+		port, ok := kv.Value.(*ast.CallExpr)
+		if !ok || campoDe(port.Fun) != "reanalysisServicePort" || len(port.Args) != 1 ||
+			campoDe(port.Args[0]) != "reanalysisSvc" {
+			t.Fatalf("apipublica.ReanalyzeDeps.Reanalysis no es reanalysisServicePort(c.reanalysisSvc): "+
+				"la cara nueva montaría H1 con otro servicio, o con un puntero nil dentro de la interfaz (%s)",
+				fset.Position(kv.Pos()))
+		}
+		c.enDeps = true
 	}
 }
 
 // anotaEmpuje exige que la etapa `draft` nazca con el puente CRM.
 //
-// 🔴 NO BASTA CON VER LA OPCIÓN ESCRITA: `ConEmpujeCRM(nil)` compila y la propia
-// opción se traga el nil (es nil-safe a propósito, como ConAforo y ConZonasDeEnvio),
+// 🔴 NO BASTA CON VER LA OPCIÓN ESCRITA: `WithCRMPush(nil)` compila y la propia
+// opción se traga el nil (es nil-safe a propósito, como WithCapacity y WithShippingZones),
 // así que el empuje desaparecería sin que nada lo dijera hasta que un re-análisis real
 // no llegara al CRM. Por eso se mira también el argumento.
 func (c *cableadoDelReanalisis) anotaEmpuje(t *testing.T, fset *token.FileSet, llamada *ast.CallExpr) {
 	t.Helper()
 	for _, arg := range llamada.Args {
 		opt, ok := arg.(*ast.CallExpr)
-		if !ok || campoDe(opt.Fun) != "stages.ConEmpujeCRM" {
+		if !ok || campoDe(opt.Fun) != "stages.WithCRMPush" {
 			continue
 		}
 		if len(opt.Args) != 1 || campoDe(opt.Args[0]) == "nil" {
-			t.Fatalf("stages.ConEmpujeCRM no recibe un empujador utilizable: la opción se traga el nil "+
+			t.Fatalf("stages.WithCRMPush no recibe un empujador utilizable: la opción se traga el nil "+
 				"y el re-análisis dejaría de salir al CRM en silencio (%s)", fset.Position(opt.Pos()))
 		}
 		c.empujeCRM = true
@@ -106,17 +135,17 @@ func (c *cableadoDelReanalisis) anotaEmpuje(t *testing.T, fset *token.FileSet, l
 func (c *cableadoDelReanalisis) exige(t *testing.T) {
 	t.Helper()
 	if !c.servicio {
-		t.Error("internal/bootstrap/bootstrap.go NO llama a reanalisis.NewServicio.\n" +
-			"Sin el caso de uso construido, Deps.Reanalysis queda nil y la ruta " +
+		t.Error("internal/arranque NO llama a reanalisis.NewService.\n" +
+			"Sin el caso de uso construido, ReanalyzeDeps.Reanalysis queda nil y la ruta " +
 			"POST /api/v1/intakes/{id}/reanalyze NO SE MONTA: responde 404 de ruta inexistente. " +
 			"Nada falla y nada avisa — el botón «Regenerar» de la consola simplemente no hace nada.")
 	}
 	if !c.enDeps {
-		t.Error("publicapi.Deps NO recibe el servicio de re-análisis (campo Reanalysis).\n" +
+		t.Error("apipublica.ReanalyzeDeps (la cara NUEVA) NO recibe el servicio de re-análisis (campo Reanalysis).\n" +
 			"Construirlo y no pasarlo tiene el MISMO efecto que no construirlo: la ruta no se monta.")
 	}
 	if !c.empujeCRM {
-		t.Error("stages.NewDraft se construye SIN stages.ConEmpujeCRM.\n" +
+		t.Error("stages.NewDraft se construye SIN stages.WithCRMPush.\n" +
 			"El borrador sale igual, así que ningún otro test se pone rojo. Lo que se pierde es el " +
 			"cierre de T4.10 mitad 2: un re-análisis pedido por el dueño escribe su revisión y el " +
 			"CRM se queda con la versión vieja del pedido, que es exactamente lo que D-044.19 " +
@@ -124,7 +153,7 @@ func (c *cableadoDelReanalisis) exige(t *testing.T) {
 			"el integrador reclama.")
 	}
 	if !c.clausura {
-		t.Error("la clausura de stages.ConEmpujeCRM no llama a intakeService.PushRevisionByID.\n" +
+		t.Error("la clausura de stages.WithCRMPush no llama a intakeService.PushRevisionByID.\n" +
 			"Una función que no empuja nada compila igual y deja el cable puesto de mentira.")
 	}
 }

@@ -1,8 +1,11 @@
-// Adaptador de tipos entre la inferencia NUEVA (internal/modulos/inferencia/{llmvia,tenantllm}) y
-// los dos consumidores VIEJOS que piden tipos del paquete viejo: internal/turnoacotado (hasta F8)
-// e internal/reanalisis (hasta F7). No porta ningún fichero: nace en F4 (T4.10, arquitectura §4
-// del plan de F4) para que el arranque nuevo cablee UN solo selector de vía y UN solo almacén de
-// tenant_llm, los nuevos, sin tocar a esos dos consumidores (E-1).
+// Adaptador de tipos entre la inferencia NUEVA (internal/modulos/inferencia/llmvia) y el consumidor
+// VIEJO que pide tipos del paquete viejo: internal/turnoacotado (hasta F8). No porta ningún
+// fichero: nace en F4 (T4.10, arquitectura §4 del plan de F4) para que el arranque nuevo cablee UN
+// solo selector de vía, el nuevo, sin tocar a ese consumidor (E-1).
+//
+// Tuvo una segunda mitad, llmConfigBridge, que presentaba el almacén nuevo de tenant_llm al
+// internal/reanalisis viejo: murió en F7 (T7.23, conmutar(captacion)), cuando el reanalisis nuevo
+// pasó a recibir ese almacén tal cual.
 
 package arranque
 
@@ -12,9 +15,6 @@ import (
 
 	legacyllm "github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/reanalisis"
-	legacytenantllm "github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/turnoacotado"
 )
 
@@ -75,64 +75,4 @@ func translateTurnErr(err error) error {
 		return &bridgeError{original: err, oldSentinel: legacyllm.ErrViaSinTurnoAcotado}
 	}
 	return err
-}
-
-// llmConfigReader es lo único que llmConfigBridge necesita del almacén nuevo de tenant_llm: leer
-// la configuración SIN la credencial. Lo satisface *tenantllm.Postgres, que es lo que cablea el
-// arranque (lo afirma el test de cableado, por reflexión); se guarda como puerto y no como el
-// tipo concreto para que el test unitario lo ejercite con un doble y sin BD, igual que
-// contactBridge. No tiene APIKey a propósito: por este adaptador no puede salir la clave.
-type llmConfigReader interface {
-	Get(ctx context.Context, tenantID string) (tenantllm.Config, bool, error)
-}
-
-// llmConfigBridge presenta el almacén NUEVO de tenant_llm como el reanalisis.ConfigLLM que pide
-// la puerta vieja del re-análisis (reanalisis.NewServicio, fase 5). Hace falta porque ConfigLLM
-// devuelve el Config del tenantllm VIEJO, y los dos Config son tipos distintos para Go aunque
-// tengan los mismos ocho campos.
-//
-// Delega en store, que es EL MISMO almacén que recibe el selector de vía: la alternativa (un
-// tenantllm.Postgres viejo aparte) abriría un segundo camino al SQL de tenant_llm.
-//
-// Promesas:
-//   - Get delega en store.Get con el mismo ctx y tenantID y copia el Config nuevo en uno viejo
-//     campo a campo, los ocho, sin reinterpretar ninguno (Via es un string con el mismo
-//     vocabulario en los dos paquetes). Devuelve found tal cual: false significa «sin fila», que
-//     reanalisis lee como la vía por defecto.
-//   - Un error de store pasa INTACTO, sin envolver ni traducir, junto a un Config vacío y found
-//     false: reanalisis no compara ningún centinela de tenantllm sobre el error de Get (lo
-//     envuelve con su propio texto), y Get no devuelve ErrNotConfigured (ese es de APIKey).
-//
-// Vida: nace en F4 · muere en F7, cuando el reanalisis nuevo reciba el almacén nuevo.
-type llmConfigBridge struct {
-	// store es el almacén nuevo en el que se delega; el adaptador no guarda más estado.
-	store llmConfigReader
-}
-
-// llmConfigBridge es un reanalisis.ConfigLLM: si la firma cambia, esto no compila.
-var _ reanalisis.ConfigLLM = (*llmConfigBridge)(nil)
-
-// Get implementa reanalisis.ConfigLLM: delega y copia la configuración al tipo viejo (ver
-// llmConfigBridge).
-func (b *llmConfigBridge) Get(ctx context.Context, tenantID string) (legacytenantllm.Config, bool, error) {
-	cfg, found, err := b.store.Get(ctx, tenantID)
-	if err != nil {
-		return legacytenantllm.Config{}, false, err
-	}
-	return toLegacyLLMConfig(cfg), found, nil
-}
-
-// toLegacyLLMConfig copia el Config nuevo en el viejo campo a campo. Es una función aparte para
-// que el test afirme por reflexión que no se queda ningún campo sin copiar.
-func toLegacyLLMConfig(cfg tenantllm.Config) legacytenantllm.Config {
-	return legacytenantllm.Config{
-		TenantID:    cfg.TenantID,
-		Via:         cfg.Via,
-		Provider:    cfg.Provider,
-		Model:       cfg.Model,
-		HasAPIKey:   cfg.HasAPIKey,
-		ConsentedAt: cfg.ConsentedAt,
-		CreatedAt:   cfg.CreatedAt,
-		UpdatedAt:   cfg.UpdatedAt,
-	}
 }

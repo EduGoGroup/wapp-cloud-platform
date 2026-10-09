@@ -106,8 +106,13 @@ var reglas = candados.Reglas{
 	// viejo para afirmar que el centinela ErrSessionOffline viejo y el nuevo son la misma variable
 	// (D-F3-2). Era redundante: lo afirman edge/session/registry_test.go contra el de platform, los
 	// tests de platform/httpapi por comportamiento (502) y el proceso P1 por el cable.
-	// inferencia no entra hasta F8, cuando muera bridge_inferencia.go.
-	Conmutados: []string{"acceso", "edge"},
+	// inferencia no entra hasta F8, cuando muera bridge_inferencia.go. catalogo entra en F7, con
+	// el conmutar(captacion) (D-R-4 ✎ 2026-10-07, decisión de Jhoan; F5 reglas.md §4.10): nunca
+	// tuvo adaptador, pero su conmutación de F5 fue nominal y el arranque siguió importando el
+	// índice viejo (internal/intake/catalogo) hasta que el worker nuevo de captación pasó a pedir
+	// el *indice.Indice de internal/modulos/catalogo/indice. captacion NO entra con ese commit:
+	// nace con él su adaptador, bridge_captacion.go, y entra en F8, cuando muera.
+	Conmutados: []string{"acceso", "edge", "catalogo"},
 	// Puentes: import de un paquete NUEVO a uno VIEJO, declarado (05 §4.1). Vacía de F0 a F5;
 	// el primero nace en F6 (F6-04); el segundo, en F7 (F7-02, T7.9); el tercero, en F7 (F7-03,
 	// T7.12). El PUENTE 3 de plan/F7-captacion/arquitectura.md §2 (reanalisis → flujos/runtime,

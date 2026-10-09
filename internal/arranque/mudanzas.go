@@ -18,16 +18,16 @@ import "github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 
 // FaseActual es la última fase de la reconstrucción cuyas rutas del :8103 sirve la
 // cara nueva: 0 en F0 (la cara nace vacía y todo cae al publicapi viejo), 2 tras
-// conmutar acceso, 3 tras conmutar edge, 4 tras conmutar inferencia, 5 tras la conmutación nominal de catalogo (no muda ninguna ruta), 6 tras conmutar solicitudes, … 8 tras conmutar conversacion. La fase de una fila del mapa se
+// conmutar acceso, 3 tras conmutar edge, 4 tras conmutar inferencia, 5 tras la conmutación nominal de catalogo (no muda ninguna ruta), 6 tras conmutar solicitudes, 7 tras conmutar captacion, 8 tras conmutar conversacion. La fase de una fila del mapa se
 // escribe «F<n>»; la fila pertenece a la cara nueva si n ≤ FaseActual.
-const FaseActual = 6
+const FaseActual = 7
 
 // newFaceDeps es todo lo que la cara nueva necesita para montar sus áreas, y el ÚNICO sitio
 // donde se agrupa: un campo por módulo. La fase que muda rutas declara aquí su <módulo>FaceDeps,
 // le añade un campo a este struct y su Mount* a caraNueva; en la fase 8 lo rellena con su
 // <módulo>DepsOfTheNewFace(c). Ni la firma ni el cuerpo de buildPublicAPIServer se tocan.
 //
-// Lo arman a dos manos: la fase 8 pone las áreas de los módulos (edge, inference, requests) y
+// Lo arman a dos manos: la fase 8 pone las áreas de los módulos (edge, inference, requests, capture) y
 // buildPublicAPIServer (http.go) las cinco de acceso, cuyos servicios construye él. El candado
 // de mudanzas lo arma con dobles.
 type newFaceDeps struct {
@@ -47,6 +47,8 @@ type newFaceDeps struct {
 	inference inferenceFaceDeps
 	// requests enciende G1–G18 (F6): el módulo solicitudes.
 	requests requestsFaceDeps
+	// capture enciende H1, E1 y E2 (F7): el módulo captacion.
+	capture captureFaceDeps
 }
 
 // edgeFaceDeps es lo que la cara nueva necesita para D1–D6 (F3 · conmutar(edge)). Lo arma la
@@ -91,8 +93,19 @@ type requestsFaceDeps struct {
 	eventTelemetry apipublica.EventTelemetryDeps
 }
 
+// captureFaceDeps es lo que la cara nueva necesita para H1, E1 y E2 (F7 · conmutar(captacion)): las
+// dos áreas del módulo captacion. Lo arma la fase 8 (captureDepsOfTheNewFace) con el servicio de
+// re-análisis y el store de intenciones NUEVOS del contenedor, el resolver de derechos y el
+// gateway; buildPublicAPIServer no le añade nada.
+type captureFaceDeps struct {
+	// reanalyze enciende H1 (`POST /api/v1/intakes/{id}/reanalyze`).
+	reanalyze apipublica.ReanalyzeDeps
+	// intents enciende E1–E2 (`GET` y `PUT /api/v1/intents`).
+	intents apipublica.IntentsDeps
+}
+
 // caraNueva construye la cara nueva con las rutas de las fases ≤ FaseActual: desde F2,
-// las 23 de acceso (A1–A7, B1–B14, C1–C2); desde F3, además las 6 de edge (D1–D6); desde F4, además las 4 de inferencia (F1–F4); desde F6, además las 18 de solicitudes (G1–G18). Cada fase añade aquí su apipublica.Mount<Área>
+// las 23 de acceso (A1–A7, B1–B14, C1–C2); desde F3, además las 6 de edge (D1–D6); desde F4, además las 4 de inferencia (F1–F4); desde F6, además las 18 de solicitudes (G1–G18); desde F7, además las 3 de captación (H1, E1–E2). Cada fase añade aquí su apipublica.Mount<Área>
 // en el MISMO commit que sube FaseActual. Las condiciones de montaje (qué dependencia nil
 // apaga qué ruta) son las de cada Mount*: aquí no se decide nada.
 func caraNueva(d newFaceDeps) *apipublica.Cara {
@@ -115,5 +128,10 @@ func caraNueva(d newFaceDeps) *apipublica.Cara {
 	apipublica.MountIntegrations(cara, d.common, d.requests.integrations)
 	apipublica.MountCRMCallback(cara, d.common, d.requests.crmCallback)
 	apipublica.MountEventTelemetry(cara, d.common, d.requests.eventTelemetry)
+	// H1 cuelga de `…/intakes/{id}/reanalyze`: comparte prefijo con la bandeja (G1–G10) pero es
+	// de captación, y desde F7 va en la MISMA cara que ella, así que ya no hay comodín de una
+	// cara tapando un literal de la otra.
+	apipublica.MountReanalyze(cara, d.common, d.capture.reanalyze)
+	apipublica.MountIntents(cara, d.common, d.capture.intents)
 	return cara
 }

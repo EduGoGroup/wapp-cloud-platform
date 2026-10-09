@@ -132,9 +132,9 @@ func field(t *testing.T, ptr any, name string) reflect.Value {
 
 // TestIdentidad_EveryConsumerSharesTheOneGateway (FX TX.11, T-4): sobre el arranque real, todo el
 // que habla con un Edge lo hace por el MISMO puntero que c.gw: el notificador de solicitudes
-// (el nuevo desde F6), el empuje de filtros nuevo, el ConfigPush de la cara vieja (E2), el selector LLM
+// (el nuevo desde F6), el empuje de filtros nuevo, el ConfigPush de E2 —en la cara NUEVA desde F7—, el selector LLM
 // nuevo —que lo recibe como Frame y, del mismo valor, como enrutador de plazas—, y las deps de D1
-// y D5 de la cara nueva.
+// y D5 de la cara nueva. Y la cara VIEJA ya no recibe ConfigPush: su único lector era E2.
 func TestIdentidad_EveryConsumerSharesTheOneGateway(t *testing.T) {
 	c := contenedorDeHuella(t, "minimo")
 	if c.gw == nil {
@@ -160,7 +160,7 @@ func TestIdentidad_EveryConsumerSharesTheOneGateway(t *testing.T) {
 	}{
 		{"el MessageSender del notificador de solicitudes (intakes.Notifier)", field(t, c.intakeNotifier, "sender")},
 		{"el ConfigPusher del empuje de filtros (filtercfg.Pusher)", field(t, c.filtersPusher, "push")},
-		{"el Deps.ConfigPush de la cara vieja (E2)", reflect.ValueOf(depsDeLaAPIPublica(c).ConfigPush)},
+		{"el IntentsDeps.ConfigPush de E2 en la cara nueva", reflect.ValueOf(captureDepsOfTheNewFace(c).intents.ConfigPush)},
 		{"el Frame del selector LLM", frame},
 		{"el enrutador de plazas del selector LLM (aforo por Edge)", field(t, c.llmSelector, "router")},
 		{"el Sender de D1 en la cara nueva", reflect.ValueOf(edge.messages.Sender)},
@@ -170,6 +170,9 @@ func TestIdentidad_EveryConsumerSharesTheOneGateway(t *testing.T) {
 		if !sameInstance(k.got, c.gw) {
 			t.Errorf("%s no es la MISMA instancia que c.gw: habría dos gateways en el proceso", k.name)
 		}
+	}
+	if old := depsDeLaAPIPublica(c).ConfigPush; old != nil {
+		t.Errorf("la cara vieja recibe un ConfigPush (%T); se espera nil: E2, su único lector, la sirve la nueva", old)
 	}
 }
 
