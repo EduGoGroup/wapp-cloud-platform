@@ -333,10 +333,11 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     `fase5_captacion.go:43,197,296` pasa a `pipeline.CallTimeoutFloor` y `pipeline.NewCapacity(pipeline.KPerSlot)` (ahí va
     la aserción de igualdad de T-13), y `reanalisis.NewService` recibe `runtime.DefaultThreadLimit` desde
     `bridge_captacion.go` y un `composerBridge` que convierte el `WindowKey` (T-3).
-29. **El worker: lo único que cambia de conducta es D-F9-10, y dos cosas que NO cubre** (F7-03). (i) Con el contexto
+29. **El worker: lo que cambia de conducta es D-F9-10 (y, desde D-F7-10, la parada dentro de una etapa)** (F7-03). (i) Con el contexto
     cancelado, el fallo del reclamo ya no va a `ERROR`, ni en `Drain` ni en `DrainAwake` (`V/pipeline.go:504-506`, `:547`);
-    con el contexto vivo el mismo fallo sigue yendo a `ERROR` y el bucle sigue (un caso cada uno). (ii) 🟡 **Una parada
-    sigue cobrando intento**: si el contexto se cancela *dentro* de una etapa, el error se clasifica como `infra`, hace
+    con el contexto vivo el mismo fallo sigue yendo a `ERROR` y el bucle sigue (un caso cada uno). (ii) ✅ **Decidido el mismo día, D-F7-10: una parada
+    dentro de una etapa ya NO cobra intento** (el job vuelve a `pending` con `Release` y un `Info`, sin `ERROR`; el job
+    inválido muere igual). Lo que hacía el viejo y se portó en `b6f55e3`: si el contexto se cancela *dentro* de una etapa, el error se clasifica como `infra`, hace
     `Retry` con el intento cobrado (`V/pipeline.go:1007-1017`) y, si era el décimo, `Fail` y una línea «job FAILED» a
     `ERROR`. Portado tal cual (T-12): es conducta del viejo y no la pidió D-F9-10; puede dejar una línea a `ERROR` en P0
     si la parada cae en el último intento. (iii) El `Info` «la plaza está ocupada; este job ESPERA» solo sale si **ya**
@@ -369,7 +370,8 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     `reanalysis_in_progress`; los tests nuevos terminan el primer job entre llamadas. (ii) El de `Features` devolvía
     `(false, err)` (`V/dobles_test.go:231-233`): con eso el mutante «fail-open ante error del resolver» era
     indetectable; el nuevo devuelve `(tiene, err)`. La conducta de producción no cambia en ninguno de los dos.
-34. 🟡 **Heredado y portado tal cual en `intakeahead`** (para Jhoan, sin bloquear). `Warm` no comprueba `log`
+34. ✅ **Heredado de `intakeahead`, decidido el mismo día (D-F7-11)**: `Warm` ya comprueba `log`; lo demás de este
+    punto se deja como en el viejo. Lo que había: `Warm` no comprueba `log`
     (`V/calentamiento.go:136`): un `Pool` con `log` nil y `Warmer` cableado haría nil-deref dentro de la goroutine;
     `usable()` sí lo mira para `Request` y `Run`, y producción siempre pasa log. La rama `<= 0` de `warmBudget`
     (`warmup.go:220-225`) es inalcanzable por `New`. Un segundo `Run` sobre el mismo `Pool` sumaría workers sin error
