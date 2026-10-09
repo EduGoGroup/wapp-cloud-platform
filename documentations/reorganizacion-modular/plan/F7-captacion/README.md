@@ -2,7 +2,7 @@
 
 > **Estado: en curso** — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
 > ese día ([`diseno.md`](diseno.md) §1.2). **F7-01 hecha** (bloque A): `evidence`, `anclaje`, `intake`, `intentcfg` y `casebank` en verde
-> (18 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). Falta `stages` (F7-02). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
+> (19 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). Falta `stages` (F7-02). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.5 y §2.8
 > (H1, y E1–E2 por **D-FX-1** resuelta en su alternativa: las intenciones se mudan **aquí**).
@@ -140,19 +140,23 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
 | D-F7-4 | Las rutas de intenciones E1–E2 | **F7** (D-FX-1 alternativa, confirmada por el orquestador): la cara vieja las sirve hasta aquí con el gw nuevo inyectado por `publicapi.ConfigPusher` (estructural) |
 | D-F7-5 | *(F7-01, contradicción 9)* ¿Quién corre `ContratoMaquina` en memoria, si `MemoryStore` no implementa `PipelineStore`? | **Decidida (Jhoan, 2026-10-08)**: el doble de `PipelineStore` se porta de `pipeline/memoria.go` (`StoreEnMemoria`) a `intake/intakehelpertest/`; `CatalogoEnMemoria` va a `pipelinehelpertest/` en F7-03. La verdad de los guards SQL sigue siendo la suite contra Postgres (F7-05) |
 | D-F7-6 | *(F7-01, contradicción 10)* ¿Manda E-13 sobre el «`draft.go` no se parte» de esta spec? | **Decidida (Jhoan, 2026-10-08)**: manda E-13; `draft.go`, `pipeline.go` y `reanalisis.go` se parten por tema al reconstruirlos |
+| D-F7-8 | *(F7-01, hallazgos 1 y 7)* ¿Se cierran en el código nuevo los tres agujeros de PII del anonimizador y la clave de ventana incompleta que el gemelo aceptaba? | **Decidida (Jhoan, 2026-10-08)**: sí, los cuatro (mejora clara; divergencia deliberada del viejo), un commit por decisión |
 
 ## Hallazgos de la ejecución
 
 *(Se numeran aparte de las contradicciones de la spec.)*
 
-1. 🟡 **El anonimizador de `casebank` deja pasar PII en tres casos que el viejo no declara** (F7-01; para Jhoan, sin
-   bloquear). Medido ejecutando el viejo: (a) dos JID pegados (`584121234567@s.whatsapp.net584121234567@s.whatsapp.net`)
-   dejan el segundo número en claro, contra la cabecera de `internal/casebank/anonimizar.go:84-86` («`Restos(Anonimizar(x))`
-   está VACÍO SIEMPRE»); (b) dos teléfonos seguidos separados solo por un espacio o un salto se funden en una racha de más
-   de 15 dígitos y pasan enteros, con `Restos` vacío; (c) los dígitos árabes-índicos o de ancho completo pasan enteros. **Se
-   conservó la conducta** (manda el viejo), se corrigió el comentario y los tres casos quedan fijados en
-   `anonymize_corpus_test.go` y `TestAnonymize_TwoGluedJIDs_LeavesAJIDBehind`. Cerrarlos cambia el alcance del
-   anonimizador que siembra `intake_case_bank`: decisión de Jhoan.
+1. ✅ **El anonimizador de `casebank` dejaba pasar PII en tres casos que el viejo no declara** (F7-01; **cerrados en el
+   código nuevo por decisión de Jhoan, 2026-10-08, D-F7-8**: divergencia deliberada del viejo). Medido ejecutando el viejo:
+   (a) dos JID pegados (`584121234567@s.whatsapp.net584121234567@s.whatsapp.net`) dejaban el segundo número en claro,
+   contra la cabecera de `internal/casebank/anonimizar.go:84-86`; (b) dos teléfonos seguidos separados solo por un espacio
+   o un salto se fundían en una racha de más de 15 dígitos y pasaban enteros; (c) los dígitos árabes-índicos (U+0660–0669,
+   U+06F0–06F9) y de ancho completo (U+FF10–FF19) pasaban enteros. Arreglos: `1d36dfe` (a), `f08e959` (b), `d88d200` (c),
+   `cb41b42` (dos mutantes más). **Criterio de (b)** (`splitPhoneRun`, `anonymize_phones.go`): una racha de más de 15
+   dígitos se corta por sus separadores y un teléfono es uno o varios trozos consecutivos que suman de 8 a 15; gana el
+   reparto que deja menos dígitos en claro (no es voraz); más de 15 dígitos **sin** separador pasan como antes. Los
+   esperados del corpus que cambian llevan «DIVERGE DEL VIEJO». ⚠️ **Sin efecto en UAT hasta F10**: `cmd/casebank` sigue
+   usando el paquete viejo (D-F7-2). Lo que queda abierto, en el hallazgo 15.
 2. **Las suites son cinco, no cuatro**: nació `intakehelpertest.ContratoReanalysis` (10 casos) para `LiveJobOfEvent` y
    `OpenReanalysis`, que en el viejo solo tenían tests del texto del SQL y no pertenecen a `JobStore` ni a
    `PipelineStore` (hallazgo 63 de F6: un caso por método con BD). Su puerto es `intakehelpertest.ReanalysisStore` y su
@@ -173,9 +177,14 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
 6. **`MemoryStore.Jobs` ya no ordena por `ID`** (`internal/intake/memory.go:152`): el viejo ordenaba como cadena y con
    10 filas o más `job-10` salía antes que `job-2`, contra su propio comentario. Es una ayuda de observación para tests,
    no conducta de producción: mejora clara, se hizo.
-7. 🟡 **Divergencia heredada, sin corregir: la clave de ventana incompleta.** `MemoryStore` la acepta (abre la ventana)
-   y `Postgres` la rechaza (`postgres.go:73,120,174`). `ContratoQueue` no lo afirma; lo fija solo el test del adaptador.
-   Si el gemelo debe rechazarla, hay que mirar antes los tests del agregador (F8) que usen claves a medias.
+7. ✅ **Divergencia heredada, corregida: la clave de ventana incompleta** (`1db9266`, decisión de Jhoan, 2026-10-08,
+   D-F7-8). El `MemoryStore` viejo la aceptaba (abría la ventana) y `Postgres` la rechaza (`postgres.go:73,120,174`). El
+   gemelo nuevo la rechaza en `OpenOrAppend`, `CloseWindow` y `PutSourceText` con los textos literales del adaptador, y
+   `ContratoQueue` lo afirma (de 14 a **17** casos; es la primera vez que la suite fija un texto de error). Orden en el
+   gemelo: clave → fallo inyectado → sobre; la llamada rechazada cuenta en `Counters`. Queda una divergencia menor, sin
+   tocar: con el sobre incompleto los dos dan error, con textos distintos (la suite solo exige error). Para F7-05: el
+   `Montaje` de Postgres tiene que aceptar `Rows(t, "")` y devolver 0 filas. Para F8: los tests del agregador que usen
+   claves a medias fallarán contra el gemelo nuevo, y es lo correcto.
 8. **`intentcfg`: memoria y Postgres divergen en el blob, y la suite lo absorbe.** Memoria devuelve los bytes exactos;
    Postgres guarda JSONB y lee `config::text`, que reordena claves. La suite compara por equivalencia JSON (como el test de
    integración viejo). Un blob que no sea JSON, memoria lo acepta y Postgres lo rechazaría: queda fuera de la suite,
@@ -209,3 +218,16 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
 14. **Un `\uFEFF` escrito con un heredoc llega al disco como el carácter literal** y no compila («illegal byte order
     mark»); durante un par de minutos rompió el parseo de los candados de `./internal/modulos/` para los otros
     sub-agentes, que comparten árbol. Los invisibles del corpus adversario se escriben escapados con un script.
+15. 🟡 **Lo que el anonimizador nuevo sigue sin cerrar, y lo que ahora redacta de más** (F7-01, tras D-F7-8; para Jhoan,
+    sin bloquear). (i) **Una excepción viva al invariante «`Remains(Anonymize(x))` vacío»**, heredada del viejo:
+    `José.maria@lid` → `[NOMBRE].maria@lid`, y `Remains` delata el JID `.maria@lid` (la marca del nombre abre un límite de
+    palabra que antes tapaba la «é»); con un JID de grupo de 18 dígitos el número saldría en claro. Declarada en la
+    cabecera, única excepción enumerada en `TestAnonymize_ThenRemains_EmptyOverTheWholeCorpus` y fijada en
+    `TestAnonymize_JIDAfterAccentedName_LeavesAJIDBehind`; cerrarla pide repetir las pasadas hasta punto fijo o tocar el
+    límite izquierdo del JID. (ii) **Falsos positivos nuevos**, declarados: toda racha **con separadores** de más de 15
+    dígitos se redacta como varios teléfonos (una tarjeta `4111 1111 1111 1111`, una cuenta en grupos), y
+    `user@lidia584@lid` sale `[JID][JID]`. Para un banco de casos, redactar de más es el lado seguro. (iii) Fuera de
+    alcance, fijado: devanagari y bengalí, y los separadores Unicode que el viejo ya declaraba.
+16. **El lint por paquete necesita la toolchain fijada**: `.bin/golangci-lint run ./…/<paquete>/...` a pelo da rc=1 por
+    `typecheck` contra la stdlib de go1.27.1; con `GOTOOLCHAIN=go1.26.5` delante, `0 issues.`. La skill
+    `reconstruir-modulo` lo lleva así desde esta sesión.

@@ -401,9 +401,17 @@ no se tocan; `Conmutados` no cambia; `FaseActual` sigue en 6.
   tests de primer nivel (679 PASS con subtests), **0 SKIP**; candados y arranque rc=0, 955 PASS, 0 SKIP. Mutantes a mano:
   `intake` 115 (1 vivo, equivalente), `anclaje` 22 (0 vivos), `casebank` 6 (0). **No corrido**: las cinco suites contra
   Postgres y `make test-procesos` (F7-05); la integración vieja (no se tocó código compartido).
-- **Hallazgos 1–14** en el [README de F7](plan/F7-captacion/README.md). 🟡 para Jhoan, sin bloquear: el anonimizador
-  viejo de `casebank` deja pasar PII en tres casos (1); la clave de ventana incompleta, que memoria acepta y Postgres
-  rechaza (7). **Siguiente paso: F7-02** (`stages`). `main` sin tocar.
+- **Después del PR, en la misma sesión (D-F7-8, Jhoan)**: se cerraron en el código nuevo los tres agujeros de PII del
+  anonimizador de `casebank` (`1d36dfe` JID pegados, `f08e959` dos teléfonos seguidos, `d88d200` dígitos no ASCII,
+  `cb41b42` tests; nace `anonymize_phones.go`) y la clave de ventana incompleta, que el gemelo de `intake` rechaza ahora
+  como Postgres (`1db9266`; `ContratoQueue` pasa a 17 casos). ≈ 25 min más. **Gates repetidos sobre `cb41b42`**:
+  `make ci-local` rc=0 (199 `ok`, lint `0 issues.`, `FICHEROS_EVALUADOS=268`, `POR_DEBAJO=7`, ninguno de `captacion`);
+  `vet-pendiente` rc=0; `test-pendiente` rc=0, `PENDIENTES=0 · ROJOS=0`; `-race -v` de `captacion` rc=0, 183 tests de
+  primer nivel (863 PASS con subtests), **0 SKIP**; candados y arranque rc=0, 955 PASS, 0 SKIP. Mutantes de los arreglos:
+  `casebank` 24 (1 vivo, equivalente), `intake` 6 (0). Sin efecto en UAT hasta F10 (`cmd/casebank` usa el viejo).
+- **Hallazgos 1–16** en el [README de F7](plan/F7-captacion/README.md). 🟡 para Jhoan, sin bloquear: una excepción viva
+  al invariante del anonimizador (`José.maria@lid`) y los falsos positivos nuevos (15). **Siguiente paso: F7-02**
+  (`stages`). `main` sin tocar.
 
 **F6-06 · F6, cierre local (2026-10-08, 💻, rama `reorg/f6-06-cierre-local` desde `dev` @ `68e68a4`). F6 CERRADA.**
 Sesión de cierre (T6.27–T6.29, T9.27), sin traspaso; los mutantes, por dos sub-agentes en *worktrees*. **Ningún commit de
@@ -1130,7 +1138,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
-- **F7-01 (inventario y hojas de F7)**: rama `reorg/f7-01-inventario-y-hojas`, partida de `origin/dev` @ `8d875ab` (PR #54 dentro); `6c461c6` … `9bbc2dd` (23 commits: 1 de inventario, 4 de rojo, 17 de verde y 1 de test) más el cierre documental; PR hacia `dev`, **integrar sin squash**. Sin *worktrees*.
+- **F7-01 (inventario y hojas de F7)**: rama `reorg/f7-01-inventario-y-hojas`, partida de `origin/dev` @ `8d875ab` (PR #54 dentro); `6c461c6` … `cb41b42` (1 de inventario, 4 de rojo, 17 de verde, 2 de test y 4 `fix` de D-F7-8) más los commits documentales; **PR #55** hacia `dev`, **integrar sin squash**. Sin *worktrees*.
 - **F6-06 (cierre local de F6)**: rama `reorg/f6-06-cierre-local`, partida de `origin/dev` @ `68e68a4` (PR #52 y #53 dentro); **solo** el cierre documental (`docs(reorganizacion-modular): F6 cerrada`); PR hacia `dev`, **integrar sin squash**. Los dos *worktrees* de los sub-agentes de mutantes, borrados. `origin/main` sin tocar.
 - **F6-05** (✎ F6-06: los dos PR, #52 y #53, **integrados** en `dev` @ `68e68a4`, sin squash): **F6-05a**, rama `reorg/f6-05a-cara-solicitudes`, partida de `dev` @ `40dc145`; `2cc4cde` … `6675927` (23 commits: 4 de rojo, 18 de verde y 1 de test) y el cierre documental `72ded2c`; **PR #52**. **F6-05b**, rama `reorg/f6-05b-conmutar-solicitudes`, partida de la anterior @ `72ded2c`; `79f274e` (1 commit de conmutar) y el cierre documental; PR hacia `dev`, **después del #52**. Los dos, **integrar sin squash**. Sin *worktrees* (los cinco de los sub-agentes, borrados). `origin/main` sin tocar.
 - **F6-04**: rama `reorg/f6-04-quotetext-telemetria-integrations-crmpush`, partida de `dev` @ `36d5a04` (PR #48 dentro); `31b9343` … `af68fe3` (15 commits: 11 de verde, 3 de rojo y 1 de fix) y el cierre documental; PR hacia `dev`, **integrar sin squash**. Sin *worktrees*. `origin/main` sin tocar.
@@ -1165,7 +1173,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Para retomar
 
-0. **Siguiente sesión**: **F7-02** ([`F7-02-web-stages`](plan/sesiones/F7-02-web-stages.md): los 10 ficheros de `stages`, con `draft.go` partido por E-13, D-F7-6), cuando el PR de F7-01 esté integrado en `dev`, **sin squash**. Lo que F7-01 deja dicho: cada sub-agente corre el lint de su paquete antes de devolver (hallazgo 13); el fixture de `stages` del caso ámbar se compara con `casebank.AmbarCaseText`; F7-05 corre **cinco** suites contra Postgres (hallazgos 2 y 10). Sigue pendiente de F6 para F7-04: el centinela de H1 (hallazgo 55 de F6, D-F6-13) y el plazo de G7 (59). Para Jhoan, sin bloquear: las 🟡 de los hallazgos 1 y 7 de F7 y la del 63 de F6.
+0. **Siguiente sesión**: **F7-02** ([`F7-02-web-stages`](plan/sesiones/F7-02-web-stages.md): los 10 ficheros de `stages`, con `draft.go` partido por E-13, D-F7-6), cuando el PR de F7-01 esté integrado en `dev`, **sin squash**. Lo que F7-01 deja dicho: cada sub-agente corre el lint de su paquete antes de devolver (hallazgo 13); el fixture de `stages` del caso ámbar se compara con `casebank.AmbarCaseText`; F7-05 corre **cinco** suites contra Postgres (hallazgos 2 y 10). Sigue pendiente de F6 para F7-04: el centinela de H1 (hallazgo 55 de F6, D-F6-13) y el plazo de G7 (59). El lint por paquete lleva `GOTOOLCHAIN=go1.26.5` delante (hallazgo 16). Para Jhoan, sin bloquear: la 🟡 del hallazgo 15 de F7 (excepción viva del anonimizador) y la del 63 de F6.
 1. Lee [`plan/README.md`](plan/README.md) y, si vas a ejecutar, el fichero de tu sesión en
    [`plan/sesiones/`](plan/sesiones/README.md) (él te dice qué más leer).
 2. La norma: [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md).

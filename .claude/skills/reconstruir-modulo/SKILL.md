@@ -65,8 +65,8 @@ internas del módulo: primero las hojas.
 - **Un fichero por commit**, `verde(<m>): <fichero>`. Puedes delegar varios ficheros en paralelo si
   son de paquetes distintos; dentro de un paquete, en serie (comparten `_test` y compilación).
 - 🔴 **El lint, por paquete y antes de devolver** (hallazgo 13 de F7): `make lint` es del árbol entero y lo corres tú al
-  cerrar, pero cada sub-agente corre el de **su** paquete —`GOLANGCI_LINT_CACHE=$PWD/.bin/lint-cache GOWORK=off
-  .bin/golangci-lint run --timeout=5m ./internal/modulos/<m>/<paquete>/...`, rc sin pipe— y lo deja en `0 issues.`. En F7-01
+  cerrar, pero cada sub-agente corre el de **su** paquete —`GOTOOLCHAIN=go1.26.5 GOLANGCI_LINT_CACHE=$PWD/.bin/lint-cache GOWORK=off
+  .bin/golangci-lint run --timeout=5m ./internal/modulos/<m>/<paquete>/...`, rc sin pipe; sin el `GOTOOLCHAIN` da `typecheck` falsos contra go1.27— y lo deja en `0 issues.`. En F7-01
   no se hizo y el cierre costó una pasada extra de gates por 14 avisos, todos en tests.
 - Cada sub-agente vuelve con: el `rc` del test del paquete **leído sin pipe**, la cobertura del
   fichero (informe, no bloquea), y cualquier regla del fichero viejo que decidió no portar (con motivo).
