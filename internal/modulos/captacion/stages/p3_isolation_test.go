@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // Trozo de p3_test.go (E-13): los DESENLACES DE UN ÍTEM — el reintento por calidad, el

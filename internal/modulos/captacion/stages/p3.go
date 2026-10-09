@@ -4,12 +4,15 @@ package stages
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/EduGoGroup/wapp-shared/llm"
 	"github.com/EduGoGroup/wapp-shared/logger"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/evidence"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Motivos por los que un ítem queda AISLADO: no se pudo especificar, pero no se pierde.
@@ -70,13 +73,21 @@ type P3Artifact struct {
 // precios y no crea líneas. `addon_candidates` y `customizations` viajan en campos
 // SEPARADOS, y los rangos («10 o 12 porciones») se conservan TEXTUALES en `variant`:
 // partirlos es de P4 y elegir un número es de nadie.
-type P3 struct{}
+type P3 struct {
+	log    logger.Logger
+	sel    ProviderSelector
+	store  StageStore
+	limits callLimits
+}
 
 // NewP3 construye la etapa. Devuelve ErrNotWired (y etapa nil) si `log`, `sel` o `store`
 // es nil. 🔴 WithCallTimeout acota CADA llamada del fan-out —también el reintento—, no el
 // fan-out entero.
 func NewP3(log logger.Logger, sel ProviderSelector, store StageStore, opts ...Option) (*P3, error) {
-	panic(pendiente.Implementar("stages.NewP3"))
+	if log == nil || sel == nil || store == nil {
+		return nil, ErrNotWired
+	}
+	return &P3{log: log, sel: sel, store: store, limits: newCallLimits(opts)}, nil
 }
 
 // Run ejecuta el fan-out de P3 sobre un job YA RECLAMADO y devuelve el artefacto tal
@@ -126,5 +137,225 @@ func NewP3(log logger.Logger, sel ProviderSelector, store StageStore, opts ...Op
 // se persiste. Ni las marcas ni el log llevan texto del cliente: posiciones y cuentas.
 // Con cualquier error el artefacto devuelto es nil.
 func (s *P3) Run(ctx context.Context, job intake.ClaimedJob, literal string, ideas []llm.Want) (*P3Artifact, error) {
-	panic(pendiente.Implementar("stages.P3.Run"))
+	if literal == "" {
+		return nil, ErrNoLiteral
+	}
+
+	served, leftOver := capIdeas(ideas)
+
+	art := &P3Artifact{Version: llm.ArtifactVersion, Items: make([]llm.ItemSpec, 0, len(served))}
+	if len(served) > 0 {
+		if err := s.fanOut(ctx, job, literal, served, art); err != nil {
+			return nil, err
+		}
+	}
+	s.markOverLimit(art, len(served), leftOver, job.ID)
+
+	if err := s.persist(ctx, job.ID, art); err != nil {
+		return nil, err
+	}
+	// 🔴 `items_sobre_tope` va APARTE de `items_aislados` y no sumado dentro: los dos
+	// estados que caben en «aislado» piden cosas OPUESTAS al dueño —mirar su Ollama, o
+	// hablar con el cliente—, y un solo número mentiría en la mitad de los casos.
+	s.log.Info("p3: especificaciones por ítem extraídas y persistidas",
+		"job_id", job.ID, "stage", intake.StageP3,
+		"ideas", len(ideas), "items", len(art.Items),
+		"items_aislados", len(art.Isolated), "items_sobre_tope", leftOver)
+	return art, nil
+}
+
+// # POR QUÉ EL REINTENTO VIVE AQUÍ Y EN P2 NO
+//
+// P2 hace UNA llamada por job: si sale mal, el worker reintenta el job y no se pierde
+// nada. P3 hace N: reintentar el JOB por un solo ítem envenenado tiraría las 22–32 s
+// que costó cada uno de los otros N−1. El reintento tiene que ser DEL ÍTEM: no es la
+// misma política que la del job, que es del worker.
+//
+// # UNA LLAMADA POR ÍTEM, Y NUNCA UNA POR EL LOTE
+//
+// Mandar los N ítems en un solo prompt sería más barato en plaza y peor en todo lo
+// demás: los modelos chicos funden ítems, se saltan el último y contagian la variante
+// de uno al de al lado (la lección medida que el plan hereda: «ni llamada monstruo ni
+// exceso de micro-llamadas»).
+
+// fanOut recorre las ideas y llena el artefacto. Devuelve error SOLO cuando el fallo es
+// de infraestructura: todo lo demás —salida ilegible, evidencia inventada— se resuelve
+// aislando el ítem y siguiendo.
+//
+// El provider se pide UNA VEZ, fuera del bucle, y no una por ítem: la vía es del tenant
+// y de la sesión de origen, no de la idea, y el selector lee la configuración del
+// tenant. N llamadas a `For` por pedido serían N lecturas para obtener N veces lo mismo.
+//
+// # EL ANCLAJE, CON LA MISMA REGLA QUE P2 Y UNA RESPUESTA DISTINTA
+//
+// La regla es la de `evidence`, la misma y desde el mismo sitio: la frase que el modelo
+// dice haber copiado tiene que aparecer en el literal. La RESPUESTA sí cambia: P2
+// descarta la idea sin respaldo y sigue, y aquí el ítem se AÍSLA con marca. No es una
+// tolerancia distinta, es que la unidad es distinta: en P2 la idea sin respaldo se la
+// acababa de inventar el modelo y no hay nada que perder; aquí P2 YA demostró que el
+// cliente pidió este ítem —su `want` pasó el anclaje—, así que hacerlo desaparecer sería
+// perder una petición real. Aislar es lo conservador; descartar, no.
+//
+// Y NO se reintenta: una evidencia inventada es una salida bien formada que miente, no
+// una salida ilegible, y subir la temperatura no la vuelve honesta. Volver a llamar
+// costaría otras 22–32 s de la plaza única para, con suerte, inventar otra frase.
+func (s *P3) fanOut(ctx context.Context, job intake.ClaimedJob, literal string, ideas []llm.Want, art *P3Artifact) error {
+	prov, err := s.sel.For(ctx, job.Key.TenantID, job.Key.SessionID)
+	if err != nil {
+		return fmt.Errorf("p3: elegir el proveedor del tenant: %w", err)
+	}
+
+	norm := evidence.Normalize(literal)
+	for i := range ideas {
+		spec, reason, err := s.specify(ctx, prov, literal, ideas[i].Idea, job.ID, i)
+		if err != nil {
+			return err
+		}
+		if reason == "" && !evidence.Contains(norm, spec.Evidence) {
+			// El modelo devolvió algo bien formado que no sale del texto del
+			// cliente: ni se reintenta ni se descarta en silencio. Se aísla.
+			// El porqué de las dos cosas, en el docstring de esta función.
+			s.log.Warn("p3: la evidencia del ítem no aparece en el literal del cliente; el ítem queda aislado",
+				"job_id", job.ID, "stage", intake.StageP3, "idea_pos", i)
+			reason = ReasonEvidence
+		}
+		if reason != "" {
+			art.Isolated = append(art.Isolated, IsolatedItem{IdeaPos: i, Reason: reason})
+			continue
+		}
+		art.Items = append(art.Items, *spec)
+	}
+	return nil
+}
+
+// specify (antes `especificar`) resuelve UN ítem. Devuelve, y los tres retornos son
+// excluyentes:
+//
+//   - `(spec, "", nil)` — salió bien;
+//   - `(nil, motivo, nil)` — hay que aislarlo, y el job sigue;
+//   - `(nil, "", err)` — infraestructura: el job entero se suelta.
+//
+// # EL REINTENTO ES EXACTAMENTE UNO, Y SOLO POR CALIDAD
+//
+// Uno porque lo dice REQ-03 («exactamente una vez con temperatura 0.3») y porque cada
+// intento cuesta 22–32 s de la plaza única: un segundo reintento por ítem convertiría un
+// pedido de 5 ítems en 5 minutos de cola ajena. Y solo por calidad porque un fallo de
+// infraestructura (timeout, Edge sin capacidad, socket caído) no se arregla subiendo la
+// temperatura: reintentar una caída de red a los dos segundos es gastar la plaza única
+// en volver a fallar, y aislar el ítem sería peor todavía —dejaría al cliente sin un
+// ítem que el sistema nunca llegó a preguntar—. 🔴 Esa diferencia es la razón de ser de
+// `llm.ErrLLMQuality`, y aquí es donde se paga.
+//
+// La temperatura sube a 0.3 y no a más: lo justo para que el modelo no repita palabra
+// por palabra la misma salida degenerada (el número lo fija el paquete compartido, no
+// esta etapa).
+func (s *P3) specify(ctx context.Context, prov llm.LLMProvider, literal, idea, jobID string, pos int) (*llm.ItemSpec, string, error) {
+	spec, err := s.oneCall(ctx, prov, literal, idea, llm.TemperatureGreedy, jobID, pos)
+	if err == nil {
+		return spec, "", nil
+	}
+	if !errors.Is(err, llm.ErrLLMQuality) {
+		return nil, "", fmt.Errorf("p3: especificar el ítem en la posición %d: %w", pos, err)
+	}
+
+	s.log.Warn("p3: la salida del modelo no es legible; se reintenta UNA vez a temperatura de reintento",
+		"job_id", jobID, "stage", intake.StageP3, "idea_pos", pos)
+
+	spec, err = s.oneCall(ctx, prov, literal, idea, llm.TemperatureRetry, jobID, pos)
+	if err == nil {
+		return spec, "", nil
+	}
+	if !errors.Is(err, llm.ErrLLMQuality) {
+		return nil, "", fmt.Errorf("p3: especificar el ítem en la posición %d (reintento): %w", pos, err)
+	}
+
+	s.log.Warn("p3: la salida sigue sin ser legible tras el reintento; el ítem queda aislado y el resto del pedido sigue",
+		"job_id", jobID, "stage", intake.StageP3, "idea_pos", pos)
+	return nil, ReasonQuality, nil
+}
+
+// oneCall (antes `unaLlamada`) es UNA pasada por el cable y su lectura. El error sale
+// SIN envolver a propósito: quien lo recibe tiene que poder preguntar
+// `errors.Is(err, ErrLLMQuality)` y —si es de transporte— sacarle el motivo de
+// degradación con `errors.As`. Envolverlo aquí con un prefijo por etapa no rompería
+// ninguna de las dos cosas, pero el sitio donde se decide qué es cada error es
+// `specify`, y el prefijo lo pone allí una vez.
+//
+// # DOS SALIDAS BIEN FORMADAS QUE AUN ASÍ SON DEGENERADAS
+//
+//  1. **Cero ítems.** Se pidió UNO y no vino ninguno: `llm.ParseItemSpecs` lo acepta
+//     (su bucle recorre cero elementos) y sería un ítem que desaparece sin marca. Se
+//     trata como fallo de calidad ⇒ reintento y, si persiste, aislamiento. Es
+//     estrictamente más conservador que aceptarlo.
+//  2. **Más de un ítem.** El prompt dice «especifica UN SOLO ítem: ignora los demás,
+//     aunque aparezcan en el texto», y el hilo entero va en el prompt como contexto. Un
+//     modelo chico que lo ignore devolvería en CADA una de las N llamadas los N ítems
+//     ⇒ N² especificaciones y el mismo producto cobrado N veces. Por eso se queda el
+//     PRIMERO y los demás se cuentan en el log: la 1:1 entre idea y spec es lo que
+//     sostiene el `IdeaPos` de la marca, y el lado seguro de romperla es perder una
+//     repetición, nunca duplicar una línea con precio.
+func (s *P3) oneCall(ctx context.Context, prov llm.LLMProvider, literal, idea string, temp float64, jobID string, pos int) (*llm.ItemSpec, error) {
+	raw, err := s.askSpec(ctx, prov, literal, idea, temp)
+	if err != nil {
+		return nil, err
+	}
+
+	specs, err := llm.ParseItemSpecs(raw)
+	if err != nil {
+		// 🔴 El error NO cita `raw`: la salida del modelo lleva frases del cliente.
+		return nil, fmt.Errorf("la salida del modelo no es un artefacto P3 legible: %w", err)
+	}
+	if len(specs.Items) == 0 {
+		return nil, fmt.Errorf("%w: la llamada del ítem no devolvió ninguna especificación", llm.ErrLLMQuality)
+	}
+	if len(specs.Items) > 1 {
+		s.log.Warn("p3: la llamada de un ítem devolvió varias especificaciones; se conserva la primera",
+			"job_id", jobID, "stage", intake.StageP3, "idea_pos", pos, "descartadas", len(specs.Items)-1)
+	}
+	return &specs.Items[0], nil
+}
+
+// askSpec (antes `pedirSpec`) es LA llamada de UN ítem, acotada por SU propio plazo —el
+// de una llamada, no el de las N—. Está extraída para que el `defer cancel()` cierre el
+// plazo donde acaba la llamada y no arrastre el deadline al parseo, al anclaje ni a la
+// persistencia: eso convertiría el plazo por llamada en un plazo por etapa por la
+// puerta de atrás.
+//
+// 🔴 EL PLAZO SE APLICA TAMBIÉN AL REINTENTO por calidad (temperatura 0.3), y tiene
+// que ser así: el reintento es otra llamada de lote de 22–32 s, y dejarlo sin acotar
+// mandaría al Edge un `timeout_ms` distinto —el default de 30 s— para exactamente el
+// mismo trabajo, corrompiendo la señal del breaker justo en el caso raro.
+func (s *P3) askSpec(ctx context.Context, prov llm.LLMProvider, literal, idea string, temp float64) (json.RawMessage, error) {
+	callCtx, cancel := s.limits.bound(ctx)
+	defer cancel()
+	return prov.ExtractItemSpecs(callCtx,
+		llm.ExtractItemSpecsInput{SourceText: literal, Idea: idea},
+		llm.Options{Temperature: temp})
+}
+
+// persist (antes `persistir`) serializa el artefacto y lo deja en la máquina de estados.
+//
+// Se serializa el artefacto DEL CLOUD y no la salida cruda del modelo por el mismo
+// motivo que en P2: lo que se guarda es lo que P4 se va a creer, y guardar el crudo
+// dejaría dentro las specs inventadas —descartadas de boquilla, presentes en la base—.
+//
+// No se revalida el `version` aquí: la puerta es `intake.Artifact.Validate`, dentro de
+// `SaveStage`. Una segunda red con el mismo síntoma taparía a los tests de conducta de
+// la primera.
+func (s *P3) persist(ctx context.Context, jobID string, art *P3Artifact) error {
+	payload, err := json.Marshal(art)
+	if err != nil {
+		return fmt.Errorf("p3: serializar el artefacto: %w", err)
+	}
+	saved, err := s.store.SaveStage(ctx, jobID, intake.Artifact{
+		Stage:   intake.StageP3,
+		Payload: payload,
+	})
+	if err != nil {
+		return fmt.Errorf("p3: persistir el artefacto: %w", err)
+	}
+	if !saved {
+		return ErrJobNotProcessing
+	}
+	return nil
 }
