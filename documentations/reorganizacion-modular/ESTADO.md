@@ -414,6 +414,17 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
 - **Tiempo (D-R-6)**: ≈ 25 min de inventario y plan + ≈ 105 min de pared de ejecución (17:27–19:12; de ellos ≈ 64 el rojo de
   `store` y su suite, ≈ 20 su verde y mutantes, ≈ 20 los gates y las repeticiones del binario viejo). **Se pasó de los 90 min**:
   se siguió porque el verde de `store` ya estaba validado contra Postgres con un port provisional.
+- **Ampliación en el mismo PR (#60), pedida por Jhoan («todas las recomendaciones»)**: decididas **D-F8-7** (el gemelo de `store`
+  imita a Postgres), **D-F8-8** y **D-F8-9** (los exportados de `modules/consulta.go`, en inglés). Dos commits de código, uno
+  por arreglo, cada uno con su caso y comprobado que el caso mata el código de antes: `03d82e9` (`ListResults` de Postgres lee
+  `event_id`) y `2677cb8` (el gemelo rechaza una segunda línea `_shipping`); la suite de `store` pasa a **62** casos. El hallazgo
+  60 de F7 queda corregido con ✎ en su README. **Gates repetidos sobre `2677cb8`**, en serie: `GOWORK=off make ci-local`
+  `CI_LOCAL_RC=0` (217 `ok`, lint `0 issues.`, `FICHEROS_EVALUADOS=322`, `POR_DEBAJO=7`); `make test-pendiente` rc=0,
+  `PENDIENTES=0 · ROJOS=0`; `-v` del código nuevo rc=0, 10.412 PASS, **0 SKIP**; **`make ci-docker` rc=0** (lint `0 issues.`, 0
+  `FAIL`), que no se había corrido; `make test-procesos`: viejo a la primera `RC=0 · PASS=1198 · FAIL=0 · SKIP=0`, nuevo a la
+  segunda con las mismas cifras (la primera, otra vez el `broken pipe` de `TestP6_CRMBridge/callback_body_adversarial`, que hoy
+  falló 2 de 7 pasadas, una por binario); 0 apariciones de «el job no trae literal»; `TestFlowStoreContrato_Postgres` 62/62 en
+  las tres corridas. ≈ 35 min más de pared (D-R-6).
 - **Estado de git**: rama empujada y **PR a `dev`**, «Integrar SIN squash». **Siguiente paso: F8-02** (el motor). `main` sin tocar.
 
 **F7-05 · F7, cierre local (2026-10-09, 💻, rama `reorg/f7-05-cierre` desde `origin/dev` @ `53e8f51`). F7 CERRADA.**

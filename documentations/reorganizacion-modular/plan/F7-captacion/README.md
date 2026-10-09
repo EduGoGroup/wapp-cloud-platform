@@ -597,6 +597,14 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     carrera `CloseWindow` → `PutSourceText` (hallazgo 17, D-F7-9): mismo origen, cierre y sobre no son un solo acto. Lo
     hereda F8 con el agregador.
 
+    > ✎ **Corregido en F8-01 (2026-10-09, leído en el código, no reproducido; detalle en el hallazgo 1 del
+    > [README de F8](../F8-conversacion/README.md))**: la condición de arriba no se sostiene tal como está escrita. Un job con
+    > sobre vacío **no llega** a `Release` ni a `Retry`: `literalDe` (`pipeline/pipeline_chain.go:30,153-163`) corre antes que
+    > la plaza y que la cadena y lo manda a `Fail`. Lo alcanzable por `Release`/`Retry` es **literal perdido**, no marca
+    > cruzada: un job viejo con sobre **lleno** recibe `updated_at = now()`, la subconsulta de `PutSourceText` lo elige y el
+    > `source_text_enc IS NULL` escribe 0 filas. La marca cruzada exige una `pending` con sobre `NULL` de otro origen: un flush
+    > con hilo vacío o composición fallida, o el job de **re-análisis** (`reanalisis/reanalisis.go:377` → `:399`), que repite la
+    > secuencia no atómica y ya está portado. El arreglo de D-F7-9 en el agregador no lo cubre por sí solo.
 61. ✅ **El push de E2 sobrevive a la cancelación de la petición** (F7-05, en el mismo PR #59; D-F7-12, decisión de Jhoan
     del 2026-10-09 sobre el hallazgo 43 (c)). `b0056a4` (rojo) y `a1a19ed` (verde). En `internal/apipublica/intents.go` el
     push best-effort de `PUT /api/v1/intents` deja de ir con `r.Context()`: va con

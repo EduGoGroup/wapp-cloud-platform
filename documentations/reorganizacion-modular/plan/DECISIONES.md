@@ -191,6 +191,9 @@ esta decisión no arranca nada de F2 en adelante (ni F9-B).
 | D-F8-4 | La regla «events sin clasificador» pasa a `fronteras_test.go` | Sí | F8 bloque C | sí (2026-09-30) |
 | D-F8-5 | El ciclo `conversacion` ↔ `captacion` va a la lista blanca, arista a arista | Sí | F8 bloque K | sí (2026-09-30) |
 | D-F8-6 | Las deudas D-16 y D-17 se portan como están | Sí | F8 | sí (2026-09-30) |
+| D-F8-7 | *(F8-01, hallazgo 6 del README de F8)* El gemelo en memoria de `conversacion/store` **imita a Postgres** en tres puntos donde el viejo divergía: `UpsertIntake` no escribe `CustomerNote`; `GetOpenIntake` y `GetIntakeByEvent` devuelven `CustomerNote ""`; y con varias `open` del mismo contacto se elige la más reciente por `created_at` (el viejo: la primera del recorrido del mapa, no determinista) | Sí: un doble que promete lo que producción no hace es peor que uno que diverge del viejo | F8-01 | sí (2026-10-09, «todas las recomendaciones») |
+| D-F8-8 | *(F8-01, hallazgo 7)* Dos arreglos deliberados respecto del viejo en `conversacion/store`, cada uno en su commit y con su caso en la suite: `ListResults` de Postgres **lee `event_id`** (NULL de legado → `""`; el único consumidor, `runtime/summary_sources.go:104`, no lo usa), `03d82e9`; y el gemelo **rechaza una segunda línea `_shipping`** sin cambiar nada, como `intake_items_shipping_uniq`, `2677cb8`. Las otras dos conductas del hallazgo (el `EventID ""` inalcanzable en `UpsertIntake` y el comentario de `CloseIntake` que no casaba con su código) **no llevan código**: el contrato nuevo dice lo real | Sí | F8-01 | sí (2026-10-09) |
+| D-F8-9 | *(F8-01, hallazgo 13)* Los exportados en español de `modules/consulta.go` pasan al **inglés** por E-11 (`Consulta` → `Query`, `Veredicto` → `Verdict`…; tabla en `F8-conversacion/tareas.md`); el fichero conserva su nombre y los valores observables no cambian | Sí: es lo que manda E-11 y aún nadie los consume | F8-01 | sí (2026-10-09) |
 
 ## 6 · Antes del relevo (F10)
 

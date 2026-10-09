@@ -166,7 +166,7 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
 5. **(F8-01) `bridge_contact_test.go` tiene 809 líneas**, sobre el tope de E-13; muere con el adaptador (T8.32).
 
 6. **(F8-01, `store`) Tres divergencias deliberadas del gemelo en memoria: ahora imita a Postgres** (cada una con su comentario
-   «Divergencia deliberada del viejo, F8-01» y su caso en la suite; vetables): (a) `UpsertIntake` ya no escribe `CustomerNote`
+   «Divergencia deliberada del viejo, F8-01» y su caso en la suite; ✅ **aceptadas por Jhoan, D-F8-7**): (a) `UpsertIntake` ya no escribe `CustomerNote`
    (el viejo, `flujos/store/repository_memory.go:518`, guardaba la del argumento y borraba la de una cerrada; el SQL,
    `repository_postgres.go:581-594`, ni nombra la columna); (b) `GetOpenIntake` y `GetIntakeByEvent` devuelven `CustomerNote ""`,
    como la proyección de cabecera (`:759`); (c) con varias `open` del mismo contacto, `GetOpenIntake` y `CloseIntake` eligen la
@@ -178,7 +178,7 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
    falla siempre en Postgres (NOT NULL de la 0055), así que el «ni con NULL lo pisa» del `COALESCE` es inalcanzable;
    reescribir una línea `_shipping` ya existente viola `intake_items_shipping_uniq` en Postgres y memoria la duplica; y el
    comentario de `CloseIntake` («el segundo la ve ya closed y no crea otra», `:673-675`) no es lo que hace el código: N
-   cierres con N eventos dan N solicitudes `closed` (la suite fija lo real). 🟡 Los cuatro, por analizar con Jhoan; ninguno bloquea.
+   cierres con N eventos dan N solicitudes `closed` (la suite fija lo real). ✅ **Decidido por Jhoan (D-F8-8, 2026-10-09)**: `ListResults` de Postgres ya lee `event_id` (`03d82e9`) y el gemelo rechaza la segunda `_shipping` (`2677cb8`), cada uno con su caso (la suite pasa de 61 a **62** casos) y comprobado que el caso mata el código de antes; los otros dos no llevan código.
 8. **(F8-01, `store`) Los 18 tests viejos no fijaban ninguna carrera** (ni una goroutine). La suite añade tres (versionado,
    cierre, bienvenida), y el montaje de Postgres **precalienta el pool** (16 conexiones): sin eso las llamadas salían
    escalonadas y el mutante «`CloseIntake` sin `FOR UPDATE`» sobrevivía.
@@ -199,8 +199,7 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     `AsInt` no acepta `float32` y `AsFloat` sí (`coerce.go:10-37`): asimetría portada y fijada. Los tests viejos de
     `exit_menu_test.go:197-283` (prueban `menu.New()`/`survey.New()`) son de F8-02.
 13. **(F8-01, E-11) `modules/consulta.go` pasa sus exportados al inglés** (`Consulta` → `Query`, `Veredicto` → `Verdict`…):
-    tabla en [`tareas.md`](tareas.md), antes del bloque 2. Si Jhoan los prefiere en español, es un renombre mecánico mientras
-    nadie los consuma (F8-02 es el primero).
+    tabla en [`tareas.md`](tareas.md), antes del bloque 2. ✅ **Se quedan en inglés (D-F8-9, 2026-10-09).**
 
 14. **(F8-01, gates) El binario viejo necesitó cuatro pasadas de `make test-procesos`**; el nuevo pasó a la primera. Las tres rojas,
     por intermitencias ya conocidas (hallazgos 17 y 62 de F7), ninguna en las suites nuevas: (1) `TestP6_CRMBridge/callback_body_adversarial`,
@@ -211,6 +210,8 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     veces seguidas contra el **viejo**, en P4 y en P6, con la máquina cargada (load ≈ 11–13, ajeno a los gates). No reproducida a
     propósito ni arreglada aquí; es de F8-04/F8-05. Sin medir: si las dos suites nuevas (≈ 9 s más de Postgres por binario) la hacen
     más probable.
+    ✎ En la ampliación (sobre `2677cb8`) el `broken pipe` de `callback_body_adversarial` volvió a salir, esta vez contra el
+    **nuevo**: 2 de 7 pasadas en el día, una por binario. La carrera de D-F7-9 no volvió a aparecer (0 de 3).
 
 ## Orden de lectura
 
