@@ -48,13 +48,15 @@ package stages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/EduGoGroup/wapp-shared/llm"
 	"github.com/EduGoGroup/wapp-shared/logger"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/evidence"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // ProviderSelector traduce un tenant en el llm.LLMProvider de SU vía. Lo satisface
@@ -108,13 +110,21 @@ var ErrJobNotProcessing = errors.New("stages: el job ya no estaba en processing;
 // P2 es la etapa de las IDEAS PRINCIPALES: del literal acumulado de la ventana saca una
 // entrada por cada cosa distinta que el cliente pide, más la pista de entrega si la
 // dijo. Lo que P2 no vea, P3 no lo especificará nunca.
-type P2 struct{}
+type P2 struct {
+	log    logger.Logger
+	sel    ProviderSelector
+	store  StageStore
+	limits callLimits
+}
 
 // NewP2 construye la etapa. Devuelve ErrNotWired (y etapa nil) si `log`, `sel` o `store`
 // es nil. Las opciones son las de las etapas LLM (WithCallTimeout): sin ninguna, la
 // llamada hereda el ctx del llamante.
 func NewP2(log logger.Logger, sel ProviderSelector, store StageStore, opts ...Option) (*P2, error) {
-	panic(pendiente.Implementar("stages.NewP2"))
+	if log == nil || sel == nil || store == nil {
+		return nil, ErrNotWired
+	}
+	return &P2{log: log, sel: sel, store: store, limits: newCallLimits(opts)}, nil
 }
 
 // Run ejecuta P2 sobre un job YA RECLAMADO y devuelve el artefacto tal como quedó
@@ -149,5 +159,122 @@ func NewP2(log logger.Logger, sel ProviderSelector, store StageStore, opts ...Op
 //
 // Con cualquier error el artefacto devuelto es nil.
 func (s *P2) Run(ctx context.Context, job intake.ClaimedJob, literal string) (*llm.MainIdeas, error) {
-	panic(pendiente.Implementar("stages.P2.Run"))
+	if literal == "" {
+		return nil, ErrNoLiteral
+	}
+
+	prov, err := s.sel.For(ctx, job.Key.TenantID, job.Key.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("p2: elegir el proveedor del tenant: %w", err)
+	}
+
+	// UNA pasada. El reintento por calidad es del worker y el techo de tokens de
+	// salida lo pone el adaptador por etapa: aquí no se decide ninguno de los dos.
+	raw, err := s.askIdeas(ctx, prov, literal)
+	if err != nil {
+		return nil, err
+	}
+
+	ideas, err := llm.ParseMainIdeas(raw)
+	if err != nil {
+		// El error NO cita `raw`: la salida del modelo lleva frases del cliente.
+		return nil, fmt.Errorf("p2: la salida del modelo no es un artefacto P2 legible: %w", err)
+	}
+
+	dropped := s.anchor(ideas, literal, job.ID)
+
+	payload, err := json.Marshal(ideas)
+	if err != nil {
+		return nil, fmt.Errorf("p2: serializar el artefacto: %w", err)
+	}
+
+	// El artefacto lleva `version` porque ParseMainIdeas ya rechazó cualquier otra
+	// cosa: `llm.MainIdeas.Version` viene comprobada contra `llm.ArtifactVersion`. NO
+	// se vuelve a validar aquí —`SaveStage` lo hace, y es su puerta— porque una
+	// segunda red con el mismo síntoma taparía a los tests de conducta de la primera.
+	saved, err := s.store.SaveStage(ctx, job.ID, intake.Artifact{
+		Stage:   intake.StageP2,
+		Payload: payload,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("p2: persistir el artefacto: %w", err)
+	}
+	if !saved {
+		return nil, ErrJobNotProcessing
+	}
+
+	s.log.Info("p2: ideas principales extraídas y persistidas",
+		"job_id", job.ID, "stage", intake.StageP2,
+		"ideas", len(ideas.Wants), "ideas_descartadas", dropped,
+		"con_pista_de_entrega", ideas.DeliveryHint != nil)
+	return ideas, nil
+}
+
+// # EL ANCLAJE, QUE ES EL CORAZÓN DE LA ETAPA
+//
+// 🔴 DESCARTAR UNA IDEA NO TUMBA EL JOB, y esto no es una tolerancia: es el diseño
+// conservador de la ola. Una salida malformada del modelo no puede costarle al cliente
+// su solicitud —lo que queda vivo se cotiza, y lo que falte lo verá el dueño en la
+// bandeja, que es quien aprueba—. Tumbar el job devolvería el sistema al 7 h 28 min que
+// este plan existe para borrar. Un artefacto con `wants` VACÍO es válido y se persiste
+// igual («cero resultados válidos tampoco es fatal», design §3.2).
+//
+// # POR QUÉ SE VUELVE A SERIALIZAR EN VEZ DE GUARDAR LO QUE DIJO EL MODELO
+//
+// Porque lo que se persiste es lo que P3 va a creerse. Guardar el JSON crudo dejaría
+// las ideas inventadas dentro del artefacto —descartadas de boquilla, presentes en la
+// base— y el siguiente lector no tendría forma de saber cuáles pasaron el anclaje.
+
+// askIdeas (antes `pedirIdeas`) es LA llamada de P2, acotada por su propio plazo. Está
+// extraída de Run —en vez de un `defer cancel()` dentro de Run— porque el ctx acotado
+// NO debe seguir vivo mientras se ancla y se persiste: la persistencia es una escritura
+// a la base y heredar el deadline del modelo la mataría a mitad, dejando el artefacto
+// en el aire. El `defer` de una función corta es lo que hace que el plazo acabe DONDE
+// acaba la llamada.
+func (s *P2) askIdeas(ctx context.Context, prov llm.LLMProvider, literal string) (json.RawMessage, error) {
+	callCtx, cancel := s.limits.bound(ctx)
+	defer cancel()
+	raw, err := prov.ExtractMainIdeas(callCtx,
+		llm.ExtractMainIdeasInput{SourceText: literal},
+		llm.Options{Temperature: llm.TemperatureGreedy})
+	if err != nil {
+		return nil, fmt.Errorf("p2: pedir las ideas principales: %w", err)
+	}
+	return raw, nil
+}
+
+// anchor (antes `anclar`) quita del artefacto todo lo que el literal no respalda y
+// devuelve cuántas ideas se cayeron. Modifica `ideas` in situ a propósito: lo que sale
+// de aquí es lo único que se persiste y lo único que P3 verá, y dejar dentro las
+// inventadas «por si acaso» sería dejar la puerta abierta a que alguien las lea sin
+// saber que no valen.
+//
+// La pista de entrega se ancla con la MISMA regla y con la misma respuesta —si su
+// evidencia no aparece, se cae la pista y el resto sigue vivo—. `delivery_hint` trae
+// `evidence` por el mismo motivo que las ideas (design §7.1) y una fecha inventada es
+// peor que ninguna, porque P4 la convertiría en una fecha absoluta con toda la cara de
+// ser cierta.
+func (s *P2) anchor(ideas *llm.MainIdeas, literal, jobID string) int {
+	norm := evidence.Normalize(literal)
+
+	alive := make([]llm.Want, 0, len(ideas.Wants))
+	dropped := 0
+	for i := range ideas.Wants {
+		if evidence.Contains(norm, ideas.Wants[i].Evidence) {
+			alive = append(alive, ideas.Wants[i])
+			continue
+		}
+		dropped++
+		// Solo el ÍNDICE: ni la idea ni la evidencia salen por el log.
+		s.log.Warn("p2: la evidencia de una idea no aparece en el literal del cliente; la idea se descarta",
+			"job_id", jobID, "stage", intake.StageP2, "idea_pos", i)
+	}
+	ideas.Wants = alive
+
+	if ideas.DeliveryHint != nil && !evidence.Contains(norm, ideas.DeliveryHint.Evidence) {
+		ideas.DeliveryHint = nil
+		s.log.Warn("p2: la evidencia de la pista de entrega no aparece en el literal del cliente; la pista se descarta",
+			"job_id", jobID, "stage", intake.StageP2)
+	}
+	return dropped
 }

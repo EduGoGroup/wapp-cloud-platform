@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // doubles_test.go — LOS DOBLES COMUNES de los tests de las etapas (sin fichero de
