@@ -2,10 +2,6 @@
 //
 // Trozo de store.go (05 E-13): el contenido de negocio por tenant (tenant_content) y
 // su versionado (tenant_content_versions). Solo declaraciones movidas.
-//
-// El auxiliar no exportado que valida la procedencia contra el conjunto cerrado
-// (validVersionSource en el viejo) nace con el verde de los adaptadores, que son
-// quienes lo usan: en el rojo no puede existir (lint `unused`).
 
 package store
 
@@ -91,6 +87,17 @@ type TenantContentVersioner interface {
 	// archivar: el primer import sobre una ref vacía escribe y no versiona
 	// (D-041.8; «no hay versiones» y «no hay contenido» son casos distintos).
 	ReplaceTenantContentVersioned(ctx context.Context, tenantID, ref string, blob []byte, source string) (archived int, err error)
+}
+
+// validVersionSource comprueba la procedencia contra el conjunto cerrado del
+// CHECK de la 0044.
+func validVersionSource(source string) bool {
+	switch source {
+	case VersionSourceImportJSON, VersionSourceImportTabular, VersionSourceManual:
+		return true
+	default:
+		return false
+	}
 }
 
 // ErrTenantContentNotFound lo devuelve GetTenantContent cuando no existe blob de

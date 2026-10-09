@@ -11,9 +11,24 @@ package store
 
 import (
 	"context"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
 )
+
+// contentKey compone la clave (tenant_id, ref) del índice de contenido, imitando
+// la PK compuesta de tenant_content.
+func contentKey(tenantID, ref string) string {
+	return tenantID + "\x00" + ref
+}
+
+// tcMeta son las marcas de tiempo de un blob de tenant_content en el repo memoria
+// (Plan 018 · T6): created se fija en el alta, updated en cada escritura.
+type tcMeta struct {
+	created time.Time
+	updated time.Time
+}
 
 // GetTenantContent implementa Repository / content.Store: devuelve el blob JSON
 // crudo sembrado para (tenantID, ref). ErrTenantContentNotFound si no existe.
@@ -21,7 +36,15 @@ import (
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "%w: tenant=%s ref=%s"
 func (r *MemoryRepository) GetTenantContent(ctx context.Context, tenantID, ref string) ([]byte, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.GetTenantContent"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	blob, ok := r.content[contentKey(tenantID, ref)]
+	if !ok {
+		return nil, fmt.Errorf("%w: tenant=%s ref=%s", ErrTenantContentNotFound, tenantID, ref)
+	}
+	out := make([]byte, len(blob))
+	copy(out, blob)
+	return out, nil
 }
 
 // SetTenantContent siembra un blob de contenido para (tenantID, ref). Es un
@@ -30,7 +53,11 @@ func (r *MemoryRepository) GetTenantContent(ctx context.Context, tenantID, ref s
 // versión y SIN fechar: una ref sembrada así sale en ListTenantContent con sus marcas
 // de tiempo a cero (o con las que ya tuviera de un UpsertTenantContent anterior).
 func (r *MemoryRepository) SetTenantContent(tenantID, ref string, blob []byte) {
-	panic(pendiente.Implementar("store.MemoryRepository.SetTenantContent"))
+	stored := make([]byte, len(blob))
+	copy(stored, blob)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.content[contentKey(tenantID, ref)] = stored
 }
 
 // UpsertTenantContent inserta o actualiza (upsert por (tenant_id, ref)) el blob de
@@ -41,7 +68,20 @@ func (r *MemoryRepository) SetTenantContent(tenantID, ref string, blob []byte) {
 // de ReplaceTenantContentVersioned. No valida que el blob sea JSON. Nunca devuelve
 // error.
 func (r *MemoryRepository) UpsertTenantContent(ctx context.Context, tenantID, ref string, blob []byte) error {
-	panic(pendiente.Implementar("store.MemoryRepository.UpsertTenantContent"))
+	stored := make([]byte, len(blob))
+	copy(stored, blob)
+	k := contentKey(tenantID, ref)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now().UTC()
+	r.content[k] = stored
+	meta := r.contentMeta[k]
+	if meta.created.IsZero() {
+		meta.created = now
+	}
+	meta.updated = now
+	r.contentMeta[k] = meta
+	return nil
 }
 
 // ReplaceTenantContentVersioned implementa TenantContentVersioner en memoria:
@@ -64,7 +104,35 @@ func (r *MemoryRepository) UpsertTenantContent(ctx context.Context, tenantID, re
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "%w: %q"
 func (r *MemoryRepository) ReplaceTenantContentVersioned(ctx context.Context, tenantID, ref string, blob []byte, source string) (int, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.ReplaceTenantContentVersioned"))
+	if !validVersionSource(source) {
+		return 0, fmt.Errorf("%w: %q", ErrInvalidVersionSource, source)
+	}
+	stored := make([]byte, len(blob))
+	copy(stored, blob)
+	k := contentKey(tenantID, ref)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now().UTC()
+
+	archived := 0
+	if current, ok := r.content[k]; ok {
+		archived = len(r.contentVersions[k]) + 1
+		kept := make([]byte, len(current))
+		copy(kept, current)
+		r.contentVersions[k] = append(r.contentVersions[k], TenantContentVersion{
+			Version: archived, Content: kept, Source: source, CreatedAt: now,
+		})
+	}
+
+	r.content[k] = stored
+	meta := r.contentMeta[k]
+	if meta.created.IsZero() {
+		meta.created = now
+	}
+	meta.updated = now
+	r.contentMeta[k] = meta
+	return archived, nil
 }
 
 // TenantContentVersions devuelve las versiones archivadas de (tenantID, ref) en
@@ -72,7 +140,18 @@ func (r *MemoryRepository) ReplaceTenantContentVersioned(ctx context.Context, te
 // copia los blobs para no compartir el backing array con el llamante. Sin versiones,
 // lista vacía.
 func (r *MemoryRepository) TenantContentVersions(tenantID, ref string) []TenantContentVersion {
-	panic(pendiente.Implementar("store.MemoryRepository.TenantContentVersions"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stored := r.contentVersions[contentKey(tenantID, ref)]
+	out := make([]TenantContentVersion, 0, len(stored))
+	for _, v := range stored {
+		content := make([]byte, len(v.Content))
+		copy(content, v.Content)
+		out = append(out, TenantContentVersion{
+			Version: v.Version, Content: content, Source: v.Source, CreatedAt: v.CreatedAt,
+		})
+	}
+	return out
 }
 
 // ListTenantContent devuelve las cabeceras (ref + timestamps) de los blobs del
@@ -80,7 +159,23 @@ func (r *MemoryRepository) TenantContentVersions(tenantID, ref string) []TenantC
 // public.tenant_content (Plan 018 · T6). Solo del tenant dado (aislamiento INV-8):
 // un blob de OTRO tenant nunca aparece.
 func (r *MemoryRepository) ListTenantContent(ctx context.Context, tenantID string) ([]TenantContentSummary, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.ListTenantContent"))
+	prefix := tenantID + "\x00"
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]TenantContentSummary, 0)
+	for k := range r.content {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		meta := r.contentMeta[k]
+		out = append(out, TenantContentSummary{
+			Ref:       strings.TrimPrefix(k, prefix),
+			CreatedAt: meta.created,
+			UpdatedAt: meta.updated,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ref < out[j].Ref })
+	return out, nil
 }
 
 // DeleteTenantContent borra el blob (tenant_id, ref). Devuelve
@@ -90,5 +185,13 @@ func (r *MemoryRepository) ListTenantContent(ctx context.Context, tenantID strin
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "%w: tenant=%s ref=%s"
 func (r *MemoryRepository) DeleteTenantContent(ctx context.Context, tenantID, ref string) error {
-	panic(pendiente.Implementar("store.MemoryRepository.DeleteTenantContent"))
+	k := contentKey(tenantID, ref)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.content[k]; !ok {
+		return fmt.Errorf("%w: tenant=%s ref=%s", ErrTenantContentNotFound, tenantID, ref)
+	}
+	delete(r.content, k)
+	delete(r.contentMeta, k)
+	return nil
 }

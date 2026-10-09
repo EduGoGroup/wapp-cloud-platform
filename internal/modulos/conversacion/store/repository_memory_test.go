@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package store_test
 
 import (
@@ -17,7 +15,8 @@ import (
 
 // Los tests de MemoryRepository son EXTERNOS (package store_test): storehelpertest importa store,
 // así que un test interno que importara la suite daría un ciclo de imports. Este fichero trae el
-// Montaje y los auxiliares que comparten los repository_memory_*_test.go.
+// reloj de test y los auxiliares que comparten los repository_memory_*_test.go; el Montaje de la
+// suite está en repository_memory_contrato_test.go.
 //
 // La suite común (storehelpertest.Contrato) afirma lo que el gemelo comparte con Postgres. Los
 // demás tests de estos ficheros afirman lo que es SOLO del gemelo: sus mutadores y miradores, el
@@ -77,55 +76,6 @@ func newMemoryRepository() (*store.MemoryRepository, *testClock) {
 	return repo, clock
 }
 
-// ofTenant filtra por tenant lo que un mirador del gemelo devuelve de todos.
-func ofTenant[T any](all []T, tenant string, tenantOf func(T) string) []T {
-	out := make([]T, 0, len(all))
-	for _, v := range all {
-		if tenantOf(v) == tenant {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
-// TestMemoryRepository_Contrato corre la suite de la persistencia del motor de flujos contra
-// MemoryRepository, sin BD y sin reloj real: cada caso monta un repositorio nuevo con su reloj, y
-// Advance lo adelanta un segundo. Los observadores son los miradores del gemelo.
-func TestMemoryRepository_Contrato(t *testing.T) {
-	storehelpertest.Contrato(t, func(*testing.T) storehelpertest.Montaje {
-		repo, clock := newMemoryRepository()
-		return storehelpertest.Montaje{
-			Store:    repo,
-			TenantA:  uuid.NewString(),
-			TenantB:  uuid.NewString(),
-			NewEvent: func(*testing.T, string) string { return uuid.NewString() },
-			SetSettings: func(_ *testing.T, s storehelpertest.Settings) {
-				repo.SetTenantSettings(s)
-			},
-			FlowEvents: func(_ *testing.T, tenantID string) []storehelpertest.FlowEvent {
-				return ofTenant(repo.FlowEvents(), tenantID, func(e store.FlowEvent) string { return e.TenantID })
-			},
-			SurveyResults: func(_ *testing.T, tenantID string) []storehelpertest.SurveyResult {
-				return ofTenant(repo.SurveyResults(), tenantID, func(r store.SurveyResult) string { return r.TenantID })
-			},
-			ContentVersions: func(_ *testing.T, tenantID, ref string) []storehelpertest.ContentVersion {
-				return repo.TenantContentVersions(tenantID, ref)
-			},
-			Intakes: func(_ *testing.T, tenantID string) []storehelpertest.Intake {
-				return ofTenant(repo.Intakes(), tenantID, func(in store.Intake) string { return in.TenantID })
-			},
-			IntakeItems: func(_ *testing.T, intakeID string) []storehelpertest.IntakeItem {
-				return repo.IntakeItems(intakeID)
-			},
-			Welcome: func(_ *testing.T, tenantID, sessionID, contactID string) storehelpertest.WelcomeMark {
-				return repo.Welcome(store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID})
-			},
-			Now:     func(*testing.T) time.Time { return clock.Now() },
-			Advance: func(*testing.T) { clock.Advance(time.Second) },
-		}
-	})
-}
-
 // conversation es un estado mínimo de esa clave en ese nodo.
 func conversation(k store.Key, node string) model.Conversation {
 	return model.Conversation{TenantID: k.TenantID, SessionID: k.SessionID, ContactID: k.ContactID,
@@ -157,7 +107,7 @@ func nodeAt(t *testing.T, repo *store.MemoryRepository, k store.Key) string {
 // SetClock, fecha con el reloj del proceso (un instante que no es cero).
 func TestNewMemoryRepository_EmptyAndUsesTheProcessClock(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	if n := len(repo.FlowEvents()) + len(repo.SurveyResults()) + len(repo.Intakes()); n != 0 {
+	if n := len(repo.FlowEvents()) + len(repo.SurveyResults()); n != 0 {
 		t.Errorf("un repositorio nuevo trae %d filas, quería ninguna", n)
 	}
 	k := store.Key{TenantID: "t1", SessionID: "s1", ContactID: "573001112233"}

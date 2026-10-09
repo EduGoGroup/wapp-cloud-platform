@@ -33,10 +33,14 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // MemoryRepository es una implementación en memoria de Repository, WelcomeStore y
@@ -58,17 +62,71 @@ import (
 // tests; MigrateContactID satisface contact.StateMigrator y lo llama el resolver de
 // contactos EN MEMORIA durante la fusión (que también es un doble de tests: el
 // resolver Postgres migra el estado en SQL, dentro de su transacción).
-//
-// En el rojo no lleva campos. El verde le pone el mutex, el reloj y un índice por
-// tabla imitada.
-type MemoryRepository struct{}
+type MemoryRepository struct {
+	mu sync.Mutex
+	// now es el reloj con el que el repositorio fecha lo que escribe (SetClock). Se lee SIEMPRE con
+	// el mutex tomado.
+	now   func() time.Time
+	state map[string]model.Conversation
+	// defs indexa (tenant_id, flow_id) → versión → definición.
+	defs map[string]map[int]model.Flow
+	// maxVer guarda la versión máxima asignada por (tenant_id, flow_id).
+	maxVer map[string]int
+	// results acumula (append-only) las respuestas de encuesta persistidas por
+	// InsertResults; imita survey_results (Plan 014 §10.D). Consultable en tests
+	// vía SurveyResults().
+	results []SurveyResult
+	// flowEvents acumula (append-only) los efectos persistidos por
+	// InsertFlowEvent; imita el outbox flow_events (Plan 015 · T2). Consultable en
+	// tests vía FlowEvents().
+	flowEvents []FlowEvent
+	// content indexa (tenant_id, ref) → blob JSON crudo; imita tenant_content
+	// (Plan 015 · T2). Sembrable en tests vía SetTenantContent; leído por
+	// GetTenantContent.
+	content map[string][]byte
+	// contentMeta indexa (tenant_id, ref) → marcas de tiempo del blob de
+	// tenant_content (Plan 018 · T6), en paralelo a content. Lo escribe
+	// UpsertTenantContent y lo lee ListTenantContent (created/updated_at).
+	contentMeta map[string]tcMeta
+	// contentVersions indexa (tenant_id, ref) → versiones archivadas en orden de
+	// archivado; imita public.tenant_content_versions (Plan 041 · T3.3). Lo escribe
+	// ReplaceTenantContentVersioned y lo consultan los tests vía
+	// TenantContentVersions.
+	contentVersions map[string][]TenantContentVersion
+	// intakes indexa intake_id → solicitud; imita public.intakes (Plan 016 · T0).
+	// Consultable en tests vía Intakes().
+	intakes map[string]Intake
+	// intakeItems indexa intake_id → líneas (append-only); imita public.intake_items
+	// (Plan 016 · T0). Consultable en tests vía IntakeItems(intakeID).
+	intakeItems map[string][]IntakeItem
+	// settings indexa tenant_id → config; imita public.tenant_settings (Plan 016 ·
+	// T0). Sembrable en tests vía SetTenantSettings; leído por GetTenantSettings
+	// (defaults si no hay fila).
+	settings map[string]TenantSettings
+	// welcomes indexa la clave conversacional → estado de la bienvenida única; imita
+	// public.conversation_welcomes (Plan 044 · T1.8-2). Lo escriben TouchContact y
+	// MarkWelcomed; los tests lo leen con Welcome(key).
+	welcomes map[string]WelcomeMark
+}
 
 // NewMemoryRepository crea un repositorio en memoria vacío y listo para usar: ningún
 // tenant tiene conversaciones, definiciones, contenido, solicitudes, configuración ni
 // bienvenidas, y el reloj es el del proceso (time.Now) mientras no se inyecte otro con
 // SetClock.
 func NewMemoryRepository() *MemoryRepository {
-	panic(pendiente.Implementar("store.NewMemoryRepository"))
+	return &MemoryRepository{
+		now:             time.Now,
+		state:           make(map[string]model.Conversation),
+		defs:            make(map[string]map[int]model.Flow),
+		maxVer:          make(map[string]int),
+		content:         make(map[string][]byte),
+		contentMeta:     make(map[string]tcMeta),
+		contentVersions: make(map[string][]TenantContentVersion),
+		intakes:         make(map[string]Intake),
+		intakeItems:     make(map[string][]IntakeItem),
+		settings:        make(map[string]TenantSettings),
+		welcomes:        make(map[string]WelcomeMark),
+	}
 }
 
 // SetClock fija el reloj del repositorio. Desde la llamada, todo lo que el repositorio
@@ -82,12 +140,41 @@ func NewMemoryRepository() *MemoryRepository {
 // Nuevo respecto al viejo, que llamaba a time.Now() en ocho sitios (precedente:
 // intakes.MemoryStore.SetClock).
 func (r *MemoryRepository) SetClock(now func() time.Time) {
-	panic(pendiente.Implementar("store.MemoryRepository.SetClock"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if now != nil {
+		r.now = now
+	}
+}
+
+func stateKey(k Key) string {
+	return k.TenantID + "\x00" + k.SessionID + "\x00" + k.ContactID
+}
+
+func defKey(tenantID, flowID string) string {
+	return tenantID + "\x00" + flowID
+}
+
+// cloneConversation hace una copia profunda vía JSON (mismo round-trip que la
+// persistencia JSONB), para no compartir el mapa Vars con el llamante.
+func cloneConversation(c model.Conversation) (model.Conversation, error) {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return model.Conversation{}, err
+	}
+	var out model.Conversation
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return model.Conversation{}, err
+	}
+	return out, nil
 }
 
 // Exists implementa Repository.
 func (r *MemoryRepository) Exists(ctx context.Context, key Key) (bool, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.Exists"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.state[stateKey(key)]
+	return ok, nil
 }
 
 // Load implementa Repository.
@@ -95,7 +182,17 @@ func (r *MemoryRepository) Exists(ctx context.Context, key Key) (bool, error) {
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "store: clonar estado: %w"
 func (r *MemoryRepository) Load(ctx context.Context, key Key) (model.Conversation, bool, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.Load"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.state[stateKey(key)]
+	if !ok {
+		return model.Conversation{}, false, nil
+	}
+	clone, err := cloneConversation(st)
+	if err != nil {
+		return model.Conversation{}, false, fmt.Errorf("store: clonar estado: %w", err)
+	}
+	return clone, true, nil
 }
 
 // Save implementa Repository (upsert por la clave conversacional). Estampa
@@ -120,13 +217,25 @@ func (r *MemoryRepository) Load(ctx context.Context, key Key) (model.Conversatio
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "store: clonar estado: %w"
 func (r *MemoryRepository) Save(ctx context.Context, state model.Conversation) error {
-	panic(pendiente.Implementar("store.MemoryRepository.Save"))
+	clone, err := cloneConversation(state)
+	if err != nil {
+		return fmt.Errorf("store: clonar estado: %w", err)
+	}
+	key := Key{TenantID: state.TenantID, SessionID: state.SessionID, ContactID: state.ContactID}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	clone.UpdatedAt = r.now()
+	r.state[stateKey(key)] = clone
+	return nil
 }
 
 // Delete implementa Repository: elimina el estado de la clave (idempotente; si no
 // existe es un no-op sin error, misma semántica que el DELETE sin filas).
 func (r *MemoryRepository) Delete(ctx context.Context, key Key) error {
-	panic(pendiente.Implementar("store.MemoryRepository.Delete"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.state, stateKey(key))
+	return nil
 }
 
 // MigrateContactID re-clava el estado conversacional del contact_id `from` al
@@ -140,7 +249,23 @@ func (r *MemoryRepository) Delete(ctx context.Context, key Key) error {
 // Sin estado de `from` es un no-op. Nunca devuelve error. No migra nada más (ni
 // solicitudes, ni respuestas, ni bienvenidas): solo flow_state.
 func (r *MemoryRepository) MigrateContactID(ctx context.Context, tenantID, from, to string) error {
-	panic(pendiente.Implementar("store.MemoryRepository.MigrateContactID"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k, st := range r.state {
+		if st.TenantID != tenantID || st.ContactID != from {
+			continue
+		}
+		dstKey := stateKey(Key{TenantID: tenantID, SessionID: st.SessionID, ContactID: to})
+		if _, clash := r.state[dstKey]; clash {
+			// El canónico ya tiene estado en esa sesión: conservar el suyo.
+			delete(r.state, k)
+			continue
+		}
+		st.ContactID = to
+		delete(r.state, k)
+		r.state[dstKey] = st
+	}
+	return nil
 }
 
 // LatestDefinition implementa Repository: devuelve la mayor versión existente, con
@@ -150,7 +275,14 @@ func (r *MemoryRepository) MigrateContactID(ctx context.Context, tenantID, from,
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "%w: tenant=%s flow=%s"
 func (r *MemoryRepository) LatestDefinition(ctx context.Context, tenantID, flowID string) (model.Flow, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.LatestDefinition"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	dk := defKey(tenantID, flowID)
+	max, ok := r.maxVer[dk]
+	if !ok {
+		return model.Flow{}, fmt.Errorf("%w: tenant=%s flow=%s", ErrDefinitionNotFound, tenantID, flowID)
+	}
+	return r.defs[dk][max], nil
 }
 
 // GetDefinition implementa Repository: devuelve la definición de la versión
@@ -162,7 +294,18 @@ func (r *MemoryRepository) LatestDefinition(ctx context.Context, tenantID, flowI
 //   - "%w: tenant=%s flow=%s"
 //   - "%w: tenant=%s flow=%s version=%d"
 func (r *MemoryRepository) GetDefinition(ctx context.Context, tenantID, flowID string, version int) (model.Flow, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.GetDefinition"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	dk := defKey(tenantID, flowID)
+	byVer, ok := r.defs[dk]
+	if !ok {
+		return model.Flow{}, fmt.Errorf("%w: tenant=%s flow=%s", ErrDefinitionNotFound, tenantID, flowID)
+	}
+	f, ok := byVer[version]
+	if !ok {
+		return model.Flow{}, fmt.Errorf("%w: tenant=%s flow=%s version=%d", ErrDefinitionNotFound, tenantID, flowID, version)
+	}
+	return f, nil
 }
 
 // InsertDefinition implementa Repository: asigna version = max+1 por
@@ -170,7 +313,18 @@ func (r *MemoryRepository) GetDefinition(ctx context.Context, tenantID, flowID s
 // ignora y la definición se guarda con la asignada. No valida el flujo. Nunca devuelve
 // error.
 func (r *MemoryRepository) InsertDefinition(ctx context.Context, tenantID string, f model.Flow) (int, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.InsertDefinition"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	dk := defKey(tenantID, f.FlowID)
+	version := r.maxVer[dk] + 1
+	stored := f
+	stored.Version = version
+	if r.defs[dk] == nil {
+		r.defs[dk] = make(map[int]model.Flow)
+	}
+	r.defs[dk][version] = stored
+	r.maxVer[dk] = version
+	return version, nil
 }
 
 // ListDefinitions devuelve el resumen de cada flujo del tenant (flow_id + última
@@ -178,7 +332,18 @@ func (r *MemoryRepository) InsertDefinition(ctx context.Context, tenantID string
 // repositorio en memoria no rastrea created_at: FlowSummary.CreatedAt queda en cero
 // (el Postgres devuelve el alta de esa versión). Sin flujos, lista vacía sin error.
 func (r *MemoryRepository) ListDefinitions(ctx context.Context, tenantID string) ([]FlowSummary, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.ListDefinitions"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prefix := tenantID + "\x00"
+	out := make([]FlowSummary, 0)
+	for dk, max := range r.maxVer {
+		if !strings.HasPrefix(dk, prefix) {
+			continue
+		}
+		out = append(out, FlowSummary{FlowID: strings.TrimPrefix(dk, prefix), Version: max})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].FlowID < out[j].FlowID })
+	return out, nil
 }
 
 // InsertResults implementa Repository: acumula las respuestas de encuesta en un
@@ -193,7 +358,25 @@ func (r *MemoryRepository) ListDefinitions(ctx context.Context, tenantID string)
 // CreatedAt lo conserva (el Postgres lo ignora). Acepta filas sin EventID, que el CHECK
 // de la 0054 rechazaría. Nunca devuelve error.
 func (r *MemoryRepository) InsertResults(ctx context.Context, rows []SurveyResult) error {
-	panic(pendiente.Implementar("store.MemoryRepository.InsertResults"))
+	if len(rows) == 0 {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	for _, row := range rows {
+		// Fecha la fila igual que el DEFAULT now() de la columna. Sin esto, el doble
+		// devolvería un created_at CERO donde Postgres devuelve una fecha, y quien
+		// acote «las respuestas de esta pasada» por fecha (el resumen del rescate)
+		// vería en sus tests unitarios un filtro que deja pasar todo y en producción
+		// uno que filtra. Es la misma imitación de un DEFAULT que ya hace AddedAt en
+		// las líneas; la ESCRITURA real de survey_results no cambia.
+		if row.CreatedAt.IsZero() {
+			row.CreatedAt = now
+		}
+		r.results = append(r.results, row)
+	}
+	return nil
 }
 
 // ListResults implementa Repository: filtra las respuestas por (tenant, contacto,
@@ -208,7 +391,15 @@ func (r *MemoryRepository) InsertResults(ctx context.Context, rows []SurveyResul
 // consulta (su SELECT no trae event_id) y allí sale siempre "": quien compare los dos
 // adaptadores no mira ese campo en ListResults. Nunca devuelve error.
 func (r *MemoryRepository) ListResults(ctx context.Context, tenantID, contactID, flowID string) ([]SurveyResult, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.ListResults"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]SurveyResult, 0)
+	for _, s := range r.results {
+		if s.TenantID == tenantID && s.ContactID == contactID && s.FlowID == flowID {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 // SurveyResults devuelve una copia de las respuestas de encuesta acumuladas por
@@ -216,7 +407,11 @@ func (r *MemoryRepository) ListResults(ctx context.Context, tenantID, contactID,
 // resultado); devuelve una copia para no exponer el slice interno. Trae las de TODOS
 // los tenants, en orden de escritura, con su EventID y su CreatedAt.
 func (r *MemoryRepository) SurveyResults() []SurveyResult {
-	panic(pendiente.Implementar("store.MemoryRepository.SurveyResults"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]SurveyResult, len(r.results))
+	copy(out, r.results)
+	return out
 }
 
 // InsertFlowEvent implementa Repository: acumula el efecto en un slice interno
@@ -225,12 +420,27 @@ func (r *MemoryRepository) SurveyResults() []SurveyResult {
 // Postgres); la copia por valor de la struct no comparte el mapa con el llamante
 // solo si este no lo muta, así que se clona el Payload defensivamente.
 func (r *MemoryRepository) InsertFlowEvent(ctx context.Context, ev FlowEvent) error {
-	panic(pendiente.Implementar("store.MemoryRepository.InsertFlowEvent"))
+	stored := ev
+	if ev.Payload != nil {
+		clone := make(map[string]any, len(ev.Payload))
+		for k, v := range ev.Payload {
+			clone[k] = v
+		}
+		stored.Payload = clone
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.flowEvents = append(r.flowEvents, stored)
+	return nil
 }
 
 // FlowEvents devuelve una copia de los efectos acumulados por InsertFlowEvent. Es
 // un helper de test; devuelve una copia para no exponer el slice interno. Trae los de
 // TODOS los tenants, en orden de escritura.
 func (r *MemoryRepository) FlowEvents() []FlowEvent {
-	panic(pendiente.Implementar("store.MemoryRepository.FlowEvents"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]FlowEvent, len(r.flowEvents))
+	copy(out, r.flowEvents)
+	return out
 }
