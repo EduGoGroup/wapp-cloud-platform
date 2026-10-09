@@ -17,7 +17,12 @@ import (
 // viejo (candado de fronteras, 05 E-8), así que se fijan a mano. Quien cambie una
 // fila está cambiando la conducta respecto al viejo, y lo tiene que decir.
 //
-// 🔴 VARIAS FILAS FIJAN UN AGUJERO, NO UN ACIERTO: un teléfono en dígitos
+// 🔴 LAS FILAS MARCADAS «DIVERGE DEL VIEJO» YA NO SON LO QUE DEVOLVÍA EL VIEJO:
+// son agujeros de PII que el viejo dejaba pasar y que el paquete nuevo CIERRA
+// (hallazgo 1 de F7, decisión de Jhoan del 2026-10-08). El comentario de cada una
+// dice qué devolvía el viejo.
+//
+// 🔴 OTRAS FILAS FIJAN UN AGUJERO, NO UN ACIERTO: un teléfono en dígitos
 // árabes-índicos o de ancho completo, con un espacio duro por medio, o dos
 // teléfonos seguidos, PASAN ENTEROS. Están aquí para que el día que alguien cierre
 // uno se entere de que cambia el alcance (y lo quite de la cabecera de
@@ -40,13 +45,13 @@ func TestNewAnonymizer_CorpusNames_TrimmedAndLongestFirst(t *testing.T) {
 	}
 }
 
-// TestAnonymize_AdversarialCorpus_SameAsOld: cada entrada sale como salía del
-// viejo, y las dos mitades no se contradicen —el barrido delata algo si y solo si
-// la redacción cambia el texto—. Tampoco queda nada que barrer en lo ya
-// redactado, salvo en el contraejemplo de
-// TestAnonymize_TwoGluedJIDs_LeavesAJIDBehind.
-func TestAnonymize_AdversarialCorpus_SameAsOld(t *testing.T) {
-	corpus := []struct{ in, want string }{
+// corpusCase es una fila del corpus: la entrada y lo que `Anonymize` devuelve.
+type corpusCase struct{ in, want string }
+
+// adversarialCorpus es el corpus entero. Es una función para que lo recorran el
+// test de equivalencia y el de la propiedad `Remains(Anonymize(x))`.
+func adversarialCorpus() []corpusCase {
+	return []corpusCase{
 		// vacíos y solo espacios
 		{"", ""},
 		{"   ", "   "},
@@ -153,7 +158,9 @@ func TestAnonymize_AdversarialCorpus_SameAsOld(t *testing.T) {
 		{"status@broadcast", "[JID]"},
 		{"584121234567@broadcast.", "[JID]."},
 		{"(584121234567@c.us)", "([JID])"},
-		{"584121234567@s.whatsapp.net584121234567@s.whatsapp.net", "[TELEFONO]@s.whatsapp.net584121234567@s.whatsapp.net"},
+		// DIVERGE DEL VIEJO (hallazgo 1 de F7, decisión de Jhoan 2026-10-08): el viejo
+		// devolvía "[TELEFONO]@s.whatsapp.net584121234567@s.whatsapp.net".
+		{twoGluedJIDs, "[JID][JID]"},
 		{"584121234567@s.whatsapp.net,584121234568@g.us", "[JID],[JID]"},
 		{"a@lid@g.us", "[JID]@g.us"},
 		{"584121234567 @s.whatsapp.net", "[TELEFONO] @s.whatsapp.net"},
@@ -165,51 +172,150 @@ func TestAnonymize_AdversarialCorpus_SameAsOld(t *testing.T) {
 		{"\uff10\uff14\uff11\uff12@lid", "\uff10\uff14\uff11\uff12@lid"},
 		{"584121234567@s\u2024whatsapp\u2024net", "[TELEFONO]@s\u2024whatsapp\u2024net"},
 	}
+}
+
+// TestAnonymize_AdversarialCorpus_SameAsOld: cada entrada sale como salía del
+// viejo —salvo las filas marcadas «DIVERGE DEL VIEJO»— y las dos mitades no se
+// contradicen: el barrido delata algo si y solo si la redacción cambia el texto.
+func TestAnonymize_AdversarialCorpus_SameAsOld(t *testing.T) {
 	a := casebank.NewAnonymizer(corpusNames()...)
-	for i, c := range corpus {
+	for i, c := range adversarialCorpus() {
 		t.Run(fmt.Sprintf("%03d_%+q", i, c.in), func(t *testing.T) {
 			got := a.Anonymize(c.in)
 			if got != c.want {
-				t.Errorf("Anonymize(%+q) = %+q; el viejo devolvía %+q", c.in, got, c.want)
+				t.Errorf("Anonymize(%+q) = %+q; se esperaba %+q", c.in, got, c.want)
 			}
 			remains := a.Remains(c.in)
 			if changed := got != c.in; changed != (len(remains) != 0) {
 				t.Errorf("las dos mitades se contradicen sobre %+q: Anonymize lo cambia = %t, Remains = %+v",
 					c.in, changed, remains)
 			}
-			if again := a.Remains(got); len(again) != 0 && c.in != twoGluedJIDs {
-				t.Errorf("Remains(Anonymize(%+q)) = %+v; sobre lo ya redactado tiene que estar vacío", c.in, again)
+		})
+	}
+}
+
+// jidAfterAccentedName es la ÚNICA excepción declarada a la propiedad de abajo: un
+// JID cuya parte local empieza por un signo de su clase (`.`) pegado a un nombre
+// de la lista que acaba en letra no ASCII.
+const jidAfterAccentedName = "Jos\u00e9.maria@lid"
+
+// TestAnonymize_ThenRemains_EmptyOverTheWholeCorpus es el invariante de la
+// cabecera de anonymize.go convertido en test: para TODA entrada del corpus, lo
+// que sale de `Anonymize` no le deja nada al barrido. Las excepciones se enumeran
+// aquí, una a una; hoy es una sola, y tiene su propio test.
+func TestAnonymize_ThenRemains_EmptyOverTheWholeCorpus(t *testing.T) {
+	declaredExceptions := map[string]bool{jidAfterAccentedName: true}
+	inputs := []string{jidAfterAccentedName}
+	for _, c := range adversarialCorpus() {
+		inputs = append(inputs, c.in)
+	}
+	a := casebank.NewAnonymizer(corpusNames()...)
+	for i, in := range inputs {
+		t.Run(fmt.Sprintf("%03d_%+q", i, in), func(t *testing.T) {
+			out := a.Anonymize(in)
+			again := a.Remains(out)
+			if declaredExceptions[in] {
+				if len(again) == 0 {
+					t.Errorf("Remains(Anonymize(%+q)) está vacío: ya no es una excepción, quítala de la lista", in)
+				}
+				return
+			}
+			if len(again) != 0 {
+				t.Errorf("Remains(Anonymize(%+q)) = %+v sobre %+q; sobre lo ya redactado tiene que estar vacío", in, again, out)
 			}
 		})
+	}
+}
+
+// TestAnonymize_JIDAfterAccentedName_LeavesAJIDBehind fija la excepción: «é» no es
+// de la clase de la parte local, así que el JID candidato es «.maria@lid», y
+// pegado a una letra no es JID (igual que «ñ584121234567@lid»). La pasada de
+// nombres tapa «José» y su marca deja al descubierto un límite que antes no
+// existía: barrido después, «.maria@lid» SÍ es un JID. No sale ningún número —un
+// número ahí lo taparía la pasada de teléfonos—, pero la propiedad no es
+// universal y se dice. Conducta heredada del viejo, medida en el paquete nuevo
+// (las tres pasadas son las suyas); no la cambia ninguno de los tres arreglos.
+func TestAnonymize_JIDAfterAccentedName_LeavesAJIDBehind(t *testing.T) {
+	a := casebank.NewAnonymizer(corpusNames()...)
+	const wantOut = "[NOMBRE].maria@lid"
+	out := a.Anonymize(jidAfterAccentedName)
+	if out != wantOut {
+		t.Fatalf("Anonymize(%+q) = %q; se esperaba %q", jidAfterAccentedName, out, wantOut)
+	}
+	want := []casebank.Finding{{Class: casebank.ClassJID, Text: ".maria@lid", Start: 8, End: 18}}
+	if got := a.Remains(out); !reflect.DeepEqual(got, want) {
+		t.Errorf("Remains(%q) = %+v; se esperaba %+v", out, got, want)
 	}
 }
 
 // twoGluedJIDs son dos JID sin nada entre ellos.
 const twoGluedJIDs = "584121234567@s.whatsapp.net584121234567@s.whatsapp.net"
 
-// TestAnonymize_TwoGluedJIDs_LeavesAJIDBehind fija, con los valores del viejo, el
-// contraejemplo de «Remains(Anonymize(x)) está vacío siempre», que la cabecera del
-// fichero viejo afirmaba y NO es verdad (medido en F7, hallazgo 40).
+// TestAnonymize_GluedJIDs_AllRedacted: una cadena de JID pegados cae entera, con
+// una marca por JID, y el barrido los delata uno a uno sobre el texto sin redactar.
 //
-// 🔴 ES UNA FUGA, NO UNA CURIOSIDAD: ninguno de los dos JID pasa el límite de
-// palabra (el primero tiene un dígito detrás, y el patrón no vuelve a intentarlo
-// dentro de lo ya consumido), así que la pasada de JID no tapa nada; la de
-// teléfonos se lleva el número de delante, y lo que queda —el segundo número con
-// su dominio— sale EN CLARO de `Anonymize`. Al barrer esa salida, el `@` que
-// ahora precede al resto sí es un límite y el barrido lo delata. Se conserva la
-// conducta del viejo; cerrarlo es cambiar el alcance del anonimizador.
-func TestAnonymize_TwoGluedJIDs_LeavesAJIDBehind(t *testing.T) {
+// 🔴 DIVERGE DEL VIEJO A PROPÓSITO (hallazgo 1 de F7, decisión de Jhoan del
+// 2026-10-08). El viejo devolvía
+// «[TELEFONO]@s.whatsapp.net584121234567@s.whatsapp.net» —el segundo número EN
+// CLARO— y, barrida esa salida, un JID: ninguno de los dos pasaba el límite de
+// palabra, porque cada uno tiene al otro pegado.
+func TestAnonymize_GluedJIDs_AllRedacted(t *testing.T) {
 	a := casebank.NewAnonymizer(corpusNames()...)
-	const wantOut = "[TELEFONO]@s.whatsapp.net584121234567@s.whatsapp.net"
-	out := a.Anonymize(twoGluedJIDs)
-	if out != wantOut {
-		t.Fatalf("Anonymize(%q) = %q; el viejo devolvía %q", twoGluedJIDs, out, wantOut)
+	const jid = "584121234567@s.whatsapp.net"
+	cases := []struct {
+		name, in, want string
+		findings       int
+	}{
+		{"two", twoGluedJIDs, "[JID][JID]", 2},
+		{"three", jid + "584149876543@g.us" + jid, "[JID][JID][JID]", 3},
+		{"two inside a sentence", "de " + twoGluedJIDs + ", gracias", "de [JID][JID], gracias", 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := a.Anonymize(c.in)
+			if out != c.want {
+				t.Fatalf("Anonymize(%q) = %q; se esperaba %q", c.in, out, c.want)
+			}
+			if left := countDigits(out); left != 0 {
+				t.Errorf("Anonymize(%q) = %q; quedaron %d dígitos en claro", c.in, out, left)
+			}
+			if again := a.Remains(out); len(again) != 0 {
+				t.Errorf("Remains(%q) = %+v; se esperaba vacío", out, again)
+			}
+			got := a.Remains(c.in)
+			if len(got) != c.findings {
+				t.Fatalf("Remains(%q) = %+v; se esperaban %d hallazgos", c.in, got, c.findings)
+			}
+			for _, f := range got {
+				if f.Class != casebank.ClassJID {
+					t.Errorf("Remains(%q) delató un %q (%+v); se esperaba un JID", c.in, f.Class, f)
+				}
+			}
+		})
 	}
 	want := []casebank.Finding{
-		{Class: casebank.ClassJID, Text: "s.whatsapp.net584121234567@s.whatsapp.net", Start: 11, End: 52},
+		{Class: casebank.ClassJID, Text: jid, Start: 0, End: 27},
+		{Class: casebank.ClassJID, Text: jid, Start: 27, End: 54},
 	}
-	if got := a.Remains(out); !reflect.DeepEqual(got, want) {
-		t.Errorf("Remains(%q) = %+v; el viejo devolvía %+v", out, got, want)
+	if got := a.Remains(twoGluedJIDs); !reflect.DeepEqual(got, want) {
+		t.Errorf("Remains(%q) = %+v; se esperaba %+v", twoGluedJIDs, got, want)
+	}
+}
+
+// TestAnonymize_GluedJIDs_ChainStuckToAWord_Untouched es la otra mitad: el límite
+// de palabra se le sigue exigiendo a la cadena por sus dos extremos. Pegada a una
+// letra por fuera, ninguno de sus eslabones es JID.
+func TestAnonymize_GluedJIDs_ChainStuckToAWord_Untouched(t *testing.T) {
+	a := casebank.NewAnonymizer(corpusNames()...)
+	for _, in := range []string{"a@lidb@lidz", "\u00f1a@lidb@lid"} {
+		t.Run(in, func(t *testing.T) {
+			if got := a.Anonymize(in); got != in {
+				t.Errorf("Anonymize(%+q) = %+q; la cadena está pegada a una letra y no se toca", in, got)
+			}
+			if r := a.Remains(in); len(r) != 0 {
+				t.Errorf("Remains(%+q) = %+v; se esperaba vacío", in, r)
+			}
+		})
 	}
 }
 

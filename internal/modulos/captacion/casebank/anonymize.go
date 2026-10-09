@@ -30,7 +30,8 @@ import (
 //     dígitos ASCII, `.`, `_`, `:` y `-`, y hace falta al menos uno. Es el
 //     identificador que de verdad aparece en los datos de esta casa
 //     (`fleet_sessions`, el entrante de CloudLink), y lleva el número de teléfono
-//     dentro.
+//     dentro. Una CADENA de JID pegados, sin nada entre ellos, cae entera: una
+//     marca por JID (ver `jidsIn`).
 //   - TELÉFONOS: rachas de 8 a 15 dígitos ASCII, con o sin `+` delante y
 //     separados por espacios, tabuladores, SALTOS DE LÍNEA, guiones, guiones
 //     bajos, BARRAS, puntos o paréntesis, repetidos o no. La racha empieza y
@@ -47,7 +48,8 @@ import (
 // EL LÍMITE DE PALABRA vale para las tres clases: una aparición pegada a una
 // letra o a un dígito (de cualquier alfabeto: `unicode.IsLetter`/`IsDigit`) por
 // cualquiera de sus dos lados NO se toca. «tel04121234567», «04121234567bs» y
-// «Ambar2» pasan enteros.
+// «Ambar2» pasan enteros. La única excepción es la cadena de JID pegados, a la
+// que el límite se le exige por sus dos extremos y no entre eslabones.
 //
 // 🔴 LO QUE **NO** CUBRE — Y NO ES UNA LISTA DE PENDIENTES, ES EL ALCANCE
 //
@@ -88,9 +90,8 @@ import (
 //     caen los dos. Medido en F7 (hallazgo 40), no estaba escrito; se conserva la
 //     conducta del viejo y se deja fijada en el corpus del test.
 //   - Un JID pegado a una letra o a un dígito por la derecha
-//     («…@s.whatsapp.netx», o dos JID sin separador): no es JID, y la pasada de
-//     teléfonos se lleva solo el número de delante, DEJANDO EL DOMINIO — y, con
-//     dos JID pegados, el segundo número entero (ver más abajo).
+//     («…@s.whatsapp.netx») sin que lo que sigue sea otro JID: no es JID, y la
+//     pasada de teléfonos se lleva solo el número de delante, DEJANDO EL DOMINIO.
 //   - Un número partido por PALABRAS («cero cuatro uno dos…»), o por letras
 //     («0412 ext 1234567»).
 //
@@ -106,22 +107,30 @@ import (
 //     ese intercambio no está empatado. La fecha CORTA del pedido (`22/07`, 4
 //     dígitos) sigue intacta, que es la forma en que aparece en el caso Ambar;
 //   - la parte local del JID se lleva lo que tenga pegado delante si es de su
-//     clase: «grupo:120363…@g.us» se redacta entero, «grupo:» incluido.
+//     clase: «grupo:120363…@g.us» se redacta entero, «grupo:» incluido;
+//   - desde que la cadena de JID pegados cae entera, un JID pegado por la derecha
+//     a algo que acaba siendo otro JID también cae: «user@lidia584@lid» son dos
+//     marcas, aunque «user@lidia» a solas no sea un JID.
 //
 // # LOS DOS SENTIDOS: `Anonymize` REDACTA, `Remains` DELATA
 //
 // Comparten detectores a propósito, y eso tiene una consecuencia que hay que
-// decir en voz alta: `Remains(Anonymize(x))` está VACÍO para casi cualquier `x`.
-// Como comprobación es (casi) una tautología y no prueba nada.
+// decir en voz alta: `Remains(Anonymize(x))` está VACÍO. Como comprobación es una
+// tautología y no prueba nada.
 //
-// ⚠️ «Casi»: la cabecera del fichero viejo decía «VACÍO SIEMPRE» y no es verdad.
-// Las pasadas de `Anonymize` corren en cadena, y una marca puede dejar AL
-// DESCUBIERTO un límite de palabra que antes no existía. Con dos JID pegados
-// («584121234567@s.whatsapp.net584121234567@s.whatsapp.net») ninguno es JID, la
-// pasada de teléfonos tapa el primer número y el resto —el segundo número con su
-// dominio— SALE EN CLARO; barrido después, es un JID. Medido en F7 (hallazgo 40)
-// y fijado en `TestAnonymize_TwoGluedJIDs_LeavesAJIDBehind`; se conserva la
-// conducta del viejo.
+// ⚠️ Ese «vacío» vuelve a ser cierto para los JID desde el 2026-10-08, y lo
+// vigila `TestAnonymize_ThenRemains_EmptyOverTheWholeCorpus` sobre el corpus
+// adversario entero. En el viejo no lo era: las pasadas de `Anonymize` corren en
+// cadena, y con dos JID pegados ninguno pasaba el límite de palabra, la pasada de
+// teléfonos tapaba el primer número y el segundo SALÍA EN CLARO con su dominio
+// (hallazgo 1 de F7). Aquí la cadena cae entera: DIVERGENCIA DELIBERADA del
+// viejo, decisión de Jhoan.
+//
+// Queda UNA excepción declarada, heredada y sin número dentro: una marca puede
+// dejar al descubierto un límite de palabra que antes no existía. En
+// «José.maria@lid» el candidato «.maria@lid» está pegado a una letra y no es JID;
+// tapado el nombre, queda «[NOMBRE].maria@lid», y barrido eso SÍ lo es. La fija
+// `TestAnonymize_JIDAfterAccentedName_LeavesAJIDBehind`.
 //
 // `Remains` NO existe para auditar a `Anonymize`. Existe para auditar TEXTO QUE
 // NO PASÓ POR ÉL: el fixture escrito a mano (`seed.go`), el caso que alguien
@@ -271,7 +280,7 @@ func NewAnonymizer(names ...string) Anonymizer {
 // las dos marcas anteriores no contienen letras que puedan casar con un nombre.
 // Cada pasada corre sobre lo que dejó la anterior.
 func (a Anonymizer) Anonymize(text string) string {
-	text = replaceSpans(text, findWithBoundaries(text, reJID), MarkJID)
+	text = replaceSpans(text, jidsIn(text), MarkJID)
 	text = replaceSpans(text, a.phonesIn(text), MarkPhone)
 	return replaceSpans(text, a.namesIn(text), MarkName)
 }
@@ -301,7 +310,7 @@ func (a Anonymizer) Remains(text string) []Finding {
 		locs  [][]int
 		class Class
 	}{
-		{findWithBoundaries(text, reJID), ClassJID},
+		{jidsIn(text), ClassJID},
 		{a.phonesIn(text), ClassPhone},
 		{a.namesIn(text), ClassName},
 	}
@@ -338,6 +347,30 @@ func overlaps(accepted []Finding, f Finding) bool {
 // anonimizador.
 func (a Anonymizer) Names() []string {
 	return append([]string(nil), a.names...)
+}
+
+// jidsIn localiza los JID. Una CADENA de JID pegados —cada uno empieza justo
+// donde acaba el anterior— se trata como un bloque: el límite de palabra se le
+// exige a la cadena por sus dos extremos, no a cada eslabón, y si lo cumple caen
+// todos, cada uno con su tramo. Un JID suelto es una cadena de uno.
+//
+// 🔴 SIN ESTO, DOS JID PEGADOS DEJAN UN NÚMERO EN CLARO: cada uno tiene al otro
+// pegado, ninguno pasa el límite, y la pasada de teléfonos solo alcanza al
+// primero (el segundo está pegado a la «t» de «.net»). No existía en el viejo.
+func jidsIn(text string) [][]int {
+	all := reJID.FindAllStringIndex(text, -1)
+	out := make([][]int, 0, len(all))
+	for i := 0; i < len(all); {
+		j := i + 1
+		for j < len(all) && all[j][0] == all[j-1][1] {
+			j++
+		}
+		if atBoundary(text, all[i][0], all[j-1][1]) {
+			out = append(out, all[i:j]...)
+		}
+		i = j
+	}
+	return out
 }
 
 // phonesIn (antes `telefonos`) filtra los candidatos por conteo de dígitos. Es
