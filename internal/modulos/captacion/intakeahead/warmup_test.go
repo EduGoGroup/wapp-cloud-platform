@@ -451,6 +451,8 @@ func TestWarm_HasItsOwnBudget(t *testing.T) {
 	}{
 		{"default", nil, intakeahead.DefaultWarmTimeout},
 		{"five seconds", []intakeahead.Option{intakeahead.WithWarmTimeout(5 * time.Second)}, 5 * time.Second},
+		// Lo que se ignora es <= 0, no «lo pequeño»: un nanosegundo es un presupuesto.
+		{"one nanosecond", []intakeahead.Option{intakeahead.WithWarmTimeout(time.Nanosecond)}, time.Nanosecond},
 		{"zero is ignored", []intakeahead.Option{intakeahead.WithWarmTimeout(0)}, intakeahead.DefaultWarmTimeout},
 		{"negative is ignored", []intakeahead.Option{intakeahead.WithWarmTimeout(-time.Second)}, intakeahead.DefaultWarmTimeout},
 		{"ignored value keeps the previous one",

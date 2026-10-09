@@ -374,6 +374,8 @@ func TestRequest_OneBudgetForTheWholeRequest(t *testing.T) {
 	}{
 		{"default", nil, intakeahead.DefaultTimeout},
 		{"ten seconds", []intakeahead.Option{intakeahead.WithTimeout(10 * time.Second)}, 10 * time.Second},
+		// Lo que se ignora es <= 0, no «lo pequeño»: un nanosegundo es un presupuesto.
+		{"one nanosecond", []intakeahead.Option{intakeahead.WithTimeout(time.Nanosecond)}, time.Nanosecond},
 		{"zero is ignored", []intakeahead.Option{intakeahead.WithTimeout(0)}, intakeahead.DefaultTimeout},
 		{"negative is ignored", []intakeahead.Option{intakeahead.WithTimeout(-time.Second)}, intakeahead.DefaultTimeout},
 		{"ignored value keeps the previous one",
