@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package reanalisis_test
 
 // doubles_test.go — LOS DOBLES de los tests del re-análisis (sin fichero de producción

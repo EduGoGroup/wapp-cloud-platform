@@ -51,6 +51,7 @@ package reanalisis
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
 
@@ -58,7 +59,6 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // ---------------------------------------------------------------------------
@@ -192,7 +192,16 @@ type LLMConfig interface {
 
 // Service (antes `Servicio`) ejecuta el re-análisis. Sin estado propio: todo lo que
 // decide sale de los puertos, del límite del hilo y del cuerpo de la petición.
-type Service struct{}
+type Service struct {
+	log         logger.Logger
+	intakes     Intakes
+	thread      Thread
+	jobs        Jobs
+	composer    Composer
+	features    Features
+	config      LLMConfig
+	threadLimit int
+}
 
 // NewService (antes `NewServicio`) construye el caso de uso.
 //
@@ -215,7 +224,24 @@ type Service struct{}
 //     <= 0 devuelve un hilo vacío, y toda petición saldría `never_stored` en silencio.
 func NewService(log logger.Logger, intakeReader Intakes, thread Thread, jobs Jobs,
 	composer Composer, features Features, config LLMConfig, threadLimit int) (*Service, error) {
-	panic(pendiente.Implementar("reanalisis.NewService"))
+	if log == nil || intakeReader == nil || thread == nil || jobs == nil ||
+		composer == nil || features == nil || config == nil {
+		return nil, ErrNotWired
+	}
+	if threadLimit <= 0 {
+		return nil, invalidThreadLimit(threadLimit)
+	}
+	return &Service{
+		log: log, intakes: intakeReader, thread: thread, jobs: jobs,
+		composer: composer, features: features, config: config, threadLimit: threadLimit,
+	}, nil
+}
+
+// invalidThreadLimit es el rechazo de NewService a un límite del hilo <= 0. Envuelve
+// ErrNotWired: para quien arranca es la misma clase de fallo —el servicio no se puede
+// montar— con el dato que dice qué pieza está mal.
+func invalidThreadLimit(n int) error {
+	return fmt.Errorf("reanalisis: el límite del hilo debe ser positivo (%d): %w", n, ErrNotWired)
 }
 
 // Reanalyze (antes `Reanalizar`) abre el job del re-análisis y devuelve lo que el
@@ -314,5 +340,79 @@ func NewService(log logger.Logger, intakeReader Intakes, thread Thread, jobs Job
 // `status_intake` y `runas_pegadas`. Ni el texto pegado, ni el literal del hilo, ni un
 // trozo de ninguno de los dos salen por ningún log de este paquete.
 func (s *Service) Reanalyze(ctx context.Context, req Request) (Result, error) {
-	panic(pendiente.Implementar("reanalisis.Service.Reanalyze"))
+	if s == nil {
+		return Result{}, ErrNotWired
+	}
+
+	pasted, err := validateShape(req)
+	if err != nil {
+		return Result{}, err
+	}
+	via, err := s.authorize(ctx, req)
+	if err != nil {
+		return Result{}, err
+	}
+	target, err := s.targetOf(ctx, req)
+	if err != nil {
+		return Result{}, err
+	}
+	source, err := s.sourceOfMaterial(ctx, target.EventID, pasted)
+	if err != nil {
+		return Result{}, err
+	}
+
+	// ── A PARTIR DE AQUÍ SE ESCRIBE ──────────────────────────────────────────
+	if pasted != "" {
+		if err := s.persistPasted(ctx, target.EventID, pasted); err != nil {
+			return Result{}, err
+		}
+	}
+
+	key := intake.WindowKey{
+		TenantID:  req.TenantID,
+		SessionID: target.SessionID,
+		ContactID: target.ContactID,
+		EventID:   target.EventID,
+	}
+	jobID, err := s.jobs.OpenReanalysis(ctx, intake.ReanalysisRequest{
+		Key:      key,
+		IntakeID: req.IntakeID,
+		Context: intake.Reanalysis{
+			RequestedBy: intake.RequestedByOwner,
+			Via:         via,
+			Source:      source,
+			From:        target.LastRevisionNo,
+		},
+	})
+	if err != nil {
+		return Result{}, err
+	}
+
+	// EL SOBRE. `ComposeAtFlush` rellena EXACTAMENTE el job que se acaba de abrir:
+	// `PutSourceText` elige la fila `pending` más recientemente tocada de esta tupla
+	// cuyo sobre esté vacío, y esa es la de arriba (ver intake/reanalysis.go).
+	//
+	// Un fallo aquí NO tumba la petición y NO se traga: se avisa con todo lo que hace
+	// falta para encontrar el job, y el worker lo matará con su causa escrita cuando
+	// lo reclame sin literal.
+	if cerr := s.composer.ComposeAtFlush(ctx, key); cerr != nil {
+		s.log.Error("reanalisis: el job quedó abierto pero SIN literal; el worker lo matará al reclamarlo",
+			"tenant_id", req.TenantID, "intake_id", req.IntakeID, "event_id", target.EventID,
+			"job_id", jobID, "error", cerr.Error())
+	}
+
+	// `source` es vocabulario cerrado y `runas_pegadas` es un tamaño.
+	s.log.Info("reanalisis: job abierto a petición del dueño",
+		"tenant_id", req.TenantID, "intake_id", req.IntakeID, "event_id", target.EventID,
+		"job_id", jobID, "via", via, "source", source,
+		"reanalyzed_from", target.LastRevisionNo, "status_intake", target.Status,
+		"runas_pegadas", len([]rune(pasted)))
+
+	return Result{
+		IntakeID:   req.IntakeID,
+		RevisionNo: target.LastRevisionNo + 1,
+		JobID:      jobID,
+		Via:        via,
+		Status:     StatusInProgress,
+	}, nil
 }

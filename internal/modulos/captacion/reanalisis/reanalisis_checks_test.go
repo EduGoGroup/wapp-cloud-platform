@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package reanalisis_test
 
 // reanalisis_checks_test.go — los escalones de LECTURA 1–8 de Reanalyze, uno por

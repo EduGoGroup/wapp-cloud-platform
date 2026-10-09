@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package reanalisis_test
 
 // reanalisis_test.go — el contrato de reanalisis.go: el constructor, lo que Reanalyze

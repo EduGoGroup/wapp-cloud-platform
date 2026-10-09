@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package reanalisis_test
 
 // reanalisis_source_test.go — EL MATERIAL de Reanalyze: si hay algo que analizar
