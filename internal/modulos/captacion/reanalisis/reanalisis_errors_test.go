@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package reanalisis_test
 
 // reanalisis_errors_test.go — el contrato de reanalisis_errors.go: los TEXTOS de los

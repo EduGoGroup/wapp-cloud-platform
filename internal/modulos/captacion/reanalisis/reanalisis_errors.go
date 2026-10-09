@@ -5,8 +5,7 @@ package reanalisis
 
 import (
 	"errors"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
 )
 
 // reanalisis_errors.go — LOS DESENLACES CON NOMBRE (design §8.1).
@@ -49,7 +48,10 @@ type InvalidViaError struct {
 // (local|api)`; y con él, `reanalisis: la vía "<via>" no es la configurada por el
 // tenant ("<configurada>")`. Las vías van con `%q`.
 func (e InvalidViaError) Error() string {
-	panic(pendiente.Implementar("reanalisis.InvalidViaError.Error"))
+	if e.Configured != "" {
+		return fmt.Sprintf("reanalisis: la vía %q no es la configurada por el tenant (%q)", e.Via, e.Configured)
+	}
+	return fmt.Sprintf("reanalisis: %q no es una vía (local|api)", e.Via)
 }
 
 // FeatureMissingError (antes `FeatureAusenteError`) es el `403 feature_not_enabled`.
@@ -59,7 +61,7 @@ type FeatureMissingError struct{ Feature string }
 
 // Error devuelve `reanalisis: el tenant no tiene la capacidad "<feature>"`.
 func (e FeatureMissingError) Error() string {
-	panic(pendiente.Implementar("reanalisis.FeatureMissingError.Error"))
+	return fmt.Sprintf("reanalisis: el tenant no tiene la capacidad %q", e.Feature)
 }
 
 // CredentialsMissingError (antes `CredencialAusenteError`) es el
@@ -74,7 +76,7 @@ type CredentialsMissingError struct{ Via string }
 // Error devuelve `reanalisis: la vía "<via>" exige credencial y consentimiento en
 // tenant_llm`.
 func (e CredentialsMissingError) Error() string {
-	panic(pendiente.Implementar("reanalisis.CredentialsMissingError.Error"))
+	return fmt.Sprintf("reanalisis: la vía %q exige credencial y consentimiento en tenant_llm", e.Via)
 }
 
 // SourceUnavailableError (antes `FuenteAusenteError`) es el `422 source_unavailable`,
@@ -83,7 +85,7 @@ type SourceUnavailableError struct{ Reason string }
 
 // Error devuelve `reanalisis: no hay literal original que re-analizar (<razón>)`.
 func (e SourceUnavailableError) Error() string {
-	panic(pendiente.Implementar("reanalisis.SourceUnavailableError.Error"))
+	return fmt.Sprintf("reanalisis: no hay literal original que re-analizar (%s)", e.Reason)
 }
 
 // InProgressError (antes `EnCursoError`) es el `422 reanalysis_in_progress`: ya hay un
@@ -93,7 +95,7 @@ type InProgressError struct{ JobID string }
 
 // Error devuelve `reanalisis: el evento ya tiene un job vivo (<job>)`.
 func (e InProgressError) Error() string {
-	panic(pendiente.Implementar("reanalisis.InProgressError.Error"))
+	return fmt.Sprintf("reanalisis: el evento ya tiene un job vivo (%s)", e.JobID)
 }
 
 // ErrNotWired (antes `ErrSinCablear`) es el servicio al que le falta una pieza. Su
