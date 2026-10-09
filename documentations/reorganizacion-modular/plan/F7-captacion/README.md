@@ -141,6 +141,7 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
 | D-F7-4 | Las rutas de intenciones E1–E2 | **F7** (D-FX-1 alternativa, confirmada por el orquestador): la cara vieja las sirve hasta aquí con el gw nuevo inyectado por `publicapi.ConfigPusher` (estructural) |
 | D-F7-5 | *(F7-01, contradicción 9)* ¿Quién corre `ContratoMaquina` en memoria, si `MemoryStore` no implementa `PipelineStore`? | **Decidida (Jhoan, 2026-10-08)**: el doble de `PipelineStore` se porta de `pipeline/memoria.go` (`StoreEnMemoria`) a `intake/intakehelpertest/`; `CatalogoEnMemoria` va a `pipelinehelpertest/` en F7-03. La verdad de los guards SQL sigue siendo la suite contra Postgres (F7-05) |
 | D-F7-6 | *(F7-01, contradicción 10)* ¿Manda E-13 sobre el «`draft.go` no se parte» de esta spec? | **Decidida (Jhoan, 2026-10-08)**: manda E-13; `draft.go`, `pipeline.go` y `reanalisis.go` se parten por tema al reconstruirlos |
+| D-F7-9 | *(F7-02, hallazgo 17)* ¿El worker nuevo se defiende de la carrera `CloseWindow` → `PutSourceText` o se porta tal cual? | **Decidida (Jhoan, 2026-10-08)**: se porta tal cual en F7-03; la causa se arregla en F8, con el agregador |
 | D-F7-8 | *(F7-01, hallazgos 1 y 7)* ¿Se cierran en el código nuevo los tres agujeros de PII del anonimizador y la clave de ventana incompleta que el gemelo aceptaba? | **Decidida (Jhoan, 2026-10-08)**: sí, los cuatro (mejora clara; divergencia deliberada del viejo), un commit por decisión |
 
 ## Hallazgos de la ejecución
@@ -232,7 +233,7 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
 16. **El lint por paquete necesita la toolchain fijada**: `.bin/golangci-lint run ./…/<paquete>/...` a pelo da rc=1 por
     `typecheck` contra la stdlib de go1.27.1; con `GOTOOLCHAIN=go1.26.5` delante, `0 issues.`. La skill
     `reconstruir-modulo` lo lleva así desde esta sesión.
-17. 🟡 **Contradicción 8, mirada antes de portar `p2.go` (F7-02): la carrera existe por lectura de código y no pasa por
+17. ✅ **Contradicción 8, mirada antes de portar `p2.go` (F7-02): la carrera existe por lectura de código y no pasa por
     `stages`.** No se reprodujo bajo carga; se leyó el código viejo. El agregador hace `CloseWindow` (`aggregator.go:892`;
     `postgres.go:108-123`, autocommit: el job ya es `pending` y reclamable) y **después** `ComposeAtFlush`
     (`aggregator.go:906`), que lee el hilo, compone, cifra y solo entonces llama a `PutSourceText`
@@ -246,8 +247,8 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     componer». **Reparto**: la causa es de `flujos/runtime` (F8: cierre y sobre no son un solo acto); la defensa, de
     `pipeline` y del reclamo (**F7-03**: hoy «sobre aún no escrito» y «sobre que nunca llegará» son lo mismo). Un
     `IS NOT NULL` a secas en el reclamo no vale: el sobre NULL es una forma legítima y definitiva (ventana solo de media,
-    hilo apagado). **Para Jhoan, antes de F7-03**: ¿se porta la conducta tal cual (manda el viejo) o el worker nuevo
-    defiende? Sin decisión, F7-03 porta tal cual y lo deja dicho en el contrato.
+    hilo apagado). ✅ **Decidido por Jhoan (2026-10-08, D-F7-9): se porta tal cual** en F7-03, dicho en el contrato de
+    `pipeline`; el arreglo de la causa (cierre y sobre en un solo acto) lo hereda **F8**, con el agregador.
 18. **`stages` son 14 ficheros de producción, no 10** (F7-02): `draft.go` en cuatro por tema (D-F7-6: `draft.go` 405 l,
     `draft_revision.go` 336, `draft_events.go` 236, `draft_push.go` 98) y `match_cascade.go` en dos (el barrido y su
     prefiltro en `match_cascade_sweep.go`, sin exportados, porque pasaba de 500). El mayor es `match.go`, 484; el mayor

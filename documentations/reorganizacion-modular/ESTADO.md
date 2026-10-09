@@ -405,9 +405,9 @@ El código viejo, `cmd/` y el arranque no se tocan; `Conmutados` no cambia; `Fas
   rc=0, 955 PASS, 0 SKIP. Mutantes a mano sobre el verde: etapas LLM 23 (1 vivo, equivalente), match 32 (0), draft 29 (0).
   **No corrido**: `make ci-docker`; `make test-procesos` y las suites contra Postgres (F7-05); la integración vieja (no se
   tocó código compartido); la reproducción bajo carga de la contradicción 8 (solo se leyó el código).
-- **Hallazgos 17–25** en el [README de F7](plan/F7-captacion/README.md). 🟡 para Jhoan: **antes de F7-03**, la carrera
-  entre `CloseWindow` y `PutSourceText` (17: ¿el worker nuevo defiende o se porta tal cual?); sin bloquear, las conductas
-  raras del viejo conservadas (22). **Siguiente paso: F7-03** (`pipeline`, `intakeahead`, `reanalisis`). `main` sin tocar.
+- **Hallazgos 17–25** en el [README de F7](plan/F7-captacion/README.md). ✅ **D-F7-9 (Jhoan, 2026-10-08)**: la carrera
+  entre `CloseWindow` y `PutSourceText` (17) se porta tal cual en F7-03 y se arregla en F8, con el agregador. 🟡 sin
+  bloquear: las conductas raras del viejo conservadas (22). PR **#56**. **Siguiente paso: F7-03** (`pipeline`, `intakeahead`, `reanalisis`). `main` sin tocar.
 
 **F7-01 · F7, inventario E-12 y hojas (2026-10-08, 💻, rama `reorg/f7-01-inventario-y-hojas` desde `dev` @ `8d875ab`). F7 ARRANCADA.**
 Sesión completa (T7.1–T7.6, T7.14–T7.15), orquestada con cuatro sub-agentes en paralelo, uno por paquete, sobre el mismo
@@ -1166,7 +1166,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
-- **F7-02 (`stages`)**: rama `reorg/f7-02-stages`, partida de `origin/dev` @ `4cd9cfb` (PR #55 dentro); `7711a55` … `efe219d` (3 de rojo, 8 de verde) más el commit documental; PR hacia `dev`, **integrar sin squash**. Sin *worktrees*.
+- **F7-02 (`stages`)**: rama `reorg/f7-02-stages`, partida de `origin/dev` @ `4cd9cfb` (PR #55 dentro); `7711a55` … `efe219d` (3 de rojo, 8 de verde) más los commits documentales; **PR #56** hacia `dev`, integrado sin squash a petición de Jhoan. Sin *worktrees*.
 - **F7-01 (inventario y hojas de F7)**: rama `reorg/f7-01-inventario-y-hojas`, partida de `origin/dev` @ `8d875ab` (PR #54 dentro); `6c461c6` … `cb41b42` (1 de inventario, 4 de rojo, 17 de verde, 2 de test y 4 `fix` de D-F7-8) más los commits documentales; **PR #55** hacia `dev`, **integrar sin squash**. Sin *worktrees*.
 - **F6-06 (cierre local de F6)**: rama `reorg/f6-06-cierre-local`, partida de `origin/dev` @ `68e68a4` (PR #52 y #53 dentro); **solo** el cierre documental (`docs(reorganizacion-modular): F6 cerrada`); PR hacia `dev`, **integrar sin squash**. Los dos *worktrees* de los sub-agentes de mutantes, borrados. `origin/main` sin tocar.
 - **F6-05** (✎ F6-06: los dos PR, #52 y #53, **integrados** en `dev` @ `68e68a4`, sin squash): **F6-05a**, rama `reorg/f6-05a-cara-solicitudes`, partida de `dev` @ `40dc145`; `2cc4cde` … `6675927` (23 commits: 4 de rojo, 18 de verde y 1 de test) y el cierre documental `72ded2c`; **PR #52**. **F6-05b**, rama `reorg/f6-05b-conmutar-solicitudes`, partida de la anterior @ `72ded2c`; `79f274e` (1 commit de conmutar) y el cierre documental; PR hacia `dev`, **después del #52**. Los dos, **integrar sin squash**. Sin *worktrees* (los cinco de los sub-agentes, borrados). `origin/main` sin tocar.
@@ -1202,7 +1202,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Para retomar
 
-0. **Siguiente sesión**: **F7-03** ([`F7-03-web-pipeline-reanalisis`](plan/sesiones/F7-03-web-pipeline-reanalisis.md): `pipeline`, `intakeahead`, `reanalisis`), cuando el PR de F7-02 esté integrado en `dev`, **sin squash**. Lo que F7-02 deja dicho: 🟡 decidir antes si el worker nuevo defiende de la carrera `CloseWindow` → `PutSourceText` o se porta tal cual (hallazgo 17 de F7); las firmas de `stages` que hay que cablear y sus trampas (25); ficheros que se necesitan mutuamente van en un commit (19); el rojo de un paquete grande son ≈ 65 min: F7-03 probablemente no cabe en 90 (D-R-6). Lo que dejó F7-01, que sigue valiendo: Lo que F7-01 deja dicho: cada sub-agente corre el lint de su paquete antes de devolver (hallazgo 13); el fixture de `stages` del caso ámbar se compara con `casebank.AmbarCaseText`; F7-05 corre **cinco** suites contra Postgres (hallazgos 2 y 10). Sigue pendiente de F6 para F7-04: el centinela de H1 (hallazgo 55 de F6, D-F6-13) y el plazo de G7 (59). El lint por paquete lleva `GOTOOLCHAIN=go1.26.5` delante (hallazgo 16). Para Jhoan, sin bloquear: la 🟡 del hallazgo 15 de F7 (excepción viva del anonimizador) y la del 63 de F6.
+0. **Siguiente sesión**: **F7-03** ([`F7-03-web-pipeline-reanalisis`](plan/sesiones/F7-03-web-pipeline-reanalisis.md): `pipeline`, `intakeahead`, `reanalisis`), cuando el PR de F7-02 esté integrado en `dev`, **sin squash**. Lo que F7-02 deja dicho: **D-F7-9**: la carrera `CloseWindow` → `PutSourceText` se porta tal cual y el contrato de `pipeline` lo dice (hallazgo 17 de F7; F8 hereda el arreglo); las firmas de `stages` que hay que cablear y sus trampas (25); ficheros que se necesitan mutuamente van en un commit (19); el rojo de un paquete grande son ≈ 65 min: F7-03 probablemente no cabe en 90 (D-R-6). Lo que dejó F7-01, que sigue valiendo: Lo que F7-01 deja dicho: cada sub-agente corre el lint de su paquete antes de devolver (hallazgo 13); el fixture de `stages` del caso ámbar se compara con `casebank.AmbarCaseText`; F7-05 corre **cinco** suites contra Postgres (hallazgos 2 y 10). Sigue pendiente de F6 para F7-04: el centinela de H1 (hallazgo 55 de F6, D-F6-13) y el plazo de G7 (59). El lint por paquete lleva `GOTOOLCHAIN=go1.26.5` delante (hallazgo 16). Para Jhoan, sin bloquear: la 🟡 del hallazgo 15 de F7 (excepción viva del anonimizador) y la del 63 de F6.
 1. Lee [`plan/README.md`](plan/README.md) y, si vas a ejecutar, el fichero de tu sesión en
    [`plan/sesiones/`](plan/sesiones/README.md) (él te dice qué más leer).
 2. La norma: [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md).
