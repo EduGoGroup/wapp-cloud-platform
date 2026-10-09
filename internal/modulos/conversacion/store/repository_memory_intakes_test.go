@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package store_test
 
 import (

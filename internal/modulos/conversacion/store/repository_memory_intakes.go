@@ -21,9 +21,47 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/google/uuid"
 )
+
+// newestOpenLocked devuelve, con el mutex YA tomado, la solicitud "open" del (tenant, contacto):
+// la que GetOpenIntake enseña y la que CloseIntake cierra.
+//
+// Divergencia deliberada del viejo, F8-01: si hay VARIAS abiertas —el negocio promete una, pero
+// nada lo impone— gana la MÁS RECIENTE por created_at, como el `ORDER BY created_at DESC LIMIT 1`
+// del Postgres. El viejo devolvía la primera del recorrido del mapa, una distinta en cada vuelta.
+// A igual created_at (que Postgres tampoco desempata) gana el id mayor, solo para que el
+// resultado sea estable.
+func (r *MemoryRepository) newestOpenLocked(tenantID, contactID string) (Intake, bool) {
+	var (
+		out   Intake
+		found bool
+	)
+	for _, o := range r.intakes {
+		if o.TenantID != tenantID || o.ContactID != contactID || o.Status != "open" {
+			continue
+		}
+		if !found || o.CreatedAt.After(out.CreatedAt) ||
+			(o.CreatedAt.Equal(out.CreatedAt) && o.ID > out.ID) {
+			out, found = o, true
+		}
+	}
+	return out, found
+}
+
+// headerRead es la cabecera tal como la devuelven las dos lecturas del puerto (GetOpenIntake y
+// GetIntakeByEvent): sin la nota del cliente.
+//
+// Divergencia deliberada del viejo, F8-01: el viejo devolvía la fila entera, nota incluida; la
+// proyección del Postgres no lee customer_note, y las dos lecturas tienen que dar la misma foto
+// en los dos adaptadores. La fila entera se mira con Intakes().
+func headerRead(o Intake) Intake {
+	o.CustomerNote = ""
+	return o
+}
 
 // UpsertIntake implementa Repository: inserta o actualiza (por ID) la solicitud,
 // imitando el upsert en public.intakes (Plan 016 · T0). Idempotente por o.ID: en el
@@ -46,7 +84,31 @@ import (
 //
 // Nunca devuelve error.
 func (r *MemoryRepository) UpsertIntake(ctx context.Context, o Intake) error {
-	panic(pendiente.Implementar("store.MemoryRepository.UpsertIntake"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	if prev, ok := r.intakes[o.ID]; ok {
+		o.CreatedAt = prev.CreatedAt
+		// Misma semántica que el COALESCE(intakes.event_id, EXCLUDED.event_id) del
+		// Postgres (D-043.21): un padre ya declarado JAMÁS se pisa; un vacío legado
+		// sí se estampa. Si aquí se sobrescribiera, un test unitario daría por
+		// buena una escritura que en producción no puede ocurrir.
+		if prev.EventID != "" {
+			o.EventID = prev.EventID
+		}
+		// Divergencia deliberada del viejo, F8-01: la nota NO se pisa. El viejo guardaba
+		// la del argumento y por tanto BORRABA la que puso el cierre; el UPDATE del
+		// Postgres ni menciona customer_note.
+		o.CustomerNote = prev.CustomerNote
+	} else {
+		o.CreatedAt = now
+		// Divergencia deliberada del viejo, F8-01 (la misma): en el alta la nota nace
+		// vacía, como el DEFAULT '' de la columna, traiga lo que traiga el argumento.
+		o.CustomerNote = ""
+	}
+	o.UpdatedAt = now
+	r.intakes[o.ID] = o
+	return nil
 }
 
 // GetOpenIntake implementa Repository: devuelve la solicitud "open" del contacto para
@@ -60,7 +122,13 @@ func (r *MemoryRepository) UpsertIntake(ctx context.Context, o Intake) error {
 // proyección que la del Postgres, que no lee esa columna (store.Intake.CustomerNote).
 // Quien quiera ver la nota en un test usa Intakes(). Nunca devuelve error.
 func (r *MemoryRepository) GetOpenIntake(ctx context.Context, tenantID, contactID string) (Intake, bool, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.GetOpenIntake"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	open, found := r.newestOpenLocked(tenantID, contactID)
+	if !found {
+		return Intake{}, false, nil
+	}
+	return headerRead(open), true, nil
 }
 
 // GetIntakeByEvent implementa IntakeReader: la solicitud del tenant que declara
@@ -84,7 +152,25 @@ func (r *MemoryRepository) GetOpenIntake(ctx context.Context, tenantID, contactI
 // La cabecera sale con CustomerNote "", igual que en GetOpenIntake y por lo mismo: las
 // dos lecturas devuelven exactamente la misma foto. Nunca devuelve error.
 func (r *MemoryRepository) GetIntakeByEvent(ctx context.Context, tenantID, eventID string) (Intake, bool, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.GetIntakeByEvent"))
+	if eventID == "" {
+		return Intake{}, false, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var (
+		out   Intake
+		found bool
+	)
+	for _, o := range r.intakes {
+		if o.TenantID != tenantID || o.EventID != eventID {
+			continue
+		}
+		if !found || o.CreatedAt.Before(out.CreatedAt) ||
+			(o.CreatedAt.Equal(out.CreatedAt) && o.ID < out.ID) {
+			out, found = o, true
+		}
+	}
+	return headerRead(out), found, nil
 }
 
 // ListIntakeItems implementa Repository: devuelve las líneas de la solicitud en el
@@ -100,7 +186,15 @@ func (r *MemoryRepository) GetIntakeByEvent(ctx context.Context, tenantID, event
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "store: listar líneas de solicitud: id %q inválido: %w"
 func (r *MemoryRepository) ListIntakeItems(ctx context.Context, intakeID string) ([]IntakeItem, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.ListIntakeItems"))
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return nil, fmt.Errorf("store: listar líneas de solicitud: id %q inválido: %w", intakeID, err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	src := r.intakeItems[intakeID]
+	out := make([]IntakeItem, len(src))
+	copy(out, src)
+	return out, nil
 }
 
 // ReplaceIntakeItems implementa Repository: deja las líneas de CLIENTE de la
@@ -120,7 +214,39 @@ func (r *MemoryRepository) ListIntakeItems(ctx context.Context, intakeID string)
 // acumulando, los tests unitarios verían un pedido sin duplicados que en Postgres
 // SÍ los tendría, y estarían mintiendo justo sobre lo que esta tarea arregla.
 func (r *MemoryRepository) ReplaceIntakeItems(ctx context.Context, intakeID string, items []IntakeItem) error {
-	panic(pendiente.Implementar("store.MemoryRepository.ReplaceIntakeItems"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.replaceIntakeItemsLocked(intakeID, items)
+	return nil
+}
+
+// replaceIntakeItemsLocked es el reemplazo con el mutex YA tomado: lo comparten
+// ReplaceIntakeItems y CloseIntake, que necesita hacerlo dentro de su propia sección
+// crítica (el equivalente de su transacción).
+//
+// Conserva las líneas de LA PLATAFORMA (prefijo reservado) al frente, que es donde
+// las deja Postgres cuando existen: se escriben antes de cualquier reemplazo posterior
+// y la lectura ordena por added_at.
+func (r *MemoryRepository) replaceIntakeItemsLocked(intakeID string, items []IntakeItem) {
+	now := r.now()
+	kept := make([]IntakeItem, 0, len(items))
+	for _, it := range r.intakeItems[intakeID] {
+		if strings.HasPrefix(it.SKU, reservedSKUPrefix) {
+			kept = append(kept, it)
+		}
+	}
+	for _, it := range items {
+		it.IntakeID = intakeID
+		if it.AddedAt.IsZero() {
+			it.AddedAt = now
+		}
+		kept = append(kept, it)
+	}
+	if len(kept) == 0 {
+		delete(r.intakeItems, intakeID)
+		return
+	}
+	r.intakeItems[intakeID] = kept
 }
 
 // MarkIntakeStatus implementa Repository: transiciona el estado de la solicitud (por
@@ -129,7 +255,15 @@ func (r *MemoryRepository) ReplaceIntakeItems(ctx context.Context, intakeID stri
 // ID y nada más: no acota por tenant ni valida `status`. No toca las líneas ni ningún
 // otro campo de la cabecera. Nunca devuelve error.
 func (r *MemoryRepository) MarkIntakeStatus(ctx context.Context, intakeID, status string, total float64) error {
-	panic(pendiente.Implementar("store.MemoryRepository.MarkIntakeStatus"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if o, ok := r.intakes[intakeID]; ok {
+		o.Status = status
+		o.Total = total
+		o.UpdatedAt = r.now()
+		r.intakes[intakeID] = o
+	}
+	return nil
 }
 
 // CloseIntake implementa Repository: cierra atómicamente (bajo el mutex del repo) la
@@ -149,7 +283,42 @@ func (r *MemoryRepository) MarkIntakeStatus(ctx context.Context, intakeID, statu
 // ReplaceIntakeItems (las de la plataforma sobreviven; in.Items vacío deja la
 // solicitud sin líneas de cliente). Nunca devuelve error.
 func (r *MemoryRepository) CloseIntake(ctx context.Context, in IntakeClose) (string, error) {
-	panic(pendiente.Implementar("store.MemoryRepository.CloseIntake"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	var intakeID string
+	if o, found := r.newestOpenLocked(in.TenantID, in.ContactID); found {
+		intakeID = o.ID
+		o.Status = "closed"
+		o.Total = in.Total
+		o.CustomerNote = in.CustomerNote
+		// COALESCE(event_id, $n), como el UPDATE del Postgres (D-043.21): el
+		// cierre rellena un NULL legado y jamás pisa un padre ya declarado.
+		if o.EventID == "" {
+			o.EventID = in.EventID
+		}
+		o.UpdatedAt = now
+		r.intakes[intakeID] = o
+	} else {
+		intakeID = uuid.NewString()
+		r.intakes[intakeID] = Intake{
+			ID:           intakeID,
+			TenantID:     in.TenantID,
+			ContactID:    in.ContactID,
+			SessionID:    in.SessionID,
+			Status:       "closed",
+			Total:        in.Total,
+			CustomerNote: in.CustomerNote,
+			EventID:      in.EventID,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+	}
+	// REEMPLAZO, no acumulación: la solicitud puede llegar al cierre con las líneas
+	// que la proyección de item_added ya materializó (mismo motivo, y mismo orden de
+	// operaciones, que en el PostgresRepository).
+	r.replaceIntakeItemsLocked(intakeID, in.Items)
+	return intakeID, nil
 }
 
 // Intakes devuelve una copia de TODAS las solicitudes guardadas (las de UpsertIntake
@@ -157,7 +326,13 @@ func (r *MemoryRepository) CloseIntake(ctx context.Context, in IntakeClose) (str
 // fila ENTERA, CustomerNote incluida. Es un helper de test; devuelve una copia para no
 // exponer el mapa interno.
 func (r *MemoryRepository) Intakes() []Intake {
-	panic(pendiente.Implementar("store.MemoryRepository.Intakes"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Intake, 0, len(r.intakes))
+	for _, o := range r.intakes {
+		out = append(out, o)
+	}
+	return out
 }
 
 // IntakeItems devuelve una copia de las líneas persistidas para intakeID por
@@ -165,5 +340,10 @@ func (r *MemoryRepository) Intakes() []Intake {
 // orden del carrito, y el que da la lectura real por added_at, id). Es un helper de
 // test; devuelve una copia para no exponer el slice interno.
 func (r *MemoryRepository) IntakeItems(intakeID string) []IntakeItem {
-	panic(pendiente.Implementar("store.MemoryRepository.IntakeItems"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	src := r.intakeItems[intakeID]
+	out := make([]IntakeItem, len(src))
+	copy(out, src)
+	return out
 }

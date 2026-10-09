@@ -201,3 +201,15 @@ type IntakeClose struct {
 	EventID string
 	Items   []IntakeItem
 }
+
+// reservedSKUPrefix es el prefijo de los skus que pone LA PLATAFORMA (hoy solo la
+// línea de envío, D-041.11) y que ninguna escritura del carrito puede tirar. Lo usan
+// los DOS adaptadores: el gemelo en memoria y el DELETE del Postgres.
+//
+// Es el MISMO literal que intakes.ReservedSKUPrefix, de quien es la regla, y se
+// repite aquí en vez de importarlo a propósito: este paquete es el almacén del motor
+// de flujos y no debe depender del dominio de solicitudes para escribir una tabla.
+// Lo que impide que los dos literales diverjan no es la disciplina sino un test
+// (TestMemoryRepository_ReservedPrefix_IsTheOneOfIntakes), que los compara por
+// conducta.
+const reservedSKUPrefix = "_"
