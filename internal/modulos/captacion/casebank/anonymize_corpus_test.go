@@ -23,8 +23,8 @@ import (
 // dice qué devolvía el viejo.
 //
 // 🔴 OTRAS FILAS FIJAN UN AGUJERO, NO UN ACIERTO: un teléfono en dígitos
-// árabes-índicos o de ancho completo, con un espacio duro por medio, o dos
-// teléfonos seguidos, PASAN ENTEROS. Están aquí para que el día que alguien cierre
+// árabes-índicos o de ancho completo, o con un espacio duro por medio, PASAN
+// ENTEROS. Están aquí para que el día que alguien cierre
 // uno se entere de que cambia el alcance (y lo quite de la cabecera de
 // anonymize.go), no para darlos por buenos.
 
@@ -75,10 +75,13 @@ func adversarialCorpus() []corpusCase {
 		{"1 2 3 4 5 6 7 8", "[TELEFONO]"},
 		{"1 2 3 4 5 6 7", "1 2 3 4 5 6 7"},
 		// dos teléfonos
-		{"04121234567 04149876543", "04121234567 04149876543"},
+		// DIVERGE DEL VIEJO (hallazgo 1 de F7, decisión de Jhoan 2026-10-08): el viejo
+		// devolvía la entrada INTACTA, los dos números en claro.
+		{"04121234567 04149876543", "[TELEFONO] [TELEFONO]"},
 		{"04121234567, 04149876543", "[TELEFONO], [TELEFONO]"},
 		{"04121234567 y 04149876543", "[TELEFONO] y [TELEFONO]"},
-		{"0412-1234567\n0414-9876543", "0412-1234567\n0414-9876543"},
+		// DIVERGE DEL VIEJO (ídem): el viejo devolvía la entrada INTACTA.
+		{"0412-1234567\n0414-9876543", "[TELEFONO]\n[TELEFONO]"},
 		// pegados a texto
 		{"tel04121234567", "tel04121234567"},
 		{"04121234567bs", "04121234567bs"},
@@ -205,8 +208,10 @@ const jidAfterAccentedName = "Jos\u00e9.maria@lid"
 // aquí, una a una; hoy es una sola, y tiene su propio test.
 func TestAnonymize_ThenRemains_EmptyOverTheWholeCorpus(t *testing.T) {
 	declaredExceptions := map[string]bool{jidAfterAccentedName: true}
-	inputs := []string{jidAfterAccentedName}
-	for _, c := range adversarialCorpus() {
+	corpus := adversarialCorpus()
+	inputs := make([]string, 0, len(corpus)+1)
+	inputs = append(inputs, jidAfterAccentedName)
+	for _, c := range corpus {
 		inputs = append(inputs, c.in)
 	}
 	a := casebank.NewAnonymizer(corpusNames()...)
@@ -322,7 +327,8 @@ func TestAnonymize_GluedJIDs_ChainStuckToAWord_Untouched(t *testing.T) {
 // TestRemains_AdversarialCorpus_SameAsOld fija los hallazgos ENTEROS —clase,
 // texto e índices de byte— que devolvía el viejo: los índices con no-ASCII por
 // delante, el JID que se queda con el teléfono que lleva dentro, el nombre largo
-// antes que su prefijo y los agujeros en los que el barrido dice «limpio».
+// antes que su prefijo y los agujeros en los que el barrido dice «limpio». Las
+// filas marcadas «DIVERGE DEL VIEJO» son agujeros que el paquete nuevo cierra.
 func TestRemains_AdversarialCorpus_SameAsOld(t *testing.T) {
 	const (
 		jid   = casebank.ClassJID
@@ -355,8 +361,13 @@ func TestRemains_AdversarialCorpus_SameAsOld(t *testing.T) {
 		{"x 0412--123--4567 x", []casebank.Finding{{Class: phone, Text: "0412--123--4567", Start: 2, End: 17}}},
 		// El JID pegado por la derecha no es JID: queda el teléfono de delante.
 		{"584121234567@s.whatsapp.netx", []casebank.Finding{{Class: phone, Text: "584121234567", Start: 0, End: 12}}},
+		// DIVERGE DEL VIEJO (hallazgo 1 de F7, decisión de Jhoan 2026-10-08): el viejo
+		// devolvía «limpio» sobre dos teléfonos seguidos.
+		{"04121234567 04149876543", []casebank.Finding{
+			{Class: phone, Text: "04121234567", Start: 0, End: 11},
+			{Class: phone, Text: "04149876543", Start: 12, End: 23},
+		}},
 		// 🔴 Los agujeros: el barrido dice «limpio».
-		{"04121234567 04149876543", []casebank.Finding{}},
 		{"０４１２１２３４５６７ y 0412 123 4567", []casebank.Finding{}},
 		{"ñ584121234567@lid", []casebank.Finding{}},
 		{"", []casebank.Finding{}},

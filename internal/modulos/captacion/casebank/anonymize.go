@@ -39,7 +39,10 @@ import (
 //     por fuera, no). El suelo de 8 es lo que separa un teléfono de una CANTIDAD
 //     del pedido: «10 o 12 porciones», «paquete de 30» y «22/07» tienen que
 //     sobrevivir intactos o el dataset deja de servir para evaluar al pipeline,
-//     que es lo único para lo que existe.
+//     que es lo único para lo que existe. VARIOS TELÉFONOS SEGUIDOS, separados
+//     solo por separadores de la clase («04121234567 04149876543», o uno por
+//     línea), caen todos, cada uno con su marca (ver `splitPhoneRun`, en
+//     anonymize_phones.go, donde vive toda la mitad de teléfonos).
 //   - NOMBRES PROPIOS DE UNA LISTA QUE SE LE PASA. La comparación es insensible a
 //     mayúsculas (también en las letras acentuadas: «FUSIÓN» cae con «Fusión») y
 //     respeta los límites de palabra en Unicode, así que «ambar» y «Ambar» caen
@@ -83,12 +86,8 @@ import (
 //   - 🔴 UN TELÉFONO ESCRITO CON DÍGITOS QUE NO SON ASCII (árabes-índicos
 //     «٠٤١٢…», de ancho completo «０４１２…»): ni el candidato ni el conteo los
 //     ven. Medido en F7 (hallazgo 40), no estaba escrito.
-//   - 🔴 DOS TELÉFONOS SEGUIDOS SEPARADOS SOLO POR SEPARADORES DE LA CLASE
-//     («04121234567 04149876543», o uno por línea): el candidato los funde en UNA
-//     racha de más de 15 dígitos, que supera el techo y PASA ENTERA — los dos
-//     números, con `Remains` diciendo «limpio». Con una coma o una «y» por medio
-//     caen los dos. Medido en F7 (hallazgo 40), no estaba escrito; se conserva la
-//     conducta del viejo y se deja fijada en el corpus del test.
+//   - MÁS DE 15 DÍGITOS SEGUIDOS, sin un solo separador (un número de pedido, de
+//     cuenta): no es un teléfono ni varios, y pasa entero.
 //   - Un JID pegado a una letra o a un dígito por la derecha
 //     («…@s.whatsapp.netx») sin que lo que sigue sea otro JID: no es JID, y la
 //     pasada de teléfonos se lleva solo el número de delante, DEJANDO EL DOMINIO.
@@ -106,6 +105,10 @@ import (
 //     «tapo alguna fecha» contra «publico algún teléfono», y en un barrido de PII
 //     ese intercambio no está empatado. La fecha CORTA del pedido (`22/07`, 4
 //     dígitos) sigue intacta, que es la forma en que aparece en el caso Ambar;
+//   - desde que varios teléfonos seguidos caen todos, cualquier racha CON
+//     separadores y más de 15 dígitos se redacta como si lo fueran: una tarjeta
+//     «4111 1111 1111 1111», una cuenta escrita en grupos, dos fechas largas
+//     seguidas. Escritas sin separadores, pasan;
 //   - la parte local del JID se lleva lo que tenga pegado delante si es de su
 //     clase: «grupo:120363…@g.us» se redacta entero, «grupo:» incluido;
 //   - desde que la cadena de JID pegados cae entera, un JID pegado por la derecha
@@ -153,44 +156,8 @@ const (
 	MarkName = "[NOMBRE]"
 )
 
-// Los dos umbrales del teléfono, en DÍGITOS (no en longitud de la cadena: los
-// separadores no cuentan).
-//
-// 🔴 EL SUELO ES EL PARÁMETRO QUE IMPORTA. Con 8, «10 o 12 porciones», «paquete
-// de 30» y «22/07» sobreviven; con 6 se empezarían a comer cantidades del pedido
-// y el banco de casos dejaría de poder evaluar a P4, que es justo la etapa que
-// vive de esos números. El techo de 15 es el máximo de E.164: por encima ya no es
-// un teléfono, es un identificador de otra cosa, y este fichero no sabe de cuál.
-const (
-	minPhoneDigits = 8
-	maxPhoneDigits = 15
-)
-
-var (
-	// reJID exige uno de los CINCO dominios de WhatsApp. Ver «lo que no cubre».
-	reJID = regexp.MustCompile(`(?i)[0-9A-Za-z._:\-]+@(?:s\.whatsapp\.net|g\.us|c\.us|lid|broadcast)`)
-
-	// rePhoneCandidate (antes `reCandidatoTelefono`) es solo el CANDIDATO: empieza
-	// y acaba en dígito y admite separadores por medio. Quién es teléfono de
-	// verdad lo decide el conteo de dígitos, no este patrón — meterlo en la
-	// expresión regular obligaría a enumerar formatos y se escaparía el primero
-	// que no estuviera en la lista.
-	//
-	// 🔴 LA CLASE DE SEPARADORES ES EL PUNTO FRÁGIL DE TODO ESTE FICHERO, y hay
-	// que decirlo aquí porque no se ve: un separador que NO esté en la clase no
-	// produce un recorte parcial, produce un PASE ENTERO. `0412/1234567` con la
-	// barra fuera de la clase no casa por ningún lado —ni «0412» ni «1234567»
-	// llegan a 8 dígitos por separado— así que el número sale intacto Y `Remains`
-	// dice «cero hallazgos» sobre un teléfono completo. Ese fallo se midió el
-	// 2026-08-27 con `/`, `_` y el salto de línea, los tres a la vez.
-	//
-	// Por eso la clase es DELIBERADAMENTE ANCHA: barra, guion bajo, guion, punto,
-	// paréntesis, espacio, tabulador y los dos caracteres de fin de línea. El
-	// coste de meter uno de más es tapar alguna fecha (ver el falso positivo
-	// declarado arriba); el de dejar uno fuera es publicar un teléfono. No son
-	// errores del mismo tamaño y la clase se elige por el segundo.
-	rePhoneCandidate = regexp.MustCompile(`\+?[0-9][0-9 \t\r\n_/().\-]*[0-9]`)
-)
+// reJID exige uno de los CINCO dominios de WhatsApp. Ver «lo que no cubre».
+var reJID = regexp.MustCompile(`(?i)[0-9A-Za-z._:\-]+@(?:s\.whatsapp\.net|g\.us|c\.us|lid|broadcast)`)
 
 // Class (antes `Clase`) es la clase de dato identificable que un detector
 // reconoce.
@@ -373,19 +340,6 @@ func jidsIn(text string) [][]int {
 	return out
 }
 
-// phonesIn (antes `telefonos`) filtra los candidatos por conteo de dígitos. Es
-// donde vive la decisión que separa un teléfono de una cantidad del pedido.
-func (a Anonymizer) phonesIn(text string) [][]int {
-	out := make([][]int, 0, 2)
-	for _, loc := range findWithBoundaries(text, rePhoneCandidate) {
-		n := countDigits(text[loc[0]:loc[1]])
-		if n >= minPhoneDigits && n <= maxPhoneDigits {
-			out = append(out, loc)
-		}
-	}
-	return out
-}
-
 // namesIn (antes `nombresEn`) localiza los nombres conocidos respetando límites
 // de palabra.
 func (a Anonymizer) namesIn(text string) [][]int {
@@ -467,16 +421,4 @@ func findings(text string, locs [][]int, class Class) []Finding {
 		out = append(out, Finding{Class: class, Text: text[loc[0]:loc[1]], Start: loc[0], End: loc[1]})
 	}
 	return out
-}
-
-// countDigits (antes `digitos`) cuenta los dígitos ASCII: los de otros alfabetos
-// no cuentan (ver «lo que no cubre»).
-func countDigits(s string) int {
-	n := 0
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			n++
-		}
-	}
-	return n
 }
