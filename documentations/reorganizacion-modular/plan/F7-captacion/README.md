@@ -1,6 +1,6 @@
 # F7 · `captacion` — la cola que convierte una conversación en borrador (P2→P4, match, draft)
 
-> **Estado: cerrada** el 2026-10-09 (sesión F7-05 💻, cierre local sobre `dev` @ `53e8f51`, PR #55–#58 integrados; tres commits de test, `30b0cf4`, `51d1bbb` y `fb33953`; último commit de producción de la fase `94f0648`; `captacion` sigue fuera de `Conmutados` hasta F8; hallazgos 50–58 e informe de fase al final). Antes, en curso — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
+> **Estado: cerrada** el 2026-10-09 (sesión F7-05 💻, cierre local sobre `dev` @ `53e8f51`, PR #55–#58 integrados; cuatro commits de código, `30b0cf4`, `51d1bbb`, `fb33953` y `ca222ed` —tests y, en el último, el doble en memoria de `intake`; `ca222ed` es de la ampliación pedida por Jhoan en el mismo PR, #59, y es el último commit de código de la fase—; último commit de producción de la fase `94f0648`; `captacion` sigue fuera de `Conmutados` hasta F8; hallazgos 50–60 e informe de fase al final). Antes, en curso — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
 > ese día ([`diseno.md`](diseno.md) §1.2). **F7-01 hecha** (bloque A): `evidence`, `anclaje`, `intake`, `intentcfg` y `casebank` en verde
 > (19 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). **F7-02 hecha** (bloque B): `stages` en verde (14 ficheros de producción, hallazgo 18) y el puente `captacion/stages → internal/flujos/store` declarado. **F7-03 hecha** (bloque C, 2026-10-09): `pipeline`, `intakeahead` y `reanalisis` en verde (14 ficheros de producción y un doble, hallazgo 27), el puente `captacion/reanalisis → internal/flujos/events` declarado y el de `flujos/runtime` evitado; **pendientes del módulo = 0**. **F7-04 hecha** (bloque D, 2026-10-09): H1, E1 y E2 por la cara nueva (`apipublica/reanalyze.go`, `apipublica/intents.go`; `FaseActual = 7`, 54 rutas), el arranque nuevo cablea `captacion` con `bridge_captacion.go` hacia el agregador y el compositor viejos, `llmConfigBridge` muere, el candado INV-1 mira la captación nueva y `catalogo` entra en `Conmutados` (hallazgos 39–49); huella igual. Falta el cierre contra Postgres y contra los dos binarios (F7-05): nada de F7-04 corrió contra una base ni contra un binario (hallazgo 49). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
@@ -488,7 +488,8 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     con qué regla se cuenta): el hallazgo 2 daba 9 casos de `intentcfg`; contados como subtests son **15**. **Hallazgo 9,
     resuelto**: `Insert_InvalidExpectedJSON_RejectedAndWritesNothing` de `casebank` («sin respaldo en el viejo») **pasa** en
     Postgres: no hay que quitar el caso. Tras `fb33953` (hallazgo 52): `ContratoMachine` 30 casos y `-run TestIntake` 114
-    PASS, 0 SKIP en cada binario.
+    PASS, 0 SKIP en cada binario. Tras `ca222ed` (hallazgo 59): `ContratoQueue` 18 casos y 115 PASS, 0 SKIP; ese commit
+    encontró y corrigió una divergencia menor del doble de `intake` que los 83 casos de entonces no veían.
 51. 🔴 **El hueco del hallazgo 42 era real y mayor de lo declarado: «lo verá P4» era falso** (F7-05). Ningún proceso
     ejercitaba el adelanto por clasificación. Sonda con contadores sobre la suite entera contra `nuevo`: `classifiedSink`
     **0** invocaciones, `aheadBridge.Request` 67, `composerBridge.ComposeAtFlush` 9. Mutantes: (M1) la clausura de
@@ -508,7 +509,7 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     los dos mutantes vivos (M1 en `p4_borrador_ahead_test.go:162`, M2 en `:126`). **Sin divergencia viejo ↔ nuevo.** M3
     produce el mismo literal que la carrera de D-F7-9 («el job no trae literal que analizar»); se distinguen porque el
     mutante falla determinista en los cinco jobs de P8.
-52. **Mutantes de las guardas SQL de `intake` contra Postgres: 78 sembrados, 8 vivos, 2 tras `fb33953`** (F7-05; hallazgo
+52. **Mutantes de las guardas SQL de `intake` contra Postgres: 78 sembrados, 8 vivos, 2 tras `fb33953`, 1 tras `ca222ed`** (F7-05; hallazgo
     11; oráculo: **solo** las tres suites, sin el test del texto; sobre `30b0cf4`). **70 muertos**: 68 por aserción y 2 por
     error SQL 42P10 (el predicado del `ON CONFLICT`: quitarlo o cambiarlo no casa con el índice parcial, así que solo muere
     por error SQL). Por fichero (sembrados/muertos/vivos): `postgres.go` 20/19/1, `machine_postgres.go` 41/34/7,
@@ -525,7 +526,9 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     `caseClaimOrder` y `caseWakeOnlyPendingInOrder` (los asertos no cambian) y
     `test/procesos/intake_claim_contrato_test.go` (122 líneas; `TestIntakeClaim_SkipsLockedRows_Postgres`, 2 subtests,
     solo-Postgres: una transacción retiene la fila que ganaría el reclamo y el reclamo debe llevarse la otra sin
-    bloquearse). **Quedan vivos y declarados (d) y (e).** El caso de `Retry` con marca pasada fija la conducta del SQL
+    bloquearse). Quedaban (d) y (e); **`ca222ed` mata (d)** (hallazgo 59). **Balance final: 78 sembrados; 70 muertos por las
+    suites tal como estaban, 6 más con `fb33953` y 1 más con `ca222ed`; queda 1 vivo, declarado y equivalente en la
+    práctica: (e).** El caso de `Retry` con marca pasada fija la conducta del SQL
     heredado (`internal/intake/machine_postgres.go:311`, `next_attempt_at = $2` a secas); el worker viejo siempre llama con
     marca futura (`pipeline.go:1014-1017`). El doble en memoria ya la cumplía: no se tocó.
 53. **E1–E2 contra el JSONB real: confirmado lo esperado** (F7-05; lo pedía el hallazgo 49). La suite de `intentcfg`
@@ -542,7 +545,7 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     `RC=0 · PASS=1111 · SKIP=0` y **viejo `RC=1 · PASS=1109 · FAIL=2`**: `TestP6_CRMBridge/callback_body_adversarial`,
     `p6_crm_test.go:270`, «write: broken pipe» al mandar el cuerpo grande tras 76 «rate-limit excedido». Es la
     intermitencia **ya anotada** (hallazgo 52 de F2 y README de F9; el mismo fallo en el cierre de F3), en código que F7 no
-    toca y con el binario viejo sin cambios. Final, sobre `fb33953`: viejo y nuevo `RC=0 · PASS=1115 · FAIL=0 · SKIP=0` (104 tests de nivel superior, sin carga en la máquina). La carrera `CloseWindow` →
+    toca y con el binario viejo sin cambios. Sobre `fb33953`, pasada intermedia verde: viejo y nuevo `RC=0 · PASS=1115 · FAIL=0 · SKIP=0`. Final, sobre `13d2e59` (último commit de código, `ca222ed`): viejo y nuevo `RC=0 · PASS=1116 · FAIL=0 · SKIP=0` (104 tests de nivel superior, sin carga en la máquina; 0 apariciones de «el job no trae literal»). La carrera `CloseWindow` →
     `PutSourceText` (hallazgo 17, D-F7-9, «el job no trae literal que analizar») **no apareció en ninguna pasada** de la
     sesión (0 apariciones en todos los logs). Sigue siendo de F8.
 55. **Dato operativo: un fichero partido de contrato en `test/procesos` tiene que TERMINAR en `_contrato_test.go`**
@@ -551,29 +554,56 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
 56. **Dato operativo: los mutantes con testcontainers no se corren en paralelo con los gates que cuentan** (F7-05).
     Hacerlo junto a `make test-procesos` sube la carga y despierta la intermitencia del rate-limit de P6 (hallazgo 54). Los
     gates que cuentan se corren **sin carga**.
-57. **Gates e invariantes de cierre** (F7-05; rc leído del log). Sobre `fb33953`: `GOWORK=off make ci-local` `GATE_RC=0` (209 `ok`, lint `0 issues.`; cobertura, informe: `FICHEROS_EVALUADOS=300`, `POR_DEBAJO=7`); `make vet-pendiente` rc=0; `make test-pendiente` rc=0, `PENDIENTES=0 · ROJOS=0`; `-v` del código nuevo rc=0, 8.353 PASS, **0 SKIP**. Antes, sobre `30b0cf4` y
+57. **Gates e invariantes de cierre** (F7-05; rc leído del log). **Finales, sobre `13d2e59`** (último commit de código, `ca222ed`; máquina sin carga): `GOWORK=off make ci-local` `GATE_RC=0` (209 `ok`, lint `0 issues.`; cobertura, informe: `FICHEROS_EVALUADOS=300`, `POR_DEBAJO=7`); `make vet-pendiente` rc=0; `make test-pendiente` rc=0, `PENDIENTES=0 · ROJOS=0`; `-v` del código nuevo rc=0, 8.355 PASS, **0 SKIP**; `make test-procesos`, en el hallazgo 54. Corridas también (en el primer cierre quedaban como «No corrido») la integración vieja, `GOFLAGS=-v INTEGRATION_PG_PORT=55432 make test-integration` (Postgres 16 efímero del propio target, `WAPP_TEST_REQUIRE_DB=1`): rc=0, 14.756 `--- PASS`, 0 FAIL, **0 `--- SKIP`** contados con `-v`; y `make ci-docker`: rc=0, lint `0 issues.`. Pasada intermedia, verde, sobre `fb33953`: `ci-local` `GATE_RC=0` y 8.353 PASS, 0 SKIP en el `-v`. Antes, sobre `30b0cf4` y
     `51d1bbb`: `GOWORK=off make ci-local` **`GATE_RC=0`** (209 `ok`, lint `0 issues.`; cobertura, informe:
     `FICHEROS_EVALUADOS=300`, `POR_DEBAJO=7`); `make vet-pendiente` rc=0; `-v` del código nuevo rc=0, **8.352 PASS, 0
     SKIP**. Invariantes de `reglas.md` §cierre (R7.7.c): `git diff 8d875ab..HEAD -- cmd/server cmd/casebank
     internal/bootstrap internal/publicapi` vacío; `go list -deps ./cmd/server-modular | grep -c modulos/captacion` = 8 y 0
     sobre `./cmd/server`; `captacion` fuera de `Conmutados`, que sigue en `{"acceso","edge","catalogo"}`. **No corrido**:
-    la integración vieja (no se tocó código compartido) y UAT (F10).
-58. **Para F8: lo que F7 deja heredado** (F7-05). (i) Los dos mutantes vivos y declarados de `intake` (hallazgo 52, d y e):
-    el del `ORDER BY` de `PutSourceText` pide un `Seed` en `QueueMontaje`; el `<=`/`<` de `ClaimNext` es equivalente en la
-    práctica. (ii) La carrera `CloseWindow` → `PutSourceText` (D-F7-9, hallazgo 17): portada tal cual, no vista en F7-05;
+    el arranque real de `cmd/server-modular` fuera del arnés y UAT (F10).
+58. **Para F8: lo que F7 deja heredado** (F7-05). (i) El mutante vivo y declarado de `intake` (hallazgo 52, e): el `<=`/`<`
+    de `ClaimNext`, equivalente en la práctica (el del `ORDER BY` de `PutSourceText` lo mató `ca222ed`, hallazgo 59). (ii) La carrera `CloseWindow` → `PutSourceText` (D-F7-9, hallazgo 17): portada tal cual, no vista en F7-05;
     el arreglo es de F8. (iii) 🟡 El hallazgo 43, pendiente de decisión de Jhoan, sin bloquear. (iv) `captacion` entra en
-    `Conmutados` en F8, cuando muera su adaptador `bridge_captacion.go` (hallazgo 41).
+    `Conmutados` en F8, cuando muera su adaptador `bridge_captacion.go` (hallazgo 41). (v) 🟡 Las marcas cruzadas de
+    `PutSourceText`, alcanzables por `Release`/`Retry` (hallazgo 60).
+59. **Ampliación de F7-05, pedida por Jhoan en el mismo PR: el mutante del `ORDER BY` de `PutSourceText`, muerto**
+    (`ca222ed`; hallazgo 52, d). `QueueMontaje` gana `Seed` (mismo tipo y semántica que `Table.Seed`; obligatorio en
+    `validateQueueMontaje`) y `ContratoQueue` pasa de 17 a **18 casos** con
+    `PutSourceText_CrossedMarks_LatestUpdateWins_CreationBreaksTies` (`intakehelpertest/queue_put_contrato.go`); el montaje
+    de Postgres reutiliza la siembra de las otras dos suites. Re-sembrado el mutante contra Postgres (`nuevo`): RC=1, solo
+    ese caso en rojo (`queue_put_contrato.go:119` y `:120`). `-run TestIntake`: **115 PASS, 0 SKIP** en cada binario (antes
+    114). 🟡 Tocó `internal/modulos/captacion/intake/memory.go`, el doble en memoria (`MemoryStore`, que ningún código que no
+    sea test construye): gana `Seed(Job) string` (gancho de test, como `FailOpenWith`) y cambia el desempate de
+    `lastPendingLocked`. **Divergencia menor doble ↔ Postgres, encontrada y corregida** (matiza el «ninguna divergencia»
+    del hallazgo 50, que valía para los 83 casos de entonces): a igualdad de `UpdatedAt` el doble se quedaba con la ventana
+    creada **antes**; el SQL (viejo `internal/intake/postgres.go:164` y nuevo `postgres.go:166`, idénticos), con la creada
+    después. El doble desempata ahora por `CreatedAt` más reciente (✎ divergencia con el gemelo viejo, a propósito, anotada
+    en el comentario). El caso afirma también ese empate; contra Postgres el empate **no** mata de forma determinista
+    «quitar la segunda clave». **No se comprobó** que el caso dé rojo contra el doble sin el ajuste. Las marcas cruzadas
+    **no se alcanzan por el puerto de la cola** (`intake.JobStore`): una ventana solo nace con la anterior cerrada y nada de
+    la cola mueve `updated_at` de una `pending` que no es la última; por eso hace falta `Seed`. Lo del índice único parcial
+    sale de leer el `ON CONFLICT … WHERE status = 'aggregating'` y la 0072, no de una prueba directa. En la misma
+    ampliación, `13d2e59` (docs) pone al día `plan/README.md`, cuya cabecera de estado y línea de sesiones hechas seguían
+    en el 2026-10-07.
+60. 🟡 **Para F8: las marcas cruzadas de `PutSourceText` sí se alcanzan por la máquina** (F7-05, ampliación; **leído en el
+    código, no reproducido**; conducta heredada, no se tocó). `Release` y `Retry` devuelven a `pending` un job viejo con
+    `updated_at = now()`; si ese job tiene el sobre vacío, `PutSourceText` —que elige la `pending` de `updated_at` más
+    reciente con `source_text_enc IS NULL`— escribiría en él el literal de la ventana recién cerrada. Es pariente de la
+    carrera `CloseWindow` → `PutSourceText` (hallazgo 17, D-F7-9): mismo origen, cierre y sobre no son un solo acto. Lo
+    hereda F8 con el agregador.
 
 ### Informe de fase (al cerrar F7)
 
 - **Sesiones**: F7-01 y F7-02 (2026-10-08) · F7-03 (2026-10-08/09) · F7-04 y F7-05 (2026-10-09). Minutos de pared (D-R-6):
-  F7-01 ≈ 50 + ≈ 25 de los arreglos de D-F7-8; F7-02 ≈ 100; F7-03 ≈ 106; F7-04 ≈ 20 de ejecución; F7-05 ≈ 60.
+  F7-01 ≈ 50 + ≈ 25 de los arreglos de D-F7-8; F7-02 ≈ 100; F7-03 ≈ 106; F7-04 ≈ 20 de ejecución; F7-05 ≈ 60 el cierre + ≈ 50 la ampliación pedida por
+  Jhoan en el mismo PR, casi todo espera de gates.
 - **Pendientes en cada cierre**: `PENDIENTES=0 · ROJOS=0` en los cierres de F7-01, F7-02, F7-03 y F7-04.
 - **Lo que no cuadró con la spec**: cinco suites, no cuatro (hallazgo 2); `stages` son 14 ficheros de producción, no 10
   (18); `pipeline`, `intakeahead` y `reanalisis` son 14 y un doble, no 8 (27); los candados de cableado de F0 no quedaron
   «verdes sin tocarlos» (28 y 40); T7.23 y T7.24 en un commit (39); el índice del catálogo se conmutó aquí, no en F5
   (41); «lo verá P4» era falso (42 → 51).
-- **Mutantes**: los de cada sesión, en sus hallazgos (11 y 36); contra Postgres, hallazgo 52.
-- **Lo que queda abierto de F7**: las 🟡 de los hallazgos 15, 22 y 43; lo heredado por F8 (hallazgo 58); y `casebank`
+- **Mutantes**: los de cada sesión, en sus hallazgos (11 y 36); contra Postgres, hallazgos 52 y 59 (78 sembrados, 1 vivo
+  declarado y equivalente en la práctica).
+- **Lo que queda abierto de F7**: las 🟡 de los hallazgos 15, 22 y 43; lo heredado por F8 (hallazgos 58 y 60); y `casebank`
   sin efecto en UAT hasta F10 (D-F7-2, hallazgo 1).
 
