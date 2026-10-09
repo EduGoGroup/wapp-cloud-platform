@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 import (

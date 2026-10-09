@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // audio_never_to_llm_test.go — EL CANDADO: el audio del cliente JAMÁS entra en un prompt

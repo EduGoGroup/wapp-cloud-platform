@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // Trozo de p4_test.go (E-13): LAS CANTIDADES — el paquete que jamás es `qty`, el rango

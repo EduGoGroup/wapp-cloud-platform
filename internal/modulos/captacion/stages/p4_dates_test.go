@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // Trozo de p4_test.go (E-13): LA FECHA — la calcula Go contra el `message_ts` en la zona
