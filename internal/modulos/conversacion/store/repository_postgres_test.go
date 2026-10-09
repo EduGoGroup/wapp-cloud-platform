@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package store
 
 import (
@@ -7,7 +5,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -121,23 +118,6 @@ func requireErrPrefix(t *testing.T, what string, err error, prefix string) {
 	t.Helper()
 	if err == nil || !strings.HasPrefix(err.Error(), prefix) {
 		t.Errorf("%s: err = %v, quería un error que empezara por %q", what, err, prefix)
-	}
-}
-
-// requirePgKinds exige la forma de la conversación con la base: las clases de evento, en orden.
-func requirePgKinds(t *testing.T, fake *pgFake, want ...string) {
-	t.Helper()
-	if got := fake.kinds(); !slices.Equal(got, want) {
-		t.Errorf("conversación con la base = %v, quería %v", got, want)
-	}
-}
-
-// requirePgRolledBack exige que la conversación con la base abriera una transacción y la revirtiera.
-func requirePgRolledBack(t *testing.T, fake *pgFake) {
-	t.Helper()
-	kinds := fake.kinds()
-	if len(kinds) < 2 || kinds[0] != pgBegin || kinds[len(kinds)-1] != pgRollback {
-		t.Errorf("conversación con la base = %v, quería abrir una transacción y REVERTIRLA", kinds)
 	}
 }
 

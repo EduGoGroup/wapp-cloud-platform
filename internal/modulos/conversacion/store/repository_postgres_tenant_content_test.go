@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"database/sql/driver"
+	"slices"
 	"testing"
 )
 
@@ -24,6 +25,33 @@ const (
 	pgOldBlob         = `{"v": 1}`
 	pgNewBlob         = `{"v": 2}`
 )
+
+// kinds devuelve solo la clase de cada evento, en orden: es la forma de la conversación.
+func (f *pgFake) kinds() []string {
+	seen := f.seen()
+	out := make([]string, 0, len(seen))
+	for _, e := range seen {
+		out = append(out, e.kind)
+	}
+	return out
+}
+
+// requirePgKinds exige la forma de la conversación con la base: las clases de evento, en orden.
+func requirePgKinds(t *testing.T, fake *pgFake, want ...string) {
+	t.Helper()
+	if got := fake.kinds(); !slices.Equal(got, want) {
+		t.Errorf("conversación con la base = %v, quería %v", got, want)
+	}
+}
+
+// requirePgRolledBack exige que la conversación con la base abriera una transacción y la revirtiera.
+func requirePgRolledBack(t *testing.T, fake *pgFake) {
+	t.Helper()
+	kinds := fake.kinds()
+	if len(kinds) < 2 || kinds[0] != pgBegin || kinds[len(kinds)-1] != pgRollback {
+		t.Errorf("conversación con la base = %v, quería abrir una transacción y REVERTIRLA", kinds)
+	}
+}
 
 // TestPostgres_TenantContent_DatabaseFailure_Wrapped: los cuatro métodos de una sentencia suelta
 // envuelven el fallo de la base con su prefijo literal.

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package store
 
 // El driver de database/sql de mentira sobre el que corren los repository_postgres*_test.go:
@@ -11,9 +9,6 @@ package store
 // una cosa que este adaptador necesita —las filas afectadas de un Exec se pueden guionizar a cero:
 // DeleteTenantContent y MarkWelcomed deciden por ellas— y menos una que no usa: los fallos al abrir,
 // confirmar o revertir la transacción. Sus nombres llevan el prefijo pg.
-//
-// Lleva la etiqueta `pendiente` mientras el adaptador esté en rojo: sin ella, los auxiliares
-// quedarían sin usar en el árbol normal (lint `unused`). El verde se la quita junto a los tests.
 
 import (
 	"context"
@@ -91,16 +86,6 @@ func (f *pgFake) seen() []pgEvent {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]pgEvent(nil), f.events...)
-}
-
-// kinds devuelve solo la clase de cada evento, en orden: es la forma de la conversación.
-func (f *pgFake) kinds() []string {
-	seen := f.seen()
-	out := make([]string, 0, len(seen))
-	for _, e := range seen {
-		out = append(out, e.kind)
-	}
-	return out
 }
 
 // statements devuelve solo las sentencias (exec y query), sin los eventos de transacción.
