@@ -277,12 +277,16 @@ func (w *Worker) Drain(ctx context.Context) int {
 //     `causa=<causa> stage=<etapa>: <error>`, con `ninguna` por etapa si murió antes de
 //     entrar en una; y deja un Error «pipeline: job FAILED». Tras un tropiezo las etapas
 //     siguientes NO se ejecutan. `stages.ErrJobNotProcessing` no es un tropiezo: otro
-//     terminó el job; se dice en Info y no se escribe nada.
+//     terminó el job; se dice en Info y no se escribe nada. **Tampoco lo es la parada del
+//     worker** (✎ D-F7-10): si `ctx` está cancelado cuando la etapa falla, el job vuelve
+//     a `pending` SIN castigo (`Release`: ni intento ni marca) con el Info «pipeline: job
+//     devuelto a la cola SIN castigo» y `motivo` «el worker se apagó durante una etapa»;
+//     ni Warn del tropiezo ni Error. Solo el job inválido muere igual, apagándose o no.
 //  9. **El cierre**: con la cadena entera, `Finish` con el `intake_id` que devolvió
 //     `draft` (Info «pipeline: job DONE»). Si viene vacío se cierra igual, con un Warn
 //     «…termina SIN intake_id…».
 //  10. **Todo desenlace se escribe con un contexto que SOBREVIVE a la cancelación** de
-//     `ctx` (acotado a 5 s): un apagado durante una etapa deja el job reencolado, no en
+//     `ctx` (acotado a 5 s): un apagado durante una etapa deja el job devuelto, no en
 //     `processing` para siempre. Y ninguno es mudo: si la escritura falla, un Error
 //     «…queda en processing»; si no aplica (`(false, nil)`), un Info «…no aplicó (el job
 //     ya no estaba en processing)».

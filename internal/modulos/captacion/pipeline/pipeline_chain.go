@@ -113,12 +113,12 @@ func (w *Worker) acquireSlot(ctx context.Context, job intake.ClaimedJob) (func()
 
 // releaseUnpunished (antes `soltarSinCastigo`) devuelve el job a `pending` TAL COMO
 // ESTABA: sin consumirle el intento y sin empujarle la marca. Es el desenlace de lo que no
-// es culpa del job —el worker se apagó esperando plaza, o el flanco a READY ya lo había
-// procesado— y por eso usa `Release` y no `Retry`.
+// es culpa del job —el worker se apagó esperando plaza o durante una etapa (D-F7-10), o el
+// flanco a READY ya lo había procesado— y por eso usa `Release` y no `Retry`.
 //
 // 🔴 Y POR ESO MISMO NO SE PUEDE USAR EN UN TROPIEZO. `Release` no toca `next_attempt_at`,
 // así que el job es reclamable EN EL ACTO: en un camino que vuelve a fallar, eso es la
-// tormenta de la 0078. Aquí es correcto porque los dos llamantes SALEN del bucle
+// tormenta de la 0078. Aquí es correcto porque los tres llamantes SALEN del bucle
 // inmediatamente después.
 func (w *Worker) releaseUnpunished(ctx context.Context, job intake.ClaimedJob, reason string) {
 	closing, cancel := w.closingCtx(ctx)

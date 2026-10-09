@@ -284,7 +284,7 @@ func TestOutcome_WritesSurviveTheCancellationOfTheWorker(t *testing.T) {
 		prepare func(r *rig, cancel func())
 		status  string
 	}{
-		{"retry", opRetry, func(r *rig, cancel func()) {
+		{"release", opRelease, func(r *rig, cancel func()) {
 			r.p2.around = func(intake.ClaimedJob) func() { return cancel }
 			r.p2.script = []step{{err: fmt.Errorf("p2: pedir las ideas principales: %w", context.Canceled)}}
 		}, intake.StatusPending},
@@ -326,6 +326,44 @@ func TestOutcome_WritesSurviveTheCancellationOfTheWorker(t *testing.T) {
 				t.Errorf("el job quedó %q, se esperaba %q: no puede quedarse en processing", got, c.status)
 			}
 		})
+	}
+}
+
+// TestOutcome_ShutdownInsideAStage_ReleasesWithoutChargingTheAttempt (D-F7-10): la parada
+// del worker no es un fallo del job. Ni en el ÚLTIMO intento: no muere, no se le cobra, no
+// se le empuja la marca y no sale ni una línea a ERROR ni el Warn del tropiezo. Con el ctx
+// vivo, el mismo error sí cobra (lo fija backoff_test.go).
+func TestOutcome_ShutdownInsideAStage_ReleasesWithoutChargingTheAttempt(t *testing.T) {
+	r := newRig(t, pipeline.Config{MaxInfraAttempts: 2})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.p3.around = func(intake.ClaimedJob) func() { return cancel }
+	r.p3.script = []step{{err: fmt.Errorf("p3: %w", context.Canceled)}}
+	row := r.healthyRow("")
+	row.Attempts = 1 // el siguiente tropiezo agotaría el techo
+	id := r.mem.Seed(row)
+
+	if found, err := r.w.RunOnce(ctx); !found || err != nil {
+		t.Fatalf("RunOnce = (%v, %v), se esperaba (true, nil)", found, err)
+	}
+
+	got := r.row(t, id)
+	if got.Status != intake.StatusPending || got.Attempts != 1 {
+		t.Errorf("el job quedó %q con attempts=%d; se esperaba pending con 1", got.Status, got.Attempts)
+	}
+	if n := len(r.store.closesOf(opRetry)) + len(r.store.closesOf(opFail)); n != 0 {
+		t.Errorf("hubo %d Retry/Fail; la parada solo devuelve el job:\n%s", n, r.log.dump())
+	}
+	r.log.requireNoErrors(t)
+	if warns := r.log.find("la etapa falló"); len(warns) != 0 {
+		t.Errorf("salió el Warn del tropiezo: la parada no es un tropiezo:\n%s", r.log.dump())
+	}
+	line := r.log.one(t, "INFO", "pipeline: job devuelto a la cola SIN castigo")
+	if line.fields["motivo"] != "el worker se apagó durante una etapa" || line.fields["job_id"] != id {
+		t.Errorf("la devolución dice %v", line.fields)
+	}
+	if r.draft.count() != 0 {
+		t.Error("la cadena siguió tras la parada")
 	}
 }
 

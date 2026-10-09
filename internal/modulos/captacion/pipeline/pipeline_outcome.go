@@ -87,6 +87,9 @@ func resume[T any](w *Worker, job intake.ClaimedJob, stage string) (*T, bool) {
 // worker terminó el job mientras esta cadena corría. Intentar Retry o Fail sobre él
 // afectaría 0 filas y el log diría «no aplicó» sin explicar por qué. Se dice lo que pasó y
 // se suelta.
+//
+// El orden importa: job que se movió, job inválido, parada del worker (D-F7-10) y, solo
+// entonces, la curva de reintentos.
 func (w *Worker) stumble(ctx context.Context, job intake.ClaimedJob, stage string,
 	elapsed time.Duration, err error) {
 	if errors.Is(err, stages.ErrJobNotProcessing) {
@@ -99,6 +102,16 @@ func (w *Worker) stumble(ctx context.Context, job intake.ClaimedJob, stage strin
 		// NI UNA VEZ. Es la definición de la causa: el job no puede salir bien por muchas
 		// veces que se intente. No hay techo que consultar porque no hay curva.
 		w.kill(ctx, job, stage, cause, err)
+		return
+	}
+	if ctx.Err() != nil {
+		// ✎ D-F7-10: el worker se está apagando y el error es el eco de esa parada, no un
+		// fallo del job. Cobrarle el intento era castigar al pedido por un despliegue; y si
+		// era el último, matarlo con una línea a ERROR. Se devuelve SIN castigo. `Release`
+		// deja el job reclamable en el acto, y aquí es correcto por lo mismo que en sus
+		// otros dos llamantes: con el ctx muerto, el bucle sale sin volver a reclamar.
+		// Va DESPUÉS del job inválido: ese no mejora por reintentar, se apague o no.
+		w.releaseUnpunished(ctx, job, "el worker se apagó durante una etapa")
 		return
 	}
 
