@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // Trozo de match_cascade_test.go (E-13): las dos promesas del PREFILTRO del barrido

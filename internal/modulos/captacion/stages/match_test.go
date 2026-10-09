@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // match_test.go — el contrato de match.go: el replay del caso Ambar, el cableado, los

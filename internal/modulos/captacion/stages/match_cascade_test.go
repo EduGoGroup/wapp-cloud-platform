@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // match_cascade_test.go — el contrato de match_cascade.go: el umbral que NO se baja

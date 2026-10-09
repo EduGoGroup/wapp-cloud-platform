@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // match_doubles_test.go — el CATÁLOGO de los tests del match y los dos dobles que hacen

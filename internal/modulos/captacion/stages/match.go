@@ -4,7 +4,9 @@ package stages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/EduGoGroup/wapp-shared/llm"
 	"github.com/EduGoGroup/wapp-shared/logger"
@@ -13,7 +15,6 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/indice"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // match.go — LA ETAPA `match` (Plan 044 · Ola 3 · T3.2): lo que P4 dejó normalizado se
@@ -238,7 +239,14 @@ type MatchArtifact struct {
 // entra (D-044.14); una línea de cantidad 0 con precio suma 0 y NO cuenta como
 // pendiente. Sin líneas devuelve `(0, 0)`.
 func (a *MatchArtifact) PartialTotal() (total float64, pending int) {
-	panic(pendiente.Implementar("stages.MatchArtifact.PartialTotal"))
+	for _, l := range a.Lines {
+		if l.UnitPrice == nil {
+			pending++
+			continue
+		}
+		total += *l.UnitPrice * float64(l.Qty)
+	}
+	return total, pending
 }
 
 // MatchInput (antes `EntradaMatch`) es todo lo que la etapa necesita del job; cada campo
@@ -261,6 +269,8 @@ type MatchInput struct {
 // store donde deja el artefacto, el comparador DETERMINISTA del bucle y —opcional— la
 // zona gris.
 type Match struct {
+	log      logger.Logger
+	store    StageStore
 	cmp      textmatch.Comparator
 	grayZone textmatch.GrayZone
 }
@@ -284,7 +294,7 @@ type MatchOption func(*Match)
 // cubierto (ver MaxGrayZoneCandidates). Sin esta opción, o con `nil`, la etapa produce
 // un borrador igual de correcto, con más renglones `unmatched` para el dueño.
 func WithGrayZone(gz textmatch.GrayZone) MatchOption {
-	panic(pendiente.Implementar("stages.WithGrayZone"))
+	return func(m *Match) { m.grayZone = gz }
 }
 
 // WithComparator (antes `ConComparador`) sustituye el comparador determinista del
@@ -293,13 +303,24 @@ func WithGrayZone(gz textmatch.GrayZone) MatchOption {
 // que traiga su propio margen (ver LengthMargin). Pasar `nil` no hace nada: la etapa no
 // se queda sin comparador.
 func WithComparator(cmp textmatch.Comparator) MatchOption {
-	panic(pendiente.Implementar("stages.WithComparator"))
+	return func(m *Match) {
+		if cmp != nil {
+			m.cmp = cmp
+		}
+	}
 }
 
 // NewMatch construye la etapa. Devuelve ErrMatchNotWired (y etapa nil) si `log` o
 // `store` es nil. Sin opciones, el comparador es DefaultCascade() y no hay zona gris.
 func NewMatch(log logger.Logger, store StageStore, opts ...MatchOption) (*Match, error) {
-	panic(pendiente.Implementar("stages.NewMatch"))
+	if log == nil || store == nil {
+		return nil, ErrMatchNotWired
+	}
+	m := &Match{log: log, store: store, cmp: DefaultCascade()}
+	for _, o := range opts {
+		o(m)
+	}
+	return m, nil
 }
 
 // Run cruza los ítems de P4 con el catálogo, persiste las líneas del presupuesto bajo
@@ -382,5 +403,82 @@ func NewMatch(log logger.Logger, store StageStore, opts ...MatchOption) (*Match,
 //     `items`, `lineas`, `total_parcial`, `lineas_sin_precio`, `avisos`,
 //     `zona_gris_llamadas` y `catalogo_articulos`.
 func (s *Match) Run(ctx context.Context, job intake.ClaimedJob, in MatchInput) (*MatchArtifact, error) {
-	panic(pendiente.Implementar("stages.Match.Run"))
+	if in.Quantities == nil {
+		return nil, ErrNoQuantities
+	}
+	if in.Index == nil {
+		return nil, ErrNoCatalog
+	}
+
+	art := &MatchArtifact{
+		Version: llm.ArtifactVersion,
+		Lines:   make([]Line, 0, len(in.Quantities.Items)+1),
+	}
+	sc := newScanner(in.Index)
+
+	for pos, it := range in.Quantities.Items {
+		s.itemLines(ctx, art, sc, pos, it)
+	}
+
+	art.Lines = append(art.Lines, shippingLine(in.Zones))
+	s.orderNote(art, in.Note, job.ID)
+
+	if err := s.persist(ctx, job.ID, art); err != nil {
+		return nil, err
+	}
+
+	// El total es una VISTA de las líneas: congelarlo en el artefacto crearía un
+	// segundo número que se desincroniza del primero en cuanto el dueño toque un precio.
+	total, pending := art.PartialTotal()
+	s.log.Info("match: catálogo cruzado y líneas construidas",
+		"job_id", job.ID, "stage", intake.StageMatch,
+		"items", len(in.Quantities.Items), "lineas", len(art.Lines),
+		"total_parcial", total, "lineas_sin_precio", pending,
+		"avisos", len(art.Warnings), "zona_gris_llamadas", art.GrayZoneCalls,
+		"catalogo_articulos", in.Index.Articulos())
+	return art, nil
+}
+
+// orderNote sanea la indicación del pedido entero y la deja en la cabecera.
+//
+// 🔴 REUSA intakes.SanitizeNote: el carrito numérico y este pipeline son los dos
+// productores de `intakes.customer_note` y de `intake_items.customization`, y una copia
+// de la regla haría que la columna tuviera dos contratos y ninguno fuera verdad.
+//
+// Una nota demasiado larga NO se trunca y NO tumba nada: truncar «…y sin maní» pierde
+// justo el final, que es donde va el alérgeno (REQ-33e); y tirar el borrador entero por
+// la nota sería perder el pedido por el margen.
+func (s *Match) orderNote(art *MatchArtifact, note OrderNote, jobID string) {
+	if note == "" {
+		return
+	}
+	clean, err := intakes.SanitizeNote(string(note))
+	if err != nil {
+		// El error NO cita la nota: es texto del cliente (ADR-0034).
+		s.log.Warn("match: la nota del pedido no cabe y se descarta SIN truncar",
+			"job_id", jobID, "stage", intake.StageMatch, "error", err.Error())
+		return
+	}
+	art.CustomerNote = clean
+}
+
+// persist deja el artefacto bajo `artifacts.match`. Mismo patrón que las etapas LLM: si
+// el UPDATE no toca la fila es que el job ya no está en `processing` —lo soltó el
+// watchdog, o lo terminó otro— y eso NO es un error de esta etapa.
+func (s *Match) persist(ctx context.Context, jobID string, art *MatchArtifact) error {
+	payload, err := json.Marshal(art)
+	if err != nil {
+		return fmt.Errorf("match: serializar el artefacto: %w", err)
+	}
+	saved, err := s.store.SaveStage(ctx, jobID, intake.Artifact{
+		Stage:   intake.StageMatch,
+		Payload: payload,
+	})
+	if err != nil {
+		return fmt.Errorf("match: persistir el artefacto: %w", err)
+	}
+	if !saved {
+		return ErrJobNotProcessing
+	}
+	return nil
 }

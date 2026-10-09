@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // Trozo de match_test.go (E-13): lo que Match.Run hace AL FINAL, que es del pedido

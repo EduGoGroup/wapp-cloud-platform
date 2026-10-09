@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // Trozo de match_test.go (E-13): las reglas POR ÍTEM de Match.Run — personalizaciones,

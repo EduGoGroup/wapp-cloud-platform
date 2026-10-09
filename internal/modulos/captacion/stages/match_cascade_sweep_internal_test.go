@@ -126,3 +126,29 @@ func TestDiscardedByBound_NeverDiscardsWhatTheCascadeMatches(t *testing.T) {
 		t.Fatalf("el prefiltro solo descartó %d pares; tiene que estar descartando de verdad", discarded)
 	}
 }
+
+// TestDiscardedByBound_EachBoundDiscardsOnItsOwn: las dos cotas son independientes y
+// cada una descarta pares que la otra deja pasar. Apagar una no cambia ninguna línea
+// —siguen siendo cotas inferiores—, solo el coste, así que desde fuera no se ve.
+func TestDiscardedByBound_EachBoundDiscardsOnItsOwn(t *testing.T) {
+	discards := func(a, b string) bool {
+		return discardedByBound(utf8.RuneCountInString(a), utf8.RuneCountInString(b), profileOf(a), profileOf(b))
+	}
+	// Solo la de LONGITUD: 10 contra 8 runas iguales. Tope 1; la composición da ⌈2/2⌉ = 1
+	// y no descarta, la diferencia de longitudes (2) sí.
+	long, short := "aaaaaaaaaa", "aaaaaaaa"
+	if got := profileOf(long).bound(profileOf(short)); got != 1 {
+		t.Fatalf("cota de composición = %d; el fixture exige que sea 1 (no descarta por sí sola)", got)
+	}
+	if !discards(long, short) || !discards(short, long) {
+		t.Fatal("dos textos que difieren en 2 runas de longitud con tope 1 se descartan por longitud, en los dos sentidos")
+	}
+	// Solo la de COMPOSICIÓN: misma longitud, ninguna letra en común.
+	if !discards("abcdefghij", "klmnopqrst") {
+		t.Fatal("dos textos de igual longitud sin una letra en común se descartan por composición")
+	}
+	// Y el borde que NO se descarta: la distancia igual al tope (1 de 1).
+	if discards("aaaaaaaaaa", "aaaaaaaaa") || discards("hamburguesa", "hamburgueza") {
+		t.Fatal("un par a distancia igual al tope no se descarta")
+	}
+}
