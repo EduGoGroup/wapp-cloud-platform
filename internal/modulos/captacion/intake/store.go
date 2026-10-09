@@ -163,6 +163,12 @@ type OpenJob struct {
 // La cuarta —PutSourceText, T1.4— es también de fuera de línea, y el sink no la
 // puede usar aunque la tenga delante: pide un sobre YA cifrado y el sink no tiene
 // cipher (ver SourceText).
+//
+// 🔴 LA CLAVE INCOMPLETA SE RECHAZA EN LAS TRES ESCRITURAS (OpenOrAppend, CloseWindow
+// y PutSourceText): con una WindowKey que no es Valid devuelven error —cada una con su
+// texto— y no escriben nada. Vale para TODA implementación, el gemelo en memoria
+// incluido (hallazgo 7 de F7); lo afirma intakehelpertest.ContratoQueue. En
+// PutSourceText la clave se mira antes que el sobre.
 type JobStore interface {
 	// OpenOrAppend abre la ventana si no existía y le añade las referencias del
 	// mensaje si ya existía, en UNA SOLA SENTENCIA y sin ninguna lectura

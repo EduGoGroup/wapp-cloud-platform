@@ -27,7 +27,8 @@
 // Un fichero por tema; los de casos y de apoyo terminan en _contrato.go:
 //   - contrato.go: la entrada. Row, los tres Montajes, las tres suites y sus tablas de casos.
 //   - fixtures_contrato.go: las siembras, la marca de estado (la fila ENTERA) y sus aserciones.
-//   - queue_contrato.go y queue_put_contrato.go: los casos de la cola.
+//   - queue_contrato.go, queue_put_contrato.go y queue_key_contrato.go (la clave de ventana
+//     incompleta): los casos de la cola.
 //   - machine_contrato.go y machine_transitions_contrato.go: los de la máquina.
 //   - reanalysis_contrato.go: los del segundo productor.
 //
@@ -161,10 +162,12 @@ type ReanalysisMontaje struct {
 // salvo lo que el caso dice que cambia. Cada caso que escribe deja además un testigo en el otro
 // tenant con la MISMA sesión, contacto y evento, y comprueba al final que no se movió.
 //
+// La clave de ventana incompleta SÍ se afirma, texto del error incluido (queue_key_contrato.go):
+// el gemelo viejo no la validaba y abría la ventana; desde el hallazgo 7 de F7 la rechaza igual
+// que intake.Postgres.
+//
 // Lo que la suite NO afirma, a propósito:
 //
-//   - la clave de ventana incompleta: intake.Postgres la rechaza con error y el gemelo viejo no
-//     la valida (abre la ventana). Es una divergencia heredada; la fija el test del adaptador;
 //   - la ventana que se reabre tras un job `failed` o `done`: por este puerto no se llega a un
 //     terminal. El índice es parcial, así que es el mismo camino que tras un `pending`;
 //   - el orden de ListAggregating entre dos ventanas creadas en el mismo instante;
@@ -261,9 +264,11 @@ func queueCases() []contractCase[QueueMontaje] {
 		{"OpenOrAppend_NoRefsAndNoMessageTS_AreLegitimate", caseOpenWithoutRefs},
 		{"OpenOrAppend_AfterClose_OpensASecondWindowAndLeavesTheClosedOne", caseReopenAfterClose},
 		{"OpenOrAppend_EachPieceOfTheKey_IsItsOwnWindow", caseKeyIsTheFourColumns},
+		{"OpenOrAppend_IncompleteKey_ErrorAndNothingWritten", caseOpenIncompleteKey},
 		// CloseWindow.
 		{"CloseWindow_LiveWindow_TrueOnceThenFalseAndUntouched", caseCloseOnce},
 		{"CloseWindow_NoLiveWindowForTheKey_FalseAndNothingTouched", caseCloseWithoutLiveWindow},
+		{"CloseWindow_IncompleteKey_ErrorAndNothingTouched", caseCloseIncompleteKey},
 		// ListAggregating.
 		{"ListAggregating_EmptyTable_NothingAndNoError", caseListEmpty},
 		{"ListAggregating_OnlyLiveWindows_OldestFirstWithBothAnchors", caseListLiveWindows},
@@ -273,6 +278,8 @@ func queueCases() []contractCase[QueueMontaje] {
 		{"PutSourceText_SeveralClosedWindows_OnlyTheMostRecentOne", casePutPicksTheLatestPending},
 		{"PutSourceText_NoClosedWindow_FalseAndNothingTouched", casePutWithoutPending},
 		{"PutSourceText_IncompleteEnvelope_ErrorAndNothingWritten", casePutIncompleteEnvelope},
+		// La clave de ventana incompleta (queue_key_contrato.go).
+		{"PutSourceText_IncompleteKey_ErrorBeforeTheEnvelopeAndNothingWritten", casePutIncompleteKey},
 	}
 }
 

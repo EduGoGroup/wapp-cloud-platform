@@ -5,6 +5,7 @@ package intake
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -63,7 +64,7 @@ type Counters struct {
 }
 
 // MemoryStore implementa JobStore en memoria, con la MISMA semántica que la
-// implementación Postgres en las CUATRO cosas que muerden:
+// implementación Postgres en las CINCO cosas que muerden:
 //
 //  1. como mucho UNA ventana viva por tupla (el índice único PARCIAL de la 0072);
 //  2. `MessageTS` se fija SOLO al abrir, nunca al ampliar, y `UpdatedAt` se mueve en
@@ -72,9 +73,15 @@ type Counters struct {
 //     híbrida se probaría contra un reloj congelado);
 //  3. `CloseWindow` es idempotente por el guard de estado;
 //  4. `PutSourceText` escribe en la ÚLTIMA ventana `pending` de la tupla y solo si
-//     su sobre estaba vacío (T1.4 — la subconsulta y el guard de putSourceTextSQL).
+//     su sobre estaba vacío (T1.4 — la subconsulta y el guard de putSourceTextSQL);
+//  5. una clave de ventana incompleta (WindowKey.Valid) se RECHAZA en las tres escrituras, con
+//     el mismo texto que Postgres y sin tocar ninguna fila.
 //
-// Si alguna de las cuatro divergiera, los tests dejarían de probar lo que creen que
+// ✎ DIVERGENCIA CON EL VIEJO, a propósito (hallazgo 7 de F7): el gemelo viejo no validaba la
+// clave y abría la ventana, de modo que un test en memoria daba por buena una llamada que en
+// producción es un error.
+//
+// Si alguna de las cinco divergiera, los tests dejarían de probar lo que creen que
 // prueban — que es exactamente el riesgo de todo doble en memoria.
 type MemoryStore struct {
 	mu   sync.Mutex
@@ -93,7 +100,8 @@ type MemoryStore struct {
 
 // errIncompleteEnvelope es el equivalente en memoria del rechazo que hace Postgres
 // cuando le llega un sobre a medias. Es un error propio y no el mismo objeto que el
-// de postgres.go a propósito: el doble replica el COMPORTAMIENTO, no el texto.
+// de postgres.go a propósito: el doble replica el COMPORTAMIENTO, no el texto. (Los
+// tres rechazos de la clave incompleta sí llevan el texto de Postgres, literal.)
 var errIncompleteEnvelope = errors.New("intake: sobre del literal incompleto (son las tres o ninguna)")
 
 // NewMemoryStore construye el doble. `now` puede ser nil (usa time.Now).
@@ -174,6 +182,11 @@ func (m *MemoryStore) OpenOrAppend(_ context.Context, a Append) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cnt.OpenOrAppend++
+	// La clave se mira ANTES que el fallo inyectado, como en Postgres, donde se rechaza
+	// antes de llegar a la base (que es lo que failOpen simula). La llamada cuenta igual.
+	if !a.Key.Valid() {
+		return fmt.Errorf("intake: clave de ventana incompleta (tenant/session/contact/event)")
+	}
 	if m.failOpen != nil {
 		return m.failOpen
 	}
@@ -211,6 +224,9 @@ func (m *MemoryStore) CloseWindow(_ context.Context, k WindowKey) (bool, error) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cnt.Close++
+	if !k.Valid() {
+		return false, fmt.Errorf("intake: clave de ventana incompleta al cerrar")
+	}
 	live := m.liveLocked(k)
 	if live == nil {
 		return false, nil // idempotente: ya estaba cerrada (o nunca existió).
@@ -239,11 +255,15 @@ func (m *MemoryStore) lastPendingLocked(k WindowKey) *Job {
 }
 
 // PutSourceText implementa JobStore con la MISMA semántica que Postgres: la última
-// ventana cerrada de la tupla, y solo si su sobre estaba vacío.
+// ventana cerrada de la tupla, y solo si su sobre estaba vacío. Y con su mismo orden
+// de rechazos: la clave, el fallo de la base (aquí, el inyectado) y el sobre.
 func (m *MemoryStore) PutSourceText(_ context.Context, k WindowKey, env SourceText) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cnt.PutSourceText++
+	if !k.Valid() {
+		return false, fmt.Errorf("intake: clave de ventana incompleta al guardar el literal")
+	}
 	if m.failPut != nil {
 		return false, m.failPut
 	}

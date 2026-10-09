@@ -231,6 +231,33 @@ func TestMemoryStore_PutSourceText_IncompleteEnvelopeMessage(t *testing.T) {
 	}
 }
 
+// TestMemoryStore_IncompleteKey_CountsAndComesBeforeTheInjectedFailure: la llamada rechazada por
+// su clave CUENTA en el presupuesto (cuenta llamadas, como las fallidas), y la clave se mira antes
+// que el fallo inyectado, que simula la base: a Postgres esa llamada ni le llega.
+func TestMemoryStore_IncompleteKey_CountsAndComesBeforeTheInjectedFailure(t *testing.T) {
+	store := intake.NewMemoryStore(newMemoryClock().Now)
+	ctx := context.Background()
+	boom := errors.New("la base no contesta")
+	store.FailOpenWith(boom)
+	store.FailPutWith(boom)
+	noEvent := key("")
+	if err := store.OpenOrAppend(ctx, intake.Append{Key: noEvent}); err == nil || errors.Is(err, boom) {
+		t.Errorf("OpenOrAppend = %v, quería el rechazo de la clave y no el fallo inyectado", err)
+	}
+	if ok, err := store.CloseWindow(ctx, noEvent); err == nil || ok {
+		t.Errorf("CloseWindow = (%v, %v), quería (false, el rechazo de la clave)", ok, err)
+	}
+	if ok, err := store.PutSourceText(ctx, noEvent, fullEnvelope()); err == nil || errors.Is(err, boom) || ok {
+		t.Errorf("PutSourceText = (%v, %v), quería (false, el rechazo de la clave) y no el fallo inyectado", ok, err)
+	}
+	if got, want := store.Counters(), (intake.Counters{OpenOrAppend: 1, Close: 1, PutSourceText: 1}); got != want {
+		t.Errorf("Counters = %+v, quería %+v (las rechazadas cuentan)", got, want)
+	}
+	if jobs := store.Jobs(); len(jobs) != 0 {
+		t.Errorf("las llamadas rechazadas dejaron %d filas: %+v", len(jobs), jobs)
+	}
+}
+
 // TestMemoryStore_Jobs_CopiesInCreationOrder: Jobs devuelve las filas en orden de creación —con
 // más de nueve también: "job-10" va después de "job-9"—, con ids "job-N" correlativos, y como
 // copias: mutar lo devuelto no toca el store.
