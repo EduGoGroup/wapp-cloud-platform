@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // reanalyze_errors_test.go — la política de códigos de H1 del contrato de MountReanalyze: qué

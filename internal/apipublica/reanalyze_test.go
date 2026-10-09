@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // reanalyze_test.go — cubre el contrato de reanalyze.go (ReanalysisService, ReanalyzeDeps,
