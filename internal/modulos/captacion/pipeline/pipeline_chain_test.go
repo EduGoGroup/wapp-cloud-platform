@@ -304,7 +304,11 @@ func TestChain_ZonesReachTheMatch(t *testing.T) {
 // degradación sería indistinguible de un tenant sin zonas.
 func TestChain_ZonesThatCannotBeRead_CostOneLineNotTheOrder(t *testing.T) {
 	r := newParts(t)
-	spy := &tenantSpy{err: errors.New("tenant_settings no contesta")}
+	// La lectura falla Y trae algo: lo que venga con un error no se usa.
+	spy := &tenantSpy{
+		err:   errors.New("tenant_settings no contesta"),
+		zones: []intakes.ShippingZone{{Code: "z1", Label: "A medias", Price: 1}},
+	}
 	r.build(t, pipeline.Config{}, pipeline.WithShippingZones(spy), pipeline.WithClock(r.clock.Now))
 	id := r.seed("")
 	r.run(t, id, intake.StatusDone)

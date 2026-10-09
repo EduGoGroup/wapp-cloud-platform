@@ -44,7 +44,8 @@ func (f *fakeSlots) PlazaDe(_ context.Context, tenant, session string) (string, 
 		return "", false, f.err
 	}
 	if f.noSlot {
-		return "", false, nil
+		// Con el Edge puesto a propósito: quien manda es el `ok`, no la cadena.
+		return f.edges[session], false, nil
 	}
 	return f.edges[session], true, nil
 }
@@ -225,11 +226,17 @@ func TestCapacity_Acquire_CancelledContextButFreeSlot_StillGetsIt(t *testing.T) 
 	c := pipeline.NewCapacity(pipeline.KPerSlot)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	release, err := c.Acquire(ctx, slotA)
-	if err != nil || release == nil {
-		t.Fatalf("Acquire con la plaza LIBRE = (release nil: %v, %v), se esperaba la plaza", release == nil, err)
+	// Muchas veces: si el ctx compitiera con la plaza, ganaría la mitad de ellas.
+	for i := range 200 {
+		release, err := c.Acquire(ctx, slotA)
+		if err != nil || release == nil {
+			t.Fatalf("vuelta %d: Acquire con la plaza LIBRE = (release nil: %v, %v), se esperaba la plaza", i, release == nil, err)
+		}
+		if got := c.Waiting(); got != 0 {
+			t.Fatalf("vuelta %d: Waiting() = %d sin haber esperado", i, got)
+		}
+		release()
 	}
-	release()
 }
 
 // TestCapacity_Release_IsIdempotent: una liberación de más le quitaría el sitio a otro y

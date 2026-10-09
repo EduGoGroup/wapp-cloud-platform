@@ -313,3 +313,29 @@ func TestOptions_AppliedInOrder_TheLastOneWins(t *testing.T) {
 		t.Errorf("la última opción se usó %d veces, se esperaba 1", len(cadences))
 	}
 }
+
+// TestOptions_ANilOptionDoesNotUndoAnEarlierOne: «con nil la opción no hace nada» también
+// cuando delante hay una que sí cableó la pieza: no la descablea.
+func TestOptions_ANilOptionDoesNotUndoAnEarlierOne(t *testing.T) {
+	routes := &fakeSlots{edges: map[string]string{sessionID: "edge-1"}}
+	capacity := pipeline.NewCapacity(pipeline.KPerSlot)
+	cases := map[string]pipeline.Option{
+		"nil capacity": pipeline.WithCapacity(nil, routes),
+		"nil slots":    pipeline.WithCapacity(capacity, nil),
+		"nil zones":    pipeline.WithShippingZones(nil),
+		"nil clock":    pipeline.WithClock(nil),
+		"nil ticker":   pipeline.WithTicker(nil),
+	}
+	for name, undo := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, pipeline.Config{}, pipeline.WithCapacity(capacity, routes), undo)
+			line := startupLine(t, r)
+			if got := line.fields["aforo_por_edge"]; got != true {
+				t.Errorf("aforo_por_edge = %v; la opción a nil descableó el aforo", got)
+			}
+			if got := r.log.at("WARN"); len(got) != 0 {
+				t.Errorf("el arranque avisa de una pieza que SÍ estaba cableada:\n%s", r.log.dump())
+			}
+		})
+	}
+}
