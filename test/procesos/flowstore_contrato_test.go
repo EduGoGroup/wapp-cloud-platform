@@ -1,4 +1,4 @@
-//go:build integracion && pendiente
+//go:build integracion
 
 package procesos
 
@@ -35,8 +35,8 @@ import (
 // TouchContact devuelve la fila previa y que el compare-and-set de la bienvenida casa justo la
 // marca vigente. Y las tres carreras, que aquí las serializa la base y no un mutex.
 //
-// Lleva la etiqueta `pendiente` además de `integracion` mientras el adaptador esté en rojo: un
-// panic aborta el binario ENTERO de los procesos. El verde del adaptador se la quita.
+// Llevó la etiqueta `pendiente` además de `integracion` mientras el adaptador estuvo en rojo (un
+// panic aborta el binario ENTERO de los procesos). F8-01 lo puso en verde y se la quitó.
 //
 // El puerto no deja ver todo lo que escribe (no hay lectura de flow_events ni de las versiones
 // archivadas, y las lecturas de una solicitud no traen la nota), así que los observadores son SQL
