@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // draft_revision_test.go — el contrato de draft_revision.go: el payload §7.4 del caso

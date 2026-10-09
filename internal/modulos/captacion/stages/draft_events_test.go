@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // draft_events_test.go — el contrato de draft_events.go: las dos filas de `flow_events`

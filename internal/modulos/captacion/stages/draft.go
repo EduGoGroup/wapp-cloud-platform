@@ -4,15 +4,19 @@ package stages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/anclaje"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 )
 
 // draft.go — LA ETAPA `draft` (Plan 044 · Ola 3 · T3.4): lo que el match dejó en líneas
@@ -120,7 +124,15 @@ type IntakeStore interface {
 
 // Draft es la etapa del BORRADOR (Plan 044 · T3.4). Sus piezas: el log, el store de
 // artefactos, los tres puertos de escritura, el reloj y —opcional— el puente CRM.
-type Draft struct{}
+type Draft struct {
+	log         logger.Logger
+	store       StageStore
+	intakeStore IntakeStore
+	revisions   RevisionWriter
+	events      EventWriter
+	crm         CRMPusher
+	now         func() time.Time
+}
 
 // DraftOption (antes `OpciónDraft`) configura la etapa.
 //
@@ -135,7 +147,11 @@ type DraftOption func(*Draft)
 // un número. El reloj entra SOLO por aquí: la etapa no lo lee por otro camino, y sin la
 // opción usa `time.Now`. Pasar nil no hace nada: la etapa no se queda sin reloj.
 func WithClock(now func() time.Time) DraftOption {
-	panic(pendiente.Implementar("stages.WithClock"))
+	return func(d *Draft) {
+		if now != nil {
+			d.now = now
+		}
+	}
 }
 
 // NewDraft construye la etapa. Devuelve ErrDraftNotWired (y etapa nil) si `log`, `st`,
@@ -147,7 +163,91 @@ func WithClock(now func() time.Time) DraftOption {
 // revisiones y este constructor no le da por dónde.
 func NewDraft(log logger.Logger, st StageStore, intakeStore IntakeStore,
 	revisions RevisionWriter, events EventWriter, opts ...DraftOption) (*Draft, error) {
-	panic(pendiente.Implementar("stages.NewDraft"))
+	if log == nil || st == nil || intakeStore == nil || revisions == nil || events == nil {
+		return nil, ErrDraftNotWired
+	}
+	d := &Draft{
+		log: log, store: st, intakeStore: intakeStore,
+		revisions: revisions, events: events,
+		// 🔴 EL ÚNICO `time.Now` DE LA ETAPA, Y ES EL VALOR POR DEFECTO DE UNA DEPENDENCIA
+		// INYECTABLE — no una lectura del reloj metida en medio de la lógica.
+		now: time.Now,
+	}
+	for _, o := range opts {
+		o(d)
+	}
+	return d, nil
+}
+
+// draftNamespace (antes `espacioBorrador`) es el espacio de nombres del que sale el id de
+// la solicitud. Es un UUID FIJO y arbitrario, y lo único que importa de él es que no
+// cambie NUNCA.
+var draftNamespace = uuid.MustParse("6f8f5b2e-3d61-5a4c-9a1e-0b7c4d2f8a13")
+
+// intakeIDFor (antes `idDeLaSolicitud`) deriva el id del borrador del EVENTO del que
+// cuelga, en vez de sortear uno nuevo. Las tres razones, en orden de importancia:
+//
+//  1. **UN REINTENTO NO PUEDE PARIR UNA SEGUNDA SOLICITUD.** La BD declara que un evento
+//     tiene A LO SUMO un contenido durable (`intakes_event_id_uidx`, 0054): un id
+//     sorteado haría que el segundo intento chocara contra el único parcial —clase 23,
+//     que no cede reintentando—, o sea un job envenenado cuyo borrador YA EXISTÍA. Con el
+//     id derivado, el segundo intento re-escribe la MISMA fila (el `ON CONFLICT (id) DO
+//     UPDATE` del upsert) y converge.
+//  2. **EL RE-ANÁLISIS ATERRIZA SOLO EN LA MISMA SOLICITUD**, sin ninguna consulta previa.
+//  3. Es un id REPRODUCIBLE: dado el evento, se sabe cuál era su borrador sin abrir la
+//     tabla.
+//
+// La consulta por evento de `header` no lo sustituye —cubre el lado del OTRO productor,
+// no el suyo—, y quitar la derivación devolvería el job envenenado del segundo intento.
+func intakeIDFor(eventID string) string {
+	return uuid.NewSHA1(draftNamespace, []byte(eventID)).String()
+}
+
+// header (antes `cabecera`) resuelve SOBRE QUÉ solicitud escribe esta pasada, y devuelve
+// su id y el estado en el que queda. Es la puerta que cierra el hallazgo #24 por el lado
+// del pipeline (D-044.46, T4.0).
+//
+// 🔴 PREGUNTA ANTES DE CREAR, Y LA PREGUNTA NO FILTRA POR ESTADO. Hay DOS productores que
+// escriben el contenido durable de un evento: esta etapa y el proyector del carrito
+// (`cart.ensureOpenIntake`). El id derivado defiende a esta etapa DE SÍ MISMA, pero no
+// del otro: contra la fila que el carrito dejó en `open` sobre el MISMO evento, el upsert
+// por id chocaba con un SQLSTATE 23505 (medido en UAT el 27-08, 54 ms después del
+// carrito).
+//
+// 🔴 Y CUANDO LA FILA YA EXISTE, SU `status` NO SE TOCA: un carrito `open` significa que
+// el cliente SIGUE COMPRANDO, y llamar al dueño a mitad de compra es prematuro. El
+// borrador viaja igual, como revisión adjunta, para cuando el pedido cierre por su camino.
+// ⚠️ CONSECUENCIA ACEPTADA Y ESCRITA (D-044.46): mientras el carrito siga `open`, ese
+// borrador NO aparece en la bandeja del dueño. Cambiarlo es una decisión de producto.
+func (s *Draft) header(ctx context.Context, job intake.ClaimedJob) (id, status string, err error) {
+	existing, found, err := s.intakeStore.GetIntakeByEvent(ctx, job.Key.TenantID, job.Key.EventID)
+	if err != nil {
+		return "", "", fmt.Errorf("draft: leer la solicitud del evento del job %s: %w", job.ID, err)
+	}
+	if found {
+		s.log.Info("draft: el evento YA tenía contenido durable; la revisión se cuelga de él y su estado no se toca",
+			"job_id", job.ID, "stage", intake.StageDraft, "intake_id", existing.ID,
+			"status", existing.Status)
+		return existing.ID, existing.Status, nil
+	}
+
+	intakeID := intakeIDFor(job.Key.EventID)
+	if err := s.intakeStore.UpsertIntake(ctx, store.Intake{
+		ID:        intakeID,
+		TenantID:  job.Key.TenantID,
+		ContactID: job.Key.ContactID,
+		SessionID: job.Key.SessionID,
+		// Es un NACIMIENTO, no una transición: un borrador interpretado está, desde el
+		// primer instante, esperando al dueño. Pasarlo por `open` («carrito en curso»)
+		// inventaría un estado en el que nunca estuvo y dejaría una ventana en la que la
+		// bandeja enseña una solicitud abierta sin líneas.
+		Status:  intakes.StatusPendingApproval,
+		EventID: job.Key.EventID,
+		// Total y CustomerNote quedan a cero: ver la cabecera del fichero.
+	}); err != nil {
+		return "", "", fmt.Errorf("draft: crear la solicitud del job %s: %w", job.ID, err)
+	}
+	return intakeID, intakes.StatusPendingApproval, nil
 }
 
 // Run deja el borrador de un job YA RECLAMADO: resuelve la solicitud, le cuelga la
@@ -210,5 +310,96 @@ func NewDraft(log logger.Logger, st StageStore, intakeStore IntakeStore,
 // Ni una palabra del cliente: ni el literal, ni una evidencia, ni la nota, ni una
 // etiqueta. Solo ids, contadores y posiciones.
 func (s *Draft) Run(ctx context.Context, job intake.ClaimedJob, in DraftInput) (*DraftArtifact, error) {
-	panic(pendiente.Implementar("stages.Draft.Run"))
+	if in.Match == nil {
+		return nil, ErrNoMatch
+	}
+	if job.Key.EventID == "" {
+		return nil, fmt.Errorf("%w: job_id=%s", ErrJobWithoutEvent, job.ID)
+	}
+
+	intakeID, status, err := s.header(ctx, job)
+	if err != nil {
+		return nil, err
+	}
+	s.lostOrderNote(job, in.Match)
+
+	revision := s.revision(job, in)
+	payload, err := marshalRevision(job.ID, revision)
+	if err != nil {
+		return nil, err
+	}
+	rev, err := s.revisions.InsertRevision(ctx, intakes.Revision{
+		IntakeID: intakeID,
+		Kind:     intakes.RevisionKindInterpreted,
+		Payload:  payload,
+		// 🔴 CreatedBy es un ROL, jamás una persona. La revisión 1 la escribe el pipeline
+		// (`system`); la del re-análisis la pidió el dueño (`owner`). Quien decide es el
+		// JOB (migración 0080), no esta etapa.
+		CreatedBy: authorOf(job),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("draft: revisión interpretada de la solicitud %s: %w", intakeID, err)
+	}
+	s.pushToCRM(ctx, job, intakeID, rev.RevisionNo)
+
+	elapsed := s.elapsed(job)
+	s.publishMetric(ctx, job, in.Match, elapsed)
+	s.publishReanalysis(ctx, job, rev.RevisionNo)
+
+	art := &DraftArtifact{
+		Version:    intakes.RevisionPayloadVersion,
+		IntakeID:   intakeID,
+		RevisionNo: rev.RevisionNo,
+		Lines:      len(in.Match.Lines),
+		ElapsedMS:  elapsed.Milliseconds(),
+	}
+	if err := s.persist(ctx, job.ID, art); err != nil {
+		return nil, err
+	}
+
+	matched, unmatched := s.tally(in.Match)
+	s.log.Info("draft: borrador creado y esperando al dueño",
+		"job_id", job.ID, "stage", intake.StageDraft, "intake_id", intakeID,
+		"revision_no", rev.RevisionNo, "status", status,
+		"lineas", len(in.Match.Lines), "casadas", matched, "sin_casar", unmatched,
+		"preguntas", len(revision.SuggestedQuestions), "avisos", len(revision.Warnings),
+		"elapsed_ms", art.ElapsedMS)
+	return art, nil
+}
+
+// lostOrderNote (antes `notaDePedidoPerdida`) avisa de que la indicación del PEDIDO
+// ENTERO no se persiste.
+//
+// 🔴 LO QUE ESTE AVISO DEFIENDE: `intakes.customer_note` solo la sabe escribir
+// `CloseIntake` —el cierre del carrito numérico—, y `UpsertIntake`, que es el puerto de
+// esta etapa, ni menciona la columna. Sin el aviso, una nota que el match produzca se
+// perdería SIN ERROR y sin que nadie se enterase. Con esto, se entera.
+func (s *Draft) lostOrderNote(job intake.ClaimedJob, art *MatchArtifact) {
+	if art.CustomerNote == "" {
+		return
+	}
+	// El aviso NO cita la nota: es texto del cliente (ADR-0034).
+	s.log.Warn("draft: el borrador trae nota de pedido y esta etapa NO la puede persistir (intakes.customer_note solo la escribe el cierre del carrito)",
+		"job_id", job.ID, "stage", intake.StageDraft, "runas", len([]rune(art.CustomerNote)))
+}
+
+// persist (antes `persistir`) deja el artefacto bajo `artifacts.draft`. Mismo patrón que
+// las demás etapas: si el UPDATE no toca la fila es que el job ya no está en `processing`
+// —lo soltó el watchdog, o lo terminó otro— y eso NO es un error de esta etapa.
+func (s *Draft) persist(ctx context.Context, jobID string, art *DraftArtifact) error {
+	payload, err := json.Marshal(art)
+	if err != nil {
+		return fmt.Errorf("draft: serializar el artefacto: %w", err)
+	}
+	saved, err := s.store.SaveStage(ctx, jobID, intake.Artifact{
+		Stage:   intake.StageDraft,
+		Payload: payload,
+	})
+	if err != nil {
+		return fmt.Errorf("draft: persistir el artefacto: %w", err)
+	}
+	if !saved {
+		return ErrJobNotProcessing
+	}
+	return nil
 }

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // draft_test.go — el contrato de draft.go: el cableado, los errores de entrada, la
@@ -232,6 +230,8 @@ func TestDraftRun_EventWithDurableContent_HangsFromItAndKeepsItsStatus(t *testin
 			}
 			b.assertLogHas(t, "draft: el evento YA tenía contenido durable; la revisión se cuelga de él y su estado no se toca")
 			b.assertLogHas(t, "status="+status)
+			// El `status` del log de cierre es el SUYO: el de nacimiento no aparece.
+			b.assertLogLacks(t, "status="+intakes.StatusPendingApproval)
 		})
 	}
 }

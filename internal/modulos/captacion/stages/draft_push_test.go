@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // draft_push_test.go — el contrato de draft_push.go: el empuje al puente CRM, que cuelga

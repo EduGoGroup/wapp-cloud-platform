@@ -4,9 +4,13 @@ package stages
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/anclaje"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 )
 
@@ -160,4 +164,173 @@ type RevisionPayload struct {
 // texto del cliente quedaría en claro, y por eso esos dos puertos no tienen por dónde.
 type RevisionWriter interface {
 	InsertRevision(ctx context.Context, rev intakes.Revision) (intakes.Revision, error)
+}
+
+// revision arma el contrato §7.4.
+func (s *Draft) revision(job intake.ClaimedJob, in DraftInput) RevisionPayload {
+	lines, header := s.linesWithMedia(job, in)
+	return RevisionPayload{
+		Version:      intakes.RevisionPayloadVersion,
+		SourceText:   in.SourceText,
+		MessageTS:    job.MessageTS,
+		Analysis:     s.analysis(job, in.Analysis),
+		DeliveryDate: in.DeliveryDate,
+		MediaRefs:    header,
+		Lines:        lines,
+		// Las preguntas se DERIVAN de las líneas; no las trae nadie de fuera.
+		SuggestedQuestions: suggestedQuestions(in.Match.Lines),
+		Warnings:           in.Match.Warnings,
+	}
+}
+
+// marshalRevision (antes `serializarRevision`) pasa el contrato a JSON.
+func marshalRevision(jobID string, p RevisionPayload) (json.RawMessage, error) {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		// El error NO cita el payload: dentro va el literal del cliente (ADR-0034).
+		return nil, fmt.Errorf("draft: serializar el payload de la revisión del job %s: %w", jobID, err)
+	}
+	return raw, nil
+}
+
+// analysis (antes `analisis`) completa lo que el llamante no dijo y avisa de lo que no se
+// puede completar.
+//
+// `source` se rellena solo porque en la revisión 1 no hay más que una posibilidad: el
+// hilo del evento. La VÍA no se puede rellenar —quien la sabe es quien eligió el
+// proveedor— y su ausencia no tumba el borrador: se avisa. Un borrador sin metadato de
+// proceso sigue siendo el pedido de un cliente; lo que se pierde es poder comparar
+// después «lo que sacó el local» contra «lo que sacó la API» (D-044.15).
+func (s *Draft) analysis(job intake.ClaimedJob, a Analysis) Analysis {
+	// 🔧 EL RE-ANÁLISIS SÍ TRAE SU RASTRO, Y VIENE DEL JOB (T4.6, migración 0080). Lo puso
+	// el endpoint, que es el único que sabe con qué vía se pidió correr, con qué material
+	// y a qué revisión sucede este borrador. No se pisa lo que el llamante haya
+	// rellenado: se completa lo que dejó vacío.
+	if r := job.Reanalysis; r.IsFromOwner() {
+		if a.Provider == "" {
+			a.Provider = r.Via
+		}
+		if a.Source == "" {
+			a.Source = r.Source
+		}
+		if a.ReanalyzedFrom == nil && r.From > 0 {
+			// Copia local: el puntero no apunta a un campo del parámetro, y el payload se
+			// serializa en esta misma pasada.
+			from := r.From
+			a.ReanalyzedFrom = &from
+		}
+	}
+	if a.Source == "" {
+		a.Source = SourceEventThread
+	}
+	if a.Provider == "" {
+		s.log.Warn("draft: la revisión sale SIN vía de análisis; no se podrá comparar local contra api (D-044.15)",
+			"job_id", job.ID, "stage", intake.StageDraft)
+	}
+	return a
+}
+
+// authorOf (antes `autorDe`) dice quién firma la revisión: el rol que pidió el job.
+//
+// Es una función libre y no un método para que la regla —«el autor sale del job y de
+// ningún otro sitio»— se pueda probar sin construir una etapa entera. El vocabulario es
+// el de `intakes`; la marca, la de `intake_jobs.requested_by` (0080). Son dos paquetes
+// distintos con el mismo literal `"owner"`, y esta función es el único punto donde se
+// traducen.
+func authorOf(job intake.ClaimedJob) string {
+	if job.Reanalysis.IsFromOwner() {
+		return intakes.RevisionByOwner
+	}
+	return intakes.RevisionBySystem
+}
+
+// linesWithMedia (antes `lineasConMedia`) pega a cada línea los adjuntos que se le
+// anclaron y devuelve, aparte, los de la cabecera.
+//
+// Un índice del reparto que no corresponde a ninguna línea NO se descarta: sus refs suben
+// a la cabecera con un aviso. Es la misma cláusula de cierre que aplica el propio anclaje
+// cuando no tiene certeza («sin certeza, a la cabecera»), y el motivo es idéntico: perder
+// un audio del cliente es peor que enseñarlo en el sitio genérico.
+//
+// ⚠️ El recorrido es el del MAPA: con más de un índice huérfano, el orden en que sus refs
+// llegan a la cabecera no es determinista. Se porta tal cual del viejo.
+func (s *Draft) linesWithMedia(job intake.ClaimedJob, in DraftInput) (lines []RevisionLine, header []anclaje.MediaRef) {
+	lines = make([]RevisionLine, 0, len(in.Match.Lines))
+	for i, l := range in.Match.Lines {
+		lines = append(lines, RevisionLine{Line: l, MediaRefs: in.Media.ByLine[i]})
+	}
+	header = in.Media.Request
+	for idx, refs := range in.Media.ByLine {
+		if idx >= 0 && idx < len(in.Match.Lines) {
+			continue
+		}
+		s.log.Warn("draft: adjuntos anclados a una línea que no existe; suben a la cabecera",
+			"job_id", job.ID, "stage", intake.StageDraft,
+			"linea_idx", idx, "lineas", len(in.Match.Lines), "refs", len(refs))
+		header = append(header, refs...)
+	}
+	return lines, header
+}
+
+// Las preguntas que el sistema prepara. Son literales de CONTRATO —design §7.4 las
+// escribe así— y no se arman en el sitio donde se usan para que no haya dos versiones del
+// mismo texto.
+const (
+	// questionShippingZone (antes `preguntaZonaDeEnvio`) es la del envío sin precio.
+	questionShippingZone = "¿Zona de entrega para calcular el envío?"
+	// questionSizeWithRange y questionSizeWithoutRange (antes `preguntaTamañoConRango` y
+	// `preguntaTamañoSinRango`) son las dos formas de la pregunta por la variante: con el
+	// rango que pidió el cliente dentro, o sin rango que citar. La unidad llega con su
+	// espacio delante o vacía (ver rangeUnit).
+	questionSizeWithRange    = "¿Confirmas el tamaño de «%s»: %d o %d%s?"
+	questionSizeWithoutRange = "¿Cuál de las presentaciones de «%s» necesitas?"
+)
+
+// suggestedQuestions (antes `preguntasSugeridas`) deriva de las líneas lo que hay que
+// PREGUNTARLE AL CLIENTE. La regla entera —qué pregunta y qué no— está en la cabecera del
+// fichero.
+//
+// El orden es el de las líneas, que es determinista: dos ejecuciones con el mismo
+// borrador dan las mismas preguntas en el mismo orden, y por eso un test las puede
+// afirmar en vez de contarlas.
+func suggestedQuestions(lines []Line) []string {
+	out := make([]string, 0, 2)
+	for _, l := range lines {
+		if q, ok := lineQuestion(l); ok {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
+// lineQuestion (antes `preguntaDeLinea`) devuelve la pregunta de UNA línea, si la tiene.
+func lineQuestion(l Line) (string, bool) {
+	if l.Kind == KindShipping {
+		// Un envío YA precificado no se pregunta: la zona estaba resuelta y cobrada.
+		if l.UnitPrice != nil {
+			return "", false
+		}
+		return questionShippingZone, true
+	}
+	if len(l.VariantOptions) == 0 {
+		return "", false
+	}
+	// La etiqueta es la del CATÁLOGO (así la construye el match para toda línea
+	// `matched`), no las palabras del cliente: es el nombre con el que el dueño conoce su
+	// producto, y es el que va a leer quien reciba la pregunta.
+	if l.Range == nil {
+		return fmt.Sprintf(questionSizeWithoutRange, l.Label), true
+	}
+	return fmt.Sprintf(questionSizeWithRange, l.Label, l.Range.Min, l.Range.Max, rangeUnit(l.Range.Unit)), true
+}
+
+// rangeUnit (antes `unidadDelRango`) es la unidad que citó el cliente («porciones»),
+// pegada al número con su espacio. Vacía NO se sustituye por una inventada: la pregunta
+// queda «: 10 o 12?», que sigue siendo legible, y ponerle al cliente una palabra que no
+// dijo sería exactamente lo que el resto de este pipeline se prohíbe.
+func rangeUnit(unit string) string {
+	if u := strings.TrimSpace(unit); u != "" {
+		return " " + u
+	}
+	return ""
 }

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // draft_revision_rules_test.go — las REGLAS de draft_revision.go (trozo de

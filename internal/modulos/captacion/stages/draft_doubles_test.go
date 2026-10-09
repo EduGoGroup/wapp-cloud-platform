@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // draft_doubles_test.go — los dobles y el atrezo de los tests de la etapa `draft` (sin

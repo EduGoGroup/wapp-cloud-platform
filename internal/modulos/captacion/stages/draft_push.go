@@ -5,7 +5,7 @@ package stages
 import (
 	"context"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 )
 
 // draft_push.go — EL EMPUJE AL CRM de la etapa `draft` (trozo de draft.go, E-13; Plan
@@ -57,12 +57,42 @@ type CRMPusherFunc func(ctx context.Context, tenantID, intakeID string, revision
 // PushRevisionByID implementa CRMPusher: llama a la función con los mismos cuatro
 // argumentos y devuelve su error tal cual.
 func (f CRMPusherFunc) PushRevisionByID(ctx context.Context, tenantID, intakeID string, revisionNo int) error {
-	panic(pendiente.Implementar("stages.CRMPusherFunc.PushRevisionByID"))
+	return f(ctx, tenantID, intakeID, revisionNo)
 }
 
 // WithCRMPush (antes `ConEmpujeCRM`) cablea el puente CRM de la dueña. Sin él la etapa
 // NO empuja y lo dice en un `Error` cuando el job era un re-análisis. Pasar nil no hace
 // nada: es el mismo estado que no llamar a la opción.
 func WithCRMPush(crm CRMPusher) DraftOption {
-	panic(pendiente.Implementar("stages.WithCRMPush"))
+	return func(d *Draft) {
+		if crm != nil {
+			d.crm = crm
+		}
+	}
+}
+
+// pushToCRM (antes `empujarAlCRM`) manda al puente la revisión recién escrita, y SOLO si
+// el job lo pidió el dueño. El gate y su porqué están en la cabecera del fichero.
+//
+// BEST-EFFORT: el puente es at-least-once y su outbox tiene reintentos; lo que aquí se
+// pierde es la ENCOLADA, y eso se dice en el log con todo lo necesario para reencolarla a
+// mano.
+func (s *Draft) pushToCRM(ctx context.Context, job intake.ClaimedJob, intakeID string, revisionNo int) {
+	if !job.Reanalysis.IsFromOwner() {
+		return
+	}
+	if s.crm == nil {
+		// El cable falta. NO es un Warn: un re-análisis que no llega al CRM deja al
+		// integrador con una versión del pedido que ya no es verdad, y eso es exactamente
+		// lo que T4.10 existe para impedir.
+		s.log.Error("draft: el re-análisis escribió su revisión y NO hay puente CRM cableado; el CRM se queda con la versión vieja",
+			"job_id", job.ID, "stage", intake.StageDraft, "intake_id", intakeID,
+			"revision_no", revisionNo)
+		return
+	}
+	if err := s.crm.PushRevisionByID(ctx, job.Key.TenantID, intakeID, revisionNo); err != nil {
+		s.log.Error("draft: no se pudo encolar la revisión del re-análisis para el puente CRM",
+			"job_id", job.ID, "stage", intake.StageDraft, "intake_id", intakeID,
+			"revision_no", revisionNo, "error", err.Error())
+	}
 }
