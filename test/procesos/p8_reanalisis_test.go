@@ -104,9 +104,13 @@ func (w *p8World) open(t *testing.T, tgt *p8Target, body any, source string) p8P
 		t.Fatalf("el acuse del re-análisis = %+v; quería la solicitud %s, la revisión %d, vía local y processing", ack, tgt.id, tgt.rev+1)
 	}
 	p.jobID = ack.JobID
-	if n := len(p9LogLines(sc.S, p8MsgOpened, map[string]string{
+	// El servidor escribe la línea antes de responder, pero el arnés lee su salida por otro lado: con la
+	// máquina cargada el 200 llega antes que la línea al búfer. Se espera a que esté y luego se cuenta.
+	opened := map[string]string{
 		"job_id": p.jobID, "intake_id": tgt.id, "event_id": tgt.eventID, "tenant_id": sc.Tenant, "via": "local", "source": source,
-	})); n != 1 {
+	}
+	p9WaitLogLines(t, sc.S, p8MsgOpened, opened, 1)
+	if n := len(p9LogLines(sc.S, p8MsgOpened, opened)); n != 1 {
 		t.Errorf("el log trae %d líneas %q de este job con vía local y origen %s, quería 1", n, p8MsgOpened, source)
 	}
 	return p
