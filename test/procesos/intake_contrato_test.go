@@ -82,6 +82,7 @@ func TestIntakeContratoQueue_Postgres(t *testing.T) {
 				t.Helper()
 				return intakeContractRows(t, db, tenantID)
 			},
+			Seed:    table.Seed,
 			Advance: table.Advance,
 		}
 	})

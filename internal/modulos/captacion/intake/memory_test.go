@@ -25,6 +25,7 @@ var (
 	_ func(*intake.MemoryStore) intake.Counters                       = (*intake.MemoryStore).Counters
 	_ func(*intake.MemoryStore)                                       = (*intake.MemoryStore).ResetCounters
 	_ func(*intake.MemoryStore) []intake.Job                          = (*intake.MemoryStore).Jobs
+	_ func(*intake.MemoryStore, intake.Job) string                    = (*intake.MemoryStore).Seed
 	_ func(*intake.MemoryStore, context.Context, intake.Append) error = (*intake.MemoryStore).OpenOrAppend
 )
 
@@ -83,9 +84,48 @@ func TestMemoryStore_ContratoQueue(t *testing.T) {
 				}
 				return out
 			},
+			// La siembra traduce al revés que rowOf: las columnas de la máquina se pierden,
+			// porque el gemelo de la cola no las guarda.
+			Seed: func(_ *testing.T, r intakehelpertest.Row) string {
+				return store.Seed(intake.Job{
+					ID: r.ID, Key: r.Key, Status: r.Status, MessageTS: r.MessageTS,
+					SourceRefs: r.SourceRefs, SourceText: r.SourceText,
+					CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+				})
+			},
 			Advance: func(*testing.T) { clock.Advance(time.Second) },
 		}
 	})
+}
+
+// TestMemoryStore_Seed_InsertsTheRowAsGivenAndFillsTheZeros: la siembra mete la fila tal cual
+// —sin guarda ninguna— y rellena lo que viene a cero como lo haría la tabla; la fila se copia.
+func TestMemoryStore_Seed_InsertsTheRowAsGivenAndFillsTheZeros(t *testing.T) {
+	clock := newMemoryClock()
+	store := intake.NewMemoryStore(clock.Now)
+	created := clock.Now().Add(-time.Hour)
+	refs := []string{"r1"}
+	given := intake.Job{
+		ID: "mine", Key: key("e1"), Status: intake.StatusAggregating, SourceRefs: refs,
+		SourceText: fullEnvelope(), CreatedAt: created, UpdatedAt: created.Add(time.Minute),
+	}
+	if id := store.Seed(given); id != "mine" {
+		t.Errorf("Seed con id = %q, quería %q", id, "mine")
+	}
+	refs[0] = "mutated"
+	id := store.Seed(intake.Job{Key: key("e2")})
+	jobs := store.Jobs()
+	if len(jobs) != 2 {
+		t.Fatalf("Jobs = %d filas, quería 2", len(jobs))
+	}
+	if got := jobs[0]; got.Status != intake.StatusAggregating || !got.CreatedAt.Equal(created) ||
+		!got.UpdatedAt.Equal(created.Add(time.Minute)) || got.SourceRefs[0] != "r1" || !got.SourceText.Complete() {
+		t.Errorf("fila sembrada = %+v, quería la dada tal cual", got)
+	}
+	if got := jobs[1]; id == "" || got.ID != id || got.Status != intake.StatusPending ||
+		!got.CreatedAt.Equal(clock.Now()) || !got.UpdatedAt.Equal(got.CreatedAt) {
+		t.Errorf("fila sembrada a cero = %+v (id %q), quería id propio, pending y las dos marcas del reloj", got, id)
+	}
 }
 
 // key devuelve una clave de ventana completa para el evento dado.

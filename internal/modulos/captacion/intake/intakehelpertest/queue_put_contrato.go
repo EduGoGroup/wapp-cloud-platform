@@ -3,6 +3,7 @@ package intakehelpertest
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 )
@@ -66,6 +67,58 @@ func casePutPicksTheLatestPending(t *testing.T, m QueueMontaje) {
 	}
 	requireSameRow(t, "la última ventana cerrada, tras el intento", rowWithRef(t, m, k, "wamid.recent"), written)
 	requireSameRow(t, "la ventana vieja sin componer", rowWithRef(t, m, k, "wamid.old"), old)
+	w.requireUntouched(t, m)
+}
+
+// casePutCrossedMarks: «la última cerrada» es la de `updated_at` más reciente, NO la creada más
+// tarde; y entre dos de la misma marca, la creada más tarde. Son las dos claves de la subconsulta
+// (`ORDER BY updated_at DESC, created_at DESC`), en ese orden.
+//
+// 🔴 Este caso fija la LETRA de la sentencia heredada, no una ruta viva de la cola: por
+// intake.JobStore las marcas no se cruzan (una ventana solo se abre con la anterior ya cerrada, y
+// a una `pending` que no es la última nada le mueve la marca), y por eso se SIEMBRA. Donde sí se
+// cruzan es en la tabla, por la máquina: Release y Retry devuelven a `pending` un job viejo con
+// `updated_at = now()`. Si esa elección es la que se quiere ahí no lo decide este caso.
+func casePutCrossedMarks(t *testing.T, m QueueMontaje) {
+	k := newKey(m.TenantA)
+	w := seedQueueWitness(t, m, k)
+	// Todo en el pasado del reloj de la implementación, en segundos enteros: así el
+	// `updated_at` de la escritura es estrictamente posterior al sembrado.
+	base := w.row.CreatedAt.Truncate(time.Second)
+	seed := func(key intake.WindowKey, ref string, created, updated time.Duration) {
+		t.Helper()
+		id := m.Seed(t, Row{
+			Key: key, Status: intake.StatusPending, MessageTS: firstMessageTS, SourceRefs: []string{ref},
+			CreatedAt: base.Add(created), UpdatedAt: base.Add(updated), NextAttemptAt: base.Add(created),
+		})
+		if id == "" {
+			t.Fatal("QueueMontaje.Seed devolvió un id vacío")
+		}
+	}
+	// Marcas cruzadas: la creada ANTES es la tocada DESPUÉS.
+	seed(k, "wamid.created-first", -30*time.Minute, -10*time.Minute)
+	seed(k, "wamid.created-last", -20*time.Minute, -15*time.Minute)
+	// Empate en `updated_at` (otra tupla): desempata la creación.
+	tie := newKey(m.TenantA)
+	seed(tie, "wamid.tie-older", -30*time.Minute, -10*time.Minute)
+	seed(tie, "wamid.tie-newer", -20*time.Minute, -10*time.Minute)
+
+	for _, c := range []struct {
+		what          string
+		key           intake.WindowKey
+		winner, loser string
+	}{
+		{"marcas cruzadas", k, "wamid.created-first", "wamid.created-last"},
+		{"empate de updated_at", tie, "wamid.tie-newer", "wamid.tie-older"},
+	} {
+		want, loser := rowWithRef(t, m, c.key, c.winner), rowWithRef(t, m, c.key, c.loser)
+		if ok, err := m.Store.PutSourceText(context.Background(), c.key, envelope("crossed")); err != nil || !ok {
+			t.Fatalf("%s: PutSourceText = (%v, %v), quería (true, nil)", c.what, ok, err)
+		}
+		want.SourceText = envelope("crossed")
+		requireWrittenRow(t, c.what+": la ventana "+c.winner, rowWithRef(t, m, c.key, c.winner), want)
+		requireSameRow(t, c.what+": la ventana "+c.loser, rowWithRef(t, m, c.key, c.loser), loser)
+	}
 	w.requireUntouched(t, m)
 }
 
