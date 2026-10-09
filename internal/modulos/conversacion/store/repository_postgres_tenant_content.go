@@ -14,8 +14,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // GetTenantContent devuelve el blob JSON crudo de public.tenant_content para
@@ -26,7 +29,19 @@ import (
 //   - "%w: tenant=%s ref=%s"
 //   - "store: leer contenido de tenant: %w"
 func (r *PostgresRepository) GetTenantContent(ctx context.Context, tenantID, ref string) ([]byte, error) {
-	panic(pendiente.Implementar("store.PostgresRepository.GetTenantContent"))
+	var content []byte
+	err := r.db.QueryRowContext(ctx, `
+		SELECT content
+		FROM public.tenant_content
+		WHERE tenant_id = $1 AND ref = $2
+	`, tenantID, ref).Scan(&content)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, fmt.Errorf("%w: tenant=%s ref=%s", ErrTenantContentNotFound, tenantID, ref)
+	case err != nil:
+		return nil, fmt.Errorf("store: leer contenido de tenant: %w", err)
+	}
+	return content, nil
 }
 
 // UpsertTenantContent inserta o actualiza (upsert por PK (tenant_id, ref)) el blob
@@ -38,7 +53,16 @@ func (r *PostgresRepository) GetTenantContent(ctx context.Context, tenantID, ref
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "store: upsert contenido de tenant: %w"
 func (r *PostgresRepository) UpsertTenantContent(ctx context.Context, tenantID, ref string, blob []byte) error {
-	panic(pendiente.Implementar("store.PostgresRepository.UpsertTenantContent"))
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO public.tenant_content (tenant_id, ref, content, created_at, updated_at)
+		VALUES ($1, $2, $3, now(), now())
+		ON CONFLICT (tenant_id, ref) DO UPDATE
+		SET content = EXCLUDED.content, updated_at = now()
+	`, tenantID, ref, blob)
+	if err != nil {
+		return fmt.Errorf("store: upsert contenido de tenant: %w", err)
+	}
+	return nil
 }
 
 // ReplaceTenantContentVersioned implementa TenantContentVersioner sobre Postgres:
@@ -64,7 +88,58 @@ func (r *PostgresRepository) UpsertTenantContent(ctx context.Context, tenantID, 
 //   - "store: archivar versión de contenido: %w"
 //   - "store: escribir contenido versionado: %w"
 func (r *PostgresRepository) ReplaceTenantContentVersioned(ctx context.Context, tenantID, ref string, blob []byte, source string) (int, error) {
-	panic(pendiente.Implementar("store.PostgresRepository.ReplaceTenantContentVersioned"))
+	if !validVersionSource(source) {
+		return 0, fmt.Errorf("%w: %q", ErrInvalidVersionSource, source)
+	}
+	var archived int
+	err := postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+		archived = 0 // WithTx reintenta ante deadlock: el acumulador se recalcula entero.
+		var current []byte
+		err := tx.QueryRowContext(ctx, `
+			SELECT content
+			FROM public.tenant_content
+			WHERE tenant_id = $1 AND ref = $2
+			FOR UPDATE
+		`, tenantID, ref).Scan(&current)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// Sin contenido vigente no se versiona nada (D-041.8): la versión 1
+			// nacerá del PRÓXIMO import, con lo que este escriba.
+		case err != nil:
+			return fmt.Errorf("store: leer contenido vigente para versionar: %w", err)
+		default:
+			var next int
+			if verr := tx.QueryRowContext(ctx, `
+				SELECT COALESCE(MAX(version), 0) + 1
+				FROM public.tenant_content_versions
+				WHERE tenant_id = $1 AND ref = $2
+			`, tenantID, ref).Scan(&next); verr != nil {
+				return fmt.Errorf("store: calcular siguiente versión de contenido: %w", verr)
+			}
+			if _, ierr := tx.ExecContext(ctx, `
+				INSERT INTO public.tenant_content_versions
+					(tenant_id, ref, version, content, source)
+				VALUES ($1, $2, $3, $4, $5)
+			`, tenantID, ref, next, current, source); ierr != nil {
+				return fmt.Errorf("store: archivar versión de contenido: %w", ierr)
+			}
+			archived = next
+		}
+
+		if _, uerr := tx.ExecContext(ctx, `
+			INSERT INTO public.tenant_content (tenant_id, ref, content, created_at, updated_at)
+			VALUES ($1, $2, $3, now(), now())
+			ON CONFLICT (tenant_id, ref) DO UPDATE
+			SET content = EXCLUDED.content, updated_at = now()
+		`, tenantID, ref, blob); uerr != nil {
+			return fmt.Errorf("store: escribir contenido versionado: %w", uerr)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return archived, nil
 }
 
 // ListTenantContent devuelve las cabeceras (ref + timestamps) de los blobs de
@@ -78,7 +153,33 @@ func (r *PostgresRepository) ReplaceTenantContentVersioned(ctx context.Context, 
 //   - "store: escanear contenido de tenant: %w"
 //   - "store: iterar contenido de tenant: %w"
 func (r *PostgresRepository) ListTenantContent(ctx context.Context, tenantID string) (out []TenantContentSummary, err error) {
-	panic(pendiente.Implementar("store.PostgresRepository.ListTenantContent"))
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT ref, created_at, updated_at
+		FROM public.tenant_content
+		WHERE tenant_id = $1
+		ORDER BY ref
+	`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listar contenido de tenant: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("store: cerrar filas: %w", cerr)
+		}
+	}()
+
+	out = make([]TenantContentSummary, 0)
+	for rows.Next() {
+		var s TenantContentSummary
+		if scanErr := rows.Scan(&s.Ref, &s.CreatedAt, &s.UpdatedAt); scanErr != nil {
+			return nil, fmt.Errorf("store: escanear contenido de tenant: %w", scanErr)
+		}
+		out = append(out, s)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("store: iterar contenido de tenant: %w", rowsErr)
+	}
+	return out, nil
 }
 
 // DeleteTenantContent borra el blob (tenant_id, ref) de public.tenant_content
@@ -90,5 +191,19 @@ func (r *PostgresRepository) ListTenantContent(ctx context.Context, tenantID str
 //   - "store: filas afectadas al borrar contenido: %w"
 //   - "%w: tenant=%s ref=%s"
 func (r *PostgresRepository) DeleteTenantContent(ctx context.Context, tenantID, ref string) error {
-	panic(pendiente.Implementar("store.PostgresRepository.DeleteTenantContent"))
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM public.tenant_content
+		WHERE tenant_id = $1 AND ref = $2
+	`, tenantID, ref)
+	if err != nil {
+		return fmt.Errorf("store: borrar contenido de tenant: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: filas afectadas al borrar contenido: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: tenant=%s ref=%s", ErrTenantContentNotFound, tenantID, ref)
+	}
+	return nil
 }
