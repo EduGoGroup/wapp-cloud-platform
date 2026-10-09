@@ -109,7 +109,7 @@ var reglas = candados.Reglas{
 	// inferencia no entra hasta F8, cuando muera bridge_inferencia.go.
 	Conmutados: []string{"acceso", "edge"},
 	// Puentes: import de un paquete NUEVO a uno VIEJO, declarado (05 §4.1). Vacía de F0 a F5;
-	// el primero nace en F6 (F6-04).
+	// el primero nace en F6 (F6-04); el segundo, en F7 (F7-02, T7.9).
 	Puentes: []candados.Puente{
 		{
 			Desde: "internal/modulos/solicitudes/intakes/telemetria",
@@ -118,6 +118,16 @@ var reglas = candados.Reglas{
 				"que aún no tiene gemelo nuevo en conversacion; intakes no puede importarlo (ciclo con el " +
 				"test in-package del store), así que lo importa este adaptador",
 			Nace:  "F6",
+			Muere: "F8",
+		},
+		{
+			Desde: "internal/modulos/captacion/stages",
+			Hacia: "internal/flujos/store",
+			Motivo: "la etapa draft declara en sus puertos los tipos del almacén viejo de flujos: store.Intake " +
+				"(IntakeStore: GetIntakeByEvent, UpsertIntake) y store.FlowEvent (EventWriter: InsertFlowEvent). " +
+				"public.intakes y flow_events los sigue sirviendo ese almacén, que no tiene gemelo nuevo en " +
+				"conversacion hasta F8 (PUENTE 1 de plan/F7-captacion/arquitectura.md §2)",
+			Nace:  "F7",
 			Muere: "F8",
 		},
 	},
