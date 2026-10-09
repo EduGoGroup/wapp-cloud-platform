@@ -326,6 +326,28 @@ func TestAnonymize_GluedJIDs_ChainStuckToAWord_Untouched(t *testing.T) {
 	}
 }
 
+// TestAnonymize_SeparateJIDs_JudgedOneByOne acota la cadena: solo es cadena lo
+// que está PEGADO. Dos JID con algo entre ellos se juzgan cada uno por su límite
+// de palabra, y el que lo incumple no arrastra al otro.
+func TestAnonymize_SeparateJIDs_JudgedOneByOne(t *testing.T) {
+	a := casebank.NewAnonymizer(corpusNames()...)
+	cases := []struct{ in, want string }{
+		{"a@lid y b@lidz", "[JID] y b@lidz"},
+		{"a@lidz y b@lid", "a@lidz y [JID]"},
+		{"a@lid b@lidc@lidz", "[JID] b@lidc@lidz"},
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			if got := a.Anonymize(c.in); got != c.want {
+				t.Errorf("Anonymize(%q) = %q; se esperaba %q", c.in, got, c.want)
+			}
+			if r := a.Remains(c.in); len(r) != 1 || r[0].Class != casebank.ClassJID {
+				t.Errorf("Remains(%q) = %+v; se esperaba UN hallazgo, el JID suelto", c.in, r)
+			}
+		})
+	}
+}
+
 // TestRemains_AdversarialCorpus_SameAsOld fija los hallazgos ENTEROS —clase,
 // texto e índices de byte— que devolvía el viejo: los índices con no-ASCII por
 // delante, el JID que se queda con el teléfono que lleva dentro, el nombre largo

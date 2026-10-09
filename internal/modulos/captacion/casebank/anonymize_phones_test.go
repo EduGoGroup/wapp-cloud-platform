@@ -183,6 +183,10 @@ func TestAnonymize_NonASCIIDigitPhones_Redacted(t *testing.T) {
 		{"last digit only", "0412123456٧", "[TELEFONO]", 1},
 		{"first digit only", "０412123456", "[TELEFONO]", 1},
 		{"two in a row", arabicIndicPhone + " " + fullWidthPhone, "[TELEFONO] [TELEFONO]", 2},
+		// El signo que sigue al último dígito de cada rango NO es parte del número:
+		// «٪» (U+066A) y «：» (U+FF1A) se quedan detrás de la marca.
+		{"arabic percent sign stays", "١٢٣٤٥٦٧٨٪", "[TELEFONO]٪", 1},
+		{"full width colon stays", "１２３４５６７８：", "[TELEFONO]：", 1},
 		{"one next to an ASCII one", "04121234567\n" + extendedArabicIndicPhone, "[TELEFONO]\n[TELEFONO]", 2},
 	}
 	a := newTestAnonymizer()
@@ -231,6 +235,8 @@ func TestAnonymize_NonASCIIDigits_WhatStillSurvives(t *testing.T) {
 		"ٟ١٢٣٤٥٦٧", "١٢٣٤٥٦٧٪",
 		"ۯ۱۲۳۴۵۶۷", "۱۲۳۴۵۶۷ۺ",
 		"／１２３４５６７", "１２３４５６７：",
+		// «ۺ» (U+06FA) es una letra: pegado a ella, un teléfono no pasa el límite.
+		"۱۲۳۴۵۶۷۸ۺ",
 	}
 	a := newTestAnonymizer()
 	for _, in := range untouched {
