@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package trigger_test
 
 import (

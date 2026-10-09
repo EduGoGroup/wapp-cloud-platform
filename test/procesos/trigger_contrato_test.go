@@ -1,4 +1,4 @@
-//go:build integracion && pendiente
+//go:build integracion
 
 package procesos
 

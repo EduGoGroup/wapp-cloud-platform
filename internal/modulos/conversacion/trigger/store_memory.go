@@ -4,8 +4,10 @@ package trigger
 
 import (
 	"context"
+	"sort"
+	"sync"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/google/uuid"
 )
 
 // MemoryStore es una implementación en memoria de TriggerStore, segura para
@@ -17,43 +19,82 @@ import (
 // Donde NO imita a Postgres, y la suite no lo afirma: no valida que tenant_id ni
 // trigger_id tengan forma de UUID (Postgres devuelve un error de sintaxis; aquí un
 // trigger_id cualquiera que no exista es ErrTriggerNotFound).
-type MemoryStore struct{}
+type MemoryStore struct {
+	mu    sync.Mutex
+	rules map[string]Rule // trigger_id → Rule (trigger_id es UUID global único)
+}
 
 // NewMemoryStore construye un store en memoria vacío.
 func NewMemoryStore() *MemoryStore {
-	panic(pendiente.Implementar("trigger.NewMemoryStore"))
+	return &MemoryStore{rules: make(map[string]Rule)}
 }
 
 // Insert asigna un trigger_id nuevo (un UUID) e ignora r.TriggerID del argumento.
 // Devuelve la regla guardada: la del argumento, campo a campo, con su TriggerID.
 // Nunca devuelve error.
-func (s *MemoryStore) Insert(_ context.Context, _ Rule) (Rule, error) {
-	panic(pendiente.Implementar("trigger.MemoryStore.Insert"))
+func (s *MemoryStore) Insert(_ context.Context, r Rule) (Rule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r.TriggerID = uuid.NewString()
+	s.rules[r.TriggerID] = r
+	return r, nil
 }
 
 // List devuelve todas las reglas del tenant (sin filtro de kind ni sesión: es la
 // vista de administración), ordenadas de forma estable por trigger_id para dar un
-// orden determinista al llamante. Sin reglas, un slice vacío no nil.
-func (s *MemoryStore) List(_ context.Context, _ string) ([]Rule, error) {
-	panic(pendiente.Implementar("trigger.MemoryStore.List"))
+// orden determinista al llamante.
+func (s *MemoryStore) List(_ context.Context, tenantID string) ([]Rule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.filter(tenantID, func(Rule) bool { return true }), nil
 }
 
 // ListByKind devuelve las reglas del tenant de un kind dado aplicables a la sesión:
 // SessionID == sessionID (específica) O SessionID == "" (global). sessionID vacío
-// ⇒ solo las globales (Plan 020 · T4). Ordenadas por trigger_id; sin reglas, un
-// slice vacío no nil.
-func (s *MemoryStore) ListByKind(_ context.Context, _, _ string, _ Kind) ([]Rule, error) {
-	panic(pendiente.Implementar("trigger.MemoryStore.ListByKind"))
+// ⇒ solo las globales (Plan 020 · T4).
+func (s *MemoryStore) ListByKind(_ context.Context, tenantID, sessionID string, k Kind) ([]Rule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.filter(tenantID, func(r Rule) bool {
+		return r.Kind == k && (r.SessionID == sessionID || r.SessionID == "")
+	}), nil
+}
+
+// filter recoge las reglas del tenant que satisfacen keep, en orden determinista
+// por trigger_id. Requiere el mutex tomado.
+func (s *MemoryStore) filter(tenantID string, keep func(Rule) bool) []Rule {
+	out := make([]Rule, 0)
+	for _, r := range s.rules {
+		if r.TenantID != tenantID || !keep(r) {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TriggerID < out[j].TriggerID })
+	return out
 }
 
 // Get devuelve la regla del tenant por trigger_id; ErrTriggerNotFound si no
 // existe o pertenece a otro tenant (INV-8).
-func (s *MemoryStore) Get(_ context.Context, _, _ string) (Rule, error) {
-	panic(pendiente.Implementar("trigger.MemoryStore.Get"))
+func (s *MemoryStore) Get(_ context.Context, tenantID, triggerID string) (Rule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.rules[triggerID]
+	if !ok || r.TenantID != tenantID {
+		return Rule{}, ErrTriggerNotFound
+	}
+	return r, nil
 }
 
 // Delete borra la regla del tenant por trigger_id; ErrTriggerNotFound si no
-// existe o pertenece a otro tenant (INV-8), y en ese caso no borra nada.
-func (s *MemoryStore) Delete(_ context.Context, _, _ string) error {
-	panic(pendiente.Implementar("trigger.MemoryStore.Delete"))
+// existe o pertenece a otro tenant (INV-8).
+func (s *MemoryStore) Delete(_ context.Context, tenantID, triggerID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.rules[triggerID]
+	if !ok || r.TenantID != tenantID {
+		return ErrTriggerNotFound
+	}
+	delete(s.rules, triggerID)
+	return nil
 }

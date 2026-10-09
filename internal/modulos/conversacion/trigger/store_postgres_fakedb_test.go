@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package trigger_test
 
 // El driver de database/sql de mentira sobre el que corre store_postgres_test.go: apunta, en
