@@ -4,8 +4,6 @@ package pipeline
 
 import (
 	"context"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // pipeline_loop.go — EL BUCLE del worker: cuándo se pregunta por trabajo (el tic, el
@@ -30,7 +28,16 @@ import (
 //   - Es seguro llamarlo desde cualquier goroutine y antes de que Run arranque: los avisos
 //     esperan en el buzón.
 func (w *Worker) Wake(tenantID, edgeID string) {
-	panic(pendiente.Implementar("pipeline.Worker.Wake"))
+	s := Slot{TenantID: tenantID, EdgeID: edgeID}
+	if !s.Valid() {
+		return
+	}
+	select {
+	case w.wakes <- s:
+	default:
+		w.log.Debug("pipeline: aviso de Edge READY descartado (buzón lleno); lo recogerá el backoff",
+			"tenant_id", tenantID, "edge_id", edgeID)
+	}
 }
 
 // Run bloquea hasta que `ctx` se cancele. Se arranca con `go w.Run(ctx)` sobre el MISMO
@@ -69,7 +76,46 @@ func (w *Worker) Wake(tenantID, edgeID string) {
 // entran en esta regla: se escriben con un contexto que sobrevive a la cancelación (ver
 // RunOnce), así que si fallan es una avería de verdad y se dice.
 func (w *Worker) Run(ctx context.Context) {
-	panic(pendiente.Implementar("pipeline.Worker.Run"))
+	ticks, stop := w.newTicker(w.cfg.Cadence)
+	defer stop()
+
+	w.log.Info("pipeline: worker arrancado",
+		"cadencia", w.cfg.Cadence.String(),
+		"max_intentos_calidad", w.cfg.MaxQualityAttempts,
+		"max_intentos_infra", w.cfg.MaxInfraAttempts,
+		"backoff_base", w.cfg.BackoffBase.String(),
+		"backoff_tope", w.cfg.BackoffCap.String(),
+		"aforo_por_edge", w.capacity != nil)
+
+	// 🔴 EL AVISO VA EN EL ARRANQUE Y EN Warn PORQUE UN AFORO AUSENTE NO DA NINGÚN OTRO
+	// SÍNTOMA. Sin él, el sistema no falla: sirve, y de vez en cuando dos cadenas del
+	// mismo Edge se pisan y un turno interactivo espera el doble. Eso no deja rastro en
+	// ningún log, así que el rastro se pone aquí.
+	if w.capacity == nil {
+		w.log.Warn("pipeline: worker SIN aforo por Edge (T2.7); dos cadenas de lote del mismo Edge pueden solaparse",
+			"consecuencia", "la espera de un turno interactivo deja de estar acotada a UNA llamada de lote")
+	}
+	// 🔴 MISMO MOTIVO QUE EL DE ARRIBA: un lector de zonas ausente no falla, sirve peor y
+	// en silencio.
+	if w.zones == nil {
+		w.log.Warn("pipeline: worker SIN lector de zonas de envío (T3.8); todo borrador saldrá con la línea de envío SIN precio",
+			"consecuencia", "el tenant con UNA zona configurada pierde su tarifa plana y el dueño la precifica a mano sin saber que ya estaba puesta")
+	}
+
+	w.Drain(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			w.log.Info("pipeline: worker apagando (contexto cancelado)")
+			return
+		case s := <-w.wakes:
+			// El flanco a READY: se atiende ANTES de que venza ningún backoff, que es todo
+			// el propósito. Ver DrainAwake.
+			w.DrainAwake(ctx, s)
+		case <-ticks:
+			w.Drain(ctx)
+		}
+	}
 }
 
 // DrainAwake (antes `DrenarDespierto`) atiende un flanco a READY: procesa los jobs
@@ -108,7 +154,33 @@ func (w *Worker) Run(ctx context.Context) {
 // volvería a llevárselo EN EL ACTO, a la velocidad del error. (Medido: sin el conjunto,
 // un job consume su techo entero de intentos en un solo flanco y muere.)
 func (w *Worker) DrainAwake(ctx context.Context, s Slot) int {
-	panic(pendiente.Implementar("pipeline.Worker.DrainAwake"))
+	w.log.Info("pipeline: el Edge acaba de poder servir inferencia; se reanudan sus jobs sin esperar al backoff",
+		"tenant_id", s.TenantID, "edge_id", s.EdgeID)
+
+	seen := make(map[string]struct{})
+	n := 0
+	for ctx.Err() == nil {
+		job, found, err := w.store.ClaimNextIgnoringBackoff(ctx, s.TenantID)
+		if err != nil {
+			w.logClaimError(ctx, "pipeline: no se pudo reclamar trabajo tras el flanco a READY",
+				"tenant_id", s.TenantID, "edge_id", s.EdgeID, "error", err)
+			return n
+		}
+		if !found {
+			return n
+		}
+		if _, repeated := seen[job.ID]; repeated {
+			// Ya se procesó en ESTE flanco y volvió a la cola: el flanco terminó su
+			// trabajo. Se suelta sin castigo —no ha fallado nada nuevo— y el backoff que
+			// le puso su propio tropiezo sigue mandando.
+			w.releaseUnpunished(ctx, job, "ya procesado en este mismo flanco a READY")
+			return n
+		}
+		seen[job.ID] = struct{}{}
+		w.process(ctx, job)
+		n++
+	}
+	return n
 }
 
 // Drain (antes `Drenar`) procesa jobs (RunOnce) hasta que la cola se queda sin nada
@@ -128,7 +200,19 @@ func (w *Worker) DrainAwake(ctx context.Context, s Slot) int {
 // mismo job (medido: cuelga el test hasta el `-timeout`). No se pone un techo aquí porque
 // convertiría un backlog legítimo de N jobs en N/techo pasadas.
 func (w *Worker) Drain(ctx context.Context) int {
-	panic(pendiente.Implementar("pipeline.Worker.Drain"))
+	n := 0
+	for ctx.Err() == nil {
+		found, err := w.RunOnce(ctx)
+		if err != nil {
+			w.logClaimError(ctx, "pipeline: no se pudo reclamar trabajo", "error", err)
+			return n
+		}
+		if !found {
+			return n
+		}
+		n++
+	}
+	return n
 }
 
 // RunOnce (antes `UnaVuelta`) reclama UN job (`ClaimNext`: el `pending` cuyo backoff ya
@@ -203,5 +287,23 @@ func (w *Worker) Drain(ctx context.Context) int {
 //     «…queda en processing»; si no aplica (`(false, nil)`), un Info «…no aplicó (el job
 //     ya no estaba en processing)».
 func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
-	panic(pendiente.Implementar("pipeline.Worker.RunOnce"))
+	job, found, err := w.store.ClaimNext(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, nil
+	}
+	w.process(ctx, job)
+	return true, nil
+}
+
+// logClaimError registra en ERROR un fallo del reclamo SALVO que el contexto ya esté
+// cancelado (D-F9-10, el molde es D-F6-7): con el proceso apagándose, que el reclamo
+// devuelva "context canceled" no es una avería que alguien tenga que mirar.
+func (w *Worker) logClaimError(ctx context.Context, msg string, args ...any) {
+	if ctx.Err() != nil {
+		return
+	}
+	w.log.Error(msg, args...)
 }

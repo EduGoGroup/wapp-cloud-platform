@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pipeline_test
 
 // pipeline_loop_test.go — el contrato del bucle: Run, Wake y RunOnce. Los dos drenajes

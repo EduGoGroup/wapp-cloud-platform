@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pipeline_test
 
 // pipeline_test.go — el contrato de pipeline.go: los puertos, ErrNotWired, CallTimeoutFloor,

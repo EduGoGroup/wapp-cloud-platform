@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pipeline_test
 
 // doubles_stages_test.go — LAS ETAPAS FALSAS Y EL BANCO (sin fichero de producción gemelo).

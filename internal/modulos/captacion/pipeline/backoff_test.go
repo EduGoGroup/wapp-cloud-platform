@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pipeline_test
 
 // backoff_test.go — la POLÍTICA DE REINTENTOS DEL JOB que backoff.go promete, vista desde

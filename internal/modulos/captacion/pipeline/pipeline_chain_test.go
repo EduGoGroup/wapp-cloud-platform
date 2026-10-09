@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pipeline_test
 
 // pipeline_chain_test.go — la cadena de un job, tal como la promete RunOnce: el orden de

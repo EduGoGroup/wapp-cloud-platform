@@ -77,7 +77,6 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/stages"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/indice"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Decrypter (antes `Descifrador`) es lo ÚNICO que el worker necesita del stack de claves:
@@ -210,9 +209,69 @@ type Config struct {
 	BackoffCap time.Duration
 }
 
+// withDefaults (antes `conDefaults`) rellena lo que venga a cero o negativo.
+func (c Config) withDefaults() Config {
+	if c.Cadence <= 0 {
+		c.Cadence = DefaultCadence
+	}
+	if c.MaxQualityAttempts <= 0 {
+		c.MaxQualityAttempts = DefaultMaxQualityAttempts
+	}
+	if c.MaxInfraAttempts <= 0 {
+		c.MaxInfraAttempts = DefaultMaxInfraAttempts
+	}
+	if c.BackoffBase <= 0 {
+		c.BackoffBase = DefaultBackoffBase
+	}
+	if c.BackoffCap <= 0 {
+		c.BackoffCap = DefaultBackoffCap
+	}
+	return c
+}
+
+// ceilingOf (antes `topeDe`) devuelve el techo de intentos que le toca a una causa.
+// CauseInvalidJob no aparece, y hay que decir por qué: `stumble` lo aparta ANTES de llegar
+// aquí —un job inválido muere sin curva—. Si alguien quitara esa guarda, este `return`
+// silencioso le daría el techo de infra y volveríamos a los 29 minutos del job `6c5aac22`.
+func (c Config) ceilingOf(cause string) int {
+	if cause == CauseQuality {
+		return c.MaxQualityAttempts
+	}
+	return c.MaxInfraAttempts
+}
+
 // Worker recorre `pending` y encadena las etapas. Una instancia procesa UN job a la vez.
 // Se construye con NewWorker; su valor cero no es utilizable.
-type Worker struct{}
+type Worker struct {
+	log   logger.Logger
+	store intake.PipelineStore
+	p2    IdeasStage
+	p3    SpecsStage
+	p4    NormalizationStage
+	match MatchStage
+	draft DraftStage
+	// catalogs y zones son las DOS lecturas por job: lo que `match` necesita del tenant y
+	// no puede ir a buscar por sí misma. El catálogo es obligatorio —sin índice ningún
+	// ítem casa—; las zonas no: un tenant sin zonas configuradas es el caso normal y su
+	// borrador sale con «Envío por confirmar».
+	catalogs  Catalogs
+	zones     ShippingZones
+	decrypter Decrypter
+	cfg       Config
+	now       func() time.Time
+	newTicker func(time.Duration) (<-chan time.Time, func())
+
+	// capacity y slots son EL ENTERO de T2.7 y quien sabe a qué plaza apunta un job. Van
+	// en pareja y nacen juntos (WithCapacity). Los DOS nil = worker sin aforo, que sigue
+	// siendo legal (lo grita el arranque, ver Run).
+	capacity *Capacity
+	slots    Slots
+
+	// wakes es el DISPARADOR POR EVENTO (D-044.43): por aquí entra «el Edge de este tenant
+	// acaba de decir que puede». Tiene buffer y el envío es NO BLOQUEANTE (ver Wake)
+	// porque quien lo llena es el bucle Recv del gateway, que no puede esperar a nadie.
+	wakes chan Slot
+}
 
 // Option (antes `Opcion`) es una perilla del worker que NO es un número: un colaborador.
 // Se separan de Config a propósito —Config son las perillas que un operador puede querer
@@ -227,7 +286,12 @@ type Option func(*Worker)
 // tanto quien sabe que por vía API NO HAY PLAZA que tomar. El worker nunca pregunta eso:
 // recibe un `ok` y ya.
 func WithCapacity(c *Capacity, slots Slots) Option {
-	panic(pendiente.Implementar("pipeline.WithCapacity"))
+	return func(w *Worker) {
+		if c == nil || slots == nil {
+			return
+		}
+		w.capacity, w.slots = c, slots
+	}
 }
 
 // WithShippingZones (antes `ConZonasDeEnvio`) le da al worker de dónde leer las zonas de
@@ -240,7 +304,12 @@ func WithCapacity(c *Capacity, slots Slots) Option {
 // tarifa plana del tenant con UNA zona configurada, y eso no da error. Su red es el Warn
 // del arranque (ver Run) y el candado de cableado.
 func WithShippingZones(z ShippingZones) Option {
-	panic(pendiente.Implementar("pipeline.WithShippingZones"))
+	return func(w *Worker) {
+		if z == nil {
+			return
+		}
+		w.zones = z
+	}
 }
 
 // WithClock inyecta el reloj del worker: con él se miden los `elapsed_ms` de las etapas y
@@ -251,7 +320,12 @@ func WithShippingZones(z ShippingZones) Option {
 // la conducta por defecto. El reloj NO gobierna el ticker (WithTicker) ni las fechas de un
 // pedido, que salen de `message_ts` dentro de las etapas.
 func WithClock(now func() time.Time) Option {
-	panic(pendiente.Implementar("pipeline.WithClock"))
+	return func(w *Worker) {
+		if now == nil {
+			return
+		}
+		w.now = now
+	}
 }
 
 // WithTicker inyecta la fábrica del ticker de Run: recibe la cadencia ya resuelta
@@ -262,8 +336,20 @@ func WithClock(now func() time.Time) Option {
 // Es una costura NUEVA, para probar el bucle sin dormir: no cambia la conducta por
 // defecto.
 func WithTicker(newTicker func(cadence time.Duration) (ticks <-chan time.Time, stop func())) Option {
-	panic(pendiente.Implementar("pipeline.WithTicker"))
+	return func(w *Worker) {
+		if newTicker == nil {
+			return
+		}
+		w.newTicker = newTicker
+	}
 }
+
+// wakeBufferSize (antes `capacidadDespertares`) es cuántos flancos a READY caben
+// esperando a que el worker vuelva al select. Treinta y dos y no uno: el flanco es raro,
+// pero llegan en RÁFAGA cuando el Cloud se reinicia y toda la flota vuelve a latir a la
+// vez. Lleno ⇒ se descarta el aviso, y descartarlo es seguro: el ticker sigue barriendo y
+// el backoff sigue venciendo. Ver Wake.
+const wakeBufferSize = 32
 
 // NewWorker construye el worker. Devuelve ErrNotWired (y worker nil) si `log`, `store`,
 // cualquiera de las cinco etapas, `catalogs` o `decrypter` es nil.
@@ -282,5 +368,25 @@ func NewWorker(log logger.Logger, store intake.PipelineStore,
 	p2 IdeasStage, p3 SpecsStage, p4 NormalizationStage,
 	match MatchStage, draft DraftStage, catalogs Catalogs,
 	decrypter Decrypter, cfg Config, opts ...Option) (*Worker, error) {
-	panic(pendiente.Implementar("pipeline.NewWorker"))
+	if log == nil || store == nil || p2 == nil || p3 == nil || p4 == nil ||
+		match == nil || draft == nil || catalogs == nil || decrypter == nil {
+		return nil, ErrNotWired
+	}
+	w := &Worker{
+		log: log, store: store, p2: p2, p3: p3, p4: p4,
+		match: match, draft: draft, catalogs: catalogs, decrypter: decrypter,
+		cfg: cfg.withDefaults(), now: time.Now,
+		newTicker: realTicker,
+		wakes:     make(chan Slot, wakeBufferSize),
+	}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w, nil
+}
+
+// realTicker es el ticker de producción: `time.NewTicker`.
+func realTicker(cadence time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTicker(cadence)
+	return t.C, t.Stop
 }

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pipeline_test
 
 // pipeline_loop_drain_test.go — los dos drenajes de pipeline_loop.go: Drain (por tic, con

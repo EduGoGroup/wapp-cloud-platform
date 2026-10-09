@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pipeline_test
 
 // pipeline_capacity_test.go — el aforo VISTO DESDE EL WORKER (R-01), tal como lo promete

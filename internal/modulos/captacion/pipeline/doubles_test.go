@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pipeline_test
 
 // doubles_test.go — LOS DOBLES DE INFRAESTRUCTURA de los tests del worker (sin fichero de

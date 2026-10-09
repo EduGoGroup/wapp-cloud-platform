@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pipeline_test
 
 // pipeline_outcome_test.go — los DESENLACES de un job tal como los promete RunOnce: el

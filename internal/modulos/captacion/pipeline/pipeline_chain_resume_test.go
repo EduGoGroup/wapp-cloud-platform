@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pipeline_test
 
 // pipeline_chain_resume_test.go — el sobre del literal, la reanudación por estado y las
