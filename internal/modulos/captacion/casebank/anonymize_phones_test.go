@@ -8,7 +8,8 @@ import (
 )
 
 // anonymize_phones_test.go — las promesas de anonymize_phones.go que el viejo NO
-// tenía: varios teléfonos seguidos se redactan todos.
+// tenía: varios teléfonos seguidos se redactan todos, y un teléfono escrito con
+// dígitos árabes-índicos o de ancho completo se redacta como uno ASCII.
 //
 // 🔴 TODO ESTE FICHERO DIVERGE DEL VIEJO A PROPÓSITO (hallazgo 1 de F7, decisión
 // de Jhoan del 2026-10-08). El viejo fundía los números en una racha de más de 15
@@ -150,6 +151,95 @@ func TestRemains_PhonesInARow_HowTheRunIsCut(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := a.Remains(c.in); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("Remains(%q) =\n   %+v\nse esperaba\n   %+v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// Los tres sistemas de dígitos no ASCII que cuentan, con el mismo número
+// («04121234567») en cada uno.
+const (
+	arabicIndicPhone         = "٠٤١٢١٢٣٤٥٦٧"
+	extendedArabicIndicPhone = "۰۴۱۲۱۲۳۴۵۶۷"
+	fullWidthPhone           = "０４１２１２３４５６７"
+)
+
+// TestAnonymize_NonASCIIDigitPhones_Redacted: árabes-índicos (U+0660–0669),
+// árabes-índicos extendidos (U+06F0–06F9) y de ancho completo (U+FF10–FF19) caen
+// con la MISMA marca que los ASCII, solos, mezclados o con separadores; y el
+// barrido los delata, que es la mitad que más importa.
+func TestAnonymize_NonASCIIDigitPhones_Redacted(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+		findings       int
+	}{
+		{"arabic-indic", "llama al " + arabicIndicPhone + " porfa", "llama al [TELEFONO] porfa", 1},
+		{"extended arabic-indic", "llama al " + extendedArabicIndicPhone + " porfa", "llama al [TELEFONO] porfa", 1},
+		{"full width", "llama al " + fullWidthPhone + " porfa", "llama al [TELEFONO] porfa", 1},
+		{"first and last range bounds", "٩٠۹۰９０٩٠", "[TELEFONO]", 1},
+		{"with separators", "٠٤١٢-١٢٣ ٤٥.٦٧", "[TELEFONO]", 1},
+		{"plus sign", "+５８ ４１２ １２３ ４５６７", "[TELEFONO]", 1},
+		{"mixed with ASCII", "0412۱۲۳４５６７", "[TELEFONO]", 1},
+		{"last digit only", "0412123456٧", "[TELEFONO]", 1},
+		{"first digit only", "０412123456", "[TELEFONO]", 1},
+		{"two in a row", arabicIndicPhone + " " + fullWidthPhone, "[TELEFONO] [TELEFONO]", 2},
+		{"one next to an ASCII one", "04121234567\n" + extendedArabicIndicPhone, "[TELEFONO]\n[TELEFONO]", 2},
+	}
+	a := newTestAnonymizer()
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := a.Anonymize(c.in)
+			if got != c.want {
+				t.Errorf("Anonymize(%+q) = %+q; se esperaba %+q", c.in, got, c.want)
+			}
+			remains := a.Remains(c.in)
+			if len(remains) != c.findings {
+				t.Fatalf("Remains(%+q) = %+v; se esperaban %d hallazgos", c.in, remains, c.findings)
+			}
+			for _, f := range remains {
+				if f.Class != casebank.ClassPhone || c.in[f.Start:f.End] != f.Text {
+					t.Errorf("Remains(%+q): hallazgo %+v; se esperaba un teléfono con Text == texto[Start:End]", c.in, f)
+				}
+			}
+			if again := a.Remains(got); len(again) != 0 {
+				t.Errorf("Remains(%+q) = %+v; sobre lo ya redactado tiene que estar vacío", got, again)
+			}
+		})
+	}
+}
+
+// TestAnonymize_NonASCIIDigits_WhatStillSurvives es la otra mitad: los umbrales
+// son los mismos (7 dígitos no son un teléfono, 16 seguidos tampoco), una
+// cantidad del pedido sobrevive, el límite de palabra sigue valiendo y los
+// sistemas de dígitos que NO están en la lista —devanagari, bengalí— pasan
+// enteros: es un agujero declarado en la cabecera de anonymize.go.
+func TestAnonymize_NonASCIIDigits_WhatStillSurvives(t *testing.T) {
+	untouched := []string{
+		"١٢٣٤٥٦٧",
+		"１２３４５６７８９０１２３４５６",
+		"de ١٠ o ١٢ porciones",
+		"para el ２２/０７",
+		"tel" + arabicIndicPhone,
+		fullWidthPhone + "bs",
+		// Devanagari (U+0966–096F) y bengalí (U+09E6–09EF): fuera de la lista.
+		"०४१२१२३४५६७",
+		"০৪১২১২৩৪৫৬৭",
+		// Y pegado a uno de ellos, un teléfono ASCII no pasa el límite de palabra.
+		"04121234567०",
+		// Los vecinos inmediatos de cada rango no son dígitos de teléfono.
+		// Con 7 dígitos de verdad, contarlos haría 8.
+		"ٟ١٢٣٤٥٦٧", "١٢٣٤٥٦٧٪",
+		"ۯ۱۲۳۴۵۶۷", "۱۲۳۴۵۶۷ۺ",
+		"／１２３４５６７", "１２３４５６７：",
+	}
+	a := newTestAnonymizer()
+	for _, in := range untouched {
+		t.Run(in, func(t *testing.T) {
+			if got := a.Anonymize(in); got != in {
+				t.Errorf("Anonymize(%+q) = %+q; no se toca", in, got)
+			}
+			if r := a.Remains(in); len(r) != 0 {
+				t.Errorf("Remains(%+q) = %+v; se esperaba vacío", in, r)
 			}
 		})
 	}

@@ -2,7 +2,10 @@
 
 package casebank
 
-import "regexp"
+import (
+	"regexp"
+	"unicode/utf8"
+)
 
 // anonymize_phones.go — la mitad de TELÉFONOS de anonymize.go, partida por tamaño
 // (05 E-13): los dos umbrales, el patrón del candidato, el conteo y el reparto de
@@ -41,7 +44,23 @@ const (
 // coste de meter uno de más es tapar alguna fecha (ver el falso positivo
 // declarado en anonymize.go); el de dejar uno fuera es publicar un teléfono. No son
 // errores del mismo tamaño y la clase se elige por el segundo.
-var rePhoneCandidate = regexp.MustCompile(`\+?[0-9][0-9 \t\r\n_/().\-]*[0-9]`)
+//
+// Los DÍGITOS del patrón son los de `phoneDigitClass`, no solo los ASCII.
+var rePhoneCandidate = regexp.MustCompile(
+	`\+?[` + phoneDigitClass + `][` + phoneDigitClass + ` \t\r\n_/().\-]*[` + phoneDigitClass + `]`)
+
+// phoneDigitClass son los CUATRO sistemas de dígitos que cuentan para un
+// teléfono, como rangos de una clase de expresión regular: ASCII, árabes-índicos
+// (U+0660–0669), árabes-índicos extendidos (U+06F0–06F9) y de ancho completo
+// (U+FF10–FF19). Los tres últimos no estaban en el viejo, que dejaba pasar ENTERO
+// un teléfono escrito con ellos (hallazgo 1 de F7; divergencia deliberada,
+// decisión de Jhoan del 2026-10-08). Se redactan con la misma marca, cuentan
+// igual para los umbrales y pueden ir mezclados dentro de un mismo número.
+//
+// 🔴 LA LISTA ES CERRADA: el devanagari, el bengalí y los demás dígitos de
+// Unicode siguen sin verse. Quien añada un rango lo añade en los DOS sitios —aquí
+// y en `isPhoneDigit`— y pone su caso en anonymize_phones_test.go.
+const phoneDigitClass = `0-9\x{0660}-\x{0669}\x{06F0}-\x{06F9}\x{FF10}-\x{FF19}`
 
 // phonesIn (antes `telefonos`) decide qué candidatos son teléfonos, por CONTEO de
 // dígitos. Es donde vive la decisión que separa un teléfono de una cantidad del
@@ -138,15 +157,16 @@ func digitPieces(text string, loc []int) []digitPiece {
 	var out []digitPiece
 	open := false
 	for i, r := range text[loc[0]:loc[1]] {
-		switch pos := loc[0] + i; {
+		// Un dígito no ASCII ocupa más de un byte: el trozo acaba donde acaba la runa.
+		switch start, end := loc[0]+i, loc[0]+i+utf8.RuneLen(r); {
 		case !isPhoneDigit(r):
 			open = false
 		case open:
-			out[len(out)-1].end = pos + 1
+			out[len(out)-1].end = end
 			out[len(out)-1].digits++
 		default:
 			open = true
-			out = append(out, digitPiece{start: pos, end: pos + 1, digits: 1})
+			out = append(out, digitPiece{start: start, end: end, digits: 1})
 		}
 	}
 	if len(out) > 0 {
@@ -155,9 +175,14 @@ func digitPieces(text string, loc []int) []digitPiece {
 	return out
 }
 
-// isPhoneDigit dice si la runa cuenta como dígito de un teléfono: los ASCII. Los
-// de otros alfabetos no cuentan (ver «lo que no cubre»).
-func isPhoneDigit(r rune) bool { return r >= '0' && r <= '9' }
+// isPhoneDigit dice si la runa cuenta como dígito de un teléfono: los cuatro
+// sistemas de `phoneDigitClass`, y ninguno más.
+func isPhoneDigit(r rune) bool {
+	return (r >= '0' && r <= '9') ||
+		(r >= '\u0660' && r <= '\u0669') ||
+		(r >= '\u06f0' && r <= '\u06f9') ||
+		(r >= '\uff10' && r <= '\uff19')
+}
 
 // countDigits (antes `digitos`) cuenta los dígitos de teléfono de `s`.
 func countDigits(s string) int {

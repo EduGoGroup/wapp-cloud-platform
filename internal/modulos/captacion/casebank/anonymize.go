@@ -32,7 +32,7 @@ import (
 //     (`fleet_sessions`, el entrante de CloudLink), y lleva el número de teléfono
 //     dentro. Una CADENA de JID pegados, sin nada entre ellos, cae entera: una
 //     marca por JID (ver `jidsIn`).
-//   - TELÉFONOS: rachas de 8 a 15 dígitos ASCII, con o sin `+` delante y
+//   - TELÉFONOS: rachas de 8 a 15 dígitos, con o sin `+` delante y
 //     separados por espacios, tabuladores, SALTOS DE LÍNEA, guiones, guiones
 //     bajos, BARRAS, puntos o paréntesis, repetidos o no. La racha empieza y
 //     acaba en dígito (un `+` inmediatamente delante entra; un separador suelto
@@ -42,7 +42,9 @@ import (
 //     que es lo único para lo que existe. VARIOS TELÉFONOS SEGUIDOS, separados
 //     solo por separadores de la clase («04121234567 04149876543», o uno por
 //     línea), caen todos, cada uno con su marca (ver `splitPhoneRun`, en
-//     anonymize_phones.go, donde vive toda la mitad de teléfonos).
+//     anonymize_phones.go, donde vive toda la mitad de teléfonos). Cuentan como
+//     dígitos los ASCII, los árabes-índicos «٠٤١٢…», los árabes-índicos
+//     extendidos «۰۴۱۲…» y los de ancho completo «０４１２…», mezclados o no.
 //   - NOMBRES PROPIOS DE UNA LISTA QUE SE LE PASA. La comparación es insensible a
 //     mayúsculas (también en las letras acentuadas: «FUSIÓN» cae con «Fusión») y
 //     respeta los límites de palabra en Unicode, así que «ambar» y «Ambar» caen
@@ -83,9 +85,9 @@ import (
 //     cerrando un agujero de PII, y le toca añadir el caso a
 //     `TestAnonymize_SeparatorsThatOnceEscaped` **en las dos mitades**
 //     (`Anonymize` y `Remains`).
-//   - 🔴 UN TELÉFONO ESCRITO CON DÍGITOS QUE NO SON ASCII (árabes-índicos
-//     «٠٤١٢…», de ancho completo «０４１２…»): ni el candidato ni el conteo los
-//     ven. Medido en F7 (hallazgo 40), no estaba escrito.
+//   - 🔴 UN TELÉFONO ESCRITO CON DÍGITOS DE OTRO SISTEMA que no sea uno de los
+//     cuatro de `phoneDigitClass` (devanagari «०४१२…», bengalí, tailandés…): ni
+//     el candidato ni el conteo los ven, y pasa entero.
 //   - MÁS DE 15 DÍGITOS SEGUIDOS, sin un solo separador (un número de pedido, de
 //     cuenta): no es un teléfono ni varios, y pasa entero.
 //   - Un JID pegado a una letra o a un dígito por la derecha

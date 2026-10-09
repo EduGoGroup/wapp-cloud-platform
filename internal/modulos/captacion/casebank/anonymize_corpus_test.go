@@ -22,9 +22,8 @@ import (
 // (hallazgo 1 de F7, decisión de Jhoan del 2026-10-08). El comentario de cada una
 // dice qué devolvía el viejo.
 //
-// 🔴 OTRAS FILAS FIJAN UN AGUJERO, NO UN ACIERTO: un teléfono en dígitos
-// árabes-índicos o de ancho completo, o con un espacio duro por medio, PASAN
-// ENTEROS. Están aquí para que el día que alguien cierre
+// 🔴 OTRAS FILAS FIJAN UN AGUJERO, NO UN ACIERTO: un teléfono con un espacio
+// duro u otro separador exótico por medio PASA ENTERO. Están aquí para que el día que alguien cierre
 // uno se entere de que cambia el alcance (y lo quite de la cabecera de
 // anonymize.go), no para darlos por buenos.
 
@@ -90,14 +89,17 @@ func adversarialCorpus() []corpusCase {
 		{"\u00f104121234567", "\u00f104121234567"},
 		{"04121234567\u00f1", "04121234567\u00f1"},
 		{"n\u00b004121234567", "n\u00b0[TELEFONO]"},
-		// dígitos no ASCII
-		{"\u0660\u0664\u0661\u0662\u0661\u0662\u0663\u0664\u0665\u0666\u0667", "\u0660\u0664\u0661\u0662\u0661\u0662\u0663\u0664\u0665\u0666\u0667"},
-		{"\uff10\uff14\uff11\uff12\uff11\uff12\uff13\uff14\uff15\uff16\uff17", "\uff10\uff14\uff11\uff12\uff11\uff12\uff13\uff14\uff15\uff16\uff17"},
-		{"0412\uff11234567", "0412\uff11234567"},
-		{"\uff1104121234567", "\uff1104121234567"},
-		{"04121234567\u0660", "04121234567\u0660"},
-		{"0412 \u0661\u0662\u0663 4567", "0412 \u0661\u0662\u0663 4567"},
-		{"+58 412 123 4567 \u0663", "[TELEFONO] \u0663"},
+		// dígitos no ASCII. DIVERGEN DEL VIEJO las siete filas (hallazgo 1 de F7,
+		// decisión de Jhoan 2026-10-08): el viejo devolvía las seis primeras INTACTAS
+		// y, de la séptima, "[TELEFONO] ٣" (ahora el «٣» es un trozo más del número,
+		// como lo sería un «3»).
+		{"٠٤١٢١٢٣٤٥٦٧", "[TELEFONO]"},
+		{"０４１２１２３４５６７", "[TELEFONO]"},
+		{"0412１234567", "[TELEFONO]"},
+		{"１04121234567", "[TELEFONO]"},
+		{"04121234567٠", "[TELEFONO]"},
+		{"0412 ١٢٣ 4567", "[TELEFONO]"},
+		{"+58 412 123 4567 ٣", "[TELEFONO]"},
 		// espacios Unicode y separadores exóticos
 		{"0412\u00a0123\u00a04567", "0412\u00a0123\u00a04567"},
 		{"0412\u202f1234567", "0412\u202f1234567"},
@@ -367,8 +369,13 @@ func TestRemains_AdversarialCorpus_SameAsOld(t *testing.T) {
 			{Class: phone, Text: "04121234567", Start: 0, End: 11},
 			{Class: phone, Text: "04149876543", Start: 12, End: 23},
 		}},
-		// 🔴 Los agujeros: el barrido dice «limpio».
-		{"０４１２１２３４５６７ y 0412 123 4567", []casebank.Finding{}},
+		// DIVERGE DEL VIEJO (hallazgo 1 de F7, decisión de Jhoan 2026-10-08): el viejo
+		// devolvía «limpio». El segundo número lleva espacios duros (U+00A0), que
+		// siguen fuera de alcance: ése es el agujero que queda.
+		{"０４１２１２３４５６７ y 0412 123 4567", []casebank.Finding{
+			{Class: phone, Text: "０４１２１２３４５６７", Start: 0, End: 33},
+		}},
+		// Pegado a una letra no es JID ni teléfono: el barrido dice «limpio».
 		{"ñ584121234567@lid", []casebank.Finding{}},
 		{"", []casebank.Finding{}},
 	}
