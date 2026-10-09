@@ -357,7 +357,7 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     más el texto de `ErrNotWired`, envuelto. No hay valor por defecto: una segunda constante serían dos verdades con la
     del compositor, y `events.Store.ListThread` con límite ≤ 0 devuelve `nil, nil`
     (`internal/flujos/events/thread_reader.go:141`), así que toda petición saldría `never_stored` en silencio. Los tests
-    usan 137 para cazar un 200 escrito dentro. `arquitectura.md` §2 sigue listando el PUENTE 3: ya no existe.
+    usan 137 para cazar un 200 escrito dentro. El PUENTE 3 de `arquitectura.md` §2 queda tachado: ya no existe.
 32. **Los `go/ast` y las lecturas de fuente de estos paquetes tampoco eran candados** (🔶 de `diseno.md` §6, resuelto;
     como el hallazgo 20). `V/reanalisis/reanalisis_test.go:725,754` (con `dobles_test.go`) se sustituye por
     `TestPorts_NoneCanReachTheCustomerNorAnOldEnvelope`, que fija con `reflect` el juego exacto de métodos de los seis
