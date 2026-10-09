@@ -41,7 +41,7 @@
 - `internal/modulos/captacion/{intake,pipeline,stages,anclaje,intakeahead,evidence,reanalisis,casebank,intentcfg}`
   con **32** ficheros en verde, cada uno con su `x_test.go`; suites `intakehelpertest` (dos puertos:
   `JobStore` y `PipelineStore`), `intentcfghelpertest` y `casebankhelpertest` (con **doble nuevo**: `casebank` no
-  tiene gemelo). Las cuatro suites son `Contrato…(t, func(t) Montaje)` y corren **en memoria y en Postgres** (P4).
+  tiene gemelo). ✎ F7-01: son **cinco** (se añadió `intakehelpertest.ContratoReanalysis`, hallazgo 2). Las suites son `Contrato…(t, func(t) Montaje)` y corren **en memoria y en Postgres** (P4).
 - Pendientes en `internal/modulos/captacion` → **0**; SKIP → **0**; sin umbral de cobertura (P2): un test por promesa
   del contrato; mutantes en el nivel complejo; procesos de F9. La verdad de `postgres.go`/`machine_postgres.go`/
   `store_postgres.go` la da la suite contra Postgres (P4) y F9.

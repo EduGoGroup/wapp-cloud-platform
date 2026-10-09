@@ -85,7 +85,7 @@
   nuevo `casebankhelpertest.Memoria` (idempotencia por literal exacto: `Existe`). — Verifica: ídem.
 - **R7.5.c** · **EL** puerto `intentcfg.Store` **DEBERÁ** tener `intentcfghelpertest.Contrato`, que pasa el
   `MemoryStore` de producción. — Verifica: ídem.
-- **R7.5.d** · **LAS** cuatro suites **DEBERÁN** pasar también contra Postgres con el mismo `Montaje`, y su marca de
+- **R7.5.d** · **LAS** cinco suites (✎ F7-01: con `ContratoReanalysis`) **DEBERÁN** pasar también contra Postgres con el mismo `Montaje`, y su marca de
   estado **DEBERÁ** vigilar todas las columnas que la operación puede tocar (hallazgo 35). — Verifica: T7.27 (= T9.28).
 
 ## H7.6 · El ciclo de negocio queda congelado, no roto
