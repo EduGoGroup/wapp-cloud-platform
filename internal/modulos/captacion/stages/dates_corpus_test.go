@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package stages_test
 
 // Trozo de dates_test.go (E-13): el CORPUS ADVERSARIO de expresiones de fecha (hallazgo
