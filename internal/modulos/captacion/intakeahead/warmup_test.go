@@ -333,6 +333,9 @@ func TestWarm_DoesNothing(t *testing.T) {
 		{"nil warmer", func(log *syncBuffer, cfg *fakeConfig, _ *fakeWarmer) *intakeahead.Pool {
 			return intakeahead.New(debugLog(log), cfg, &fakeSelector{}, &fakeSink{}, intakeahead.WithWarmer(nil))
 		}, valid},
+		{"nil log (D-F7-11)", func(_ *syncBuffer, cfg *fakeConfig, w *fakeWarmer) *intakeahead.Pool {
+			return intakeahead.New(nil, cfg, &fakeSelector{}, &fakeSink{}, intakeahead.WithWarmer(w))
+		}, valid},
 		{"no config store", func(log *syncBuffer, _ *fakeConfig, w *fakeWarmer) *intakeahead.Pool {
 			return intakeahead.New(debugLog(log), nil, &fakeSelector{}, &fakeSink{}, intakeahead.WithWarmer(w))
 		}, valid},

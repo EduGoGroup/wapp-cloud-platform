@@ -128,8 +128,8 @@ type edgeKey struct {
 //
 // No hace NADA —ni lee el catálogo, ni loguea— cuando:
 //
-//   - el pool es nil, el precalentado está apagado (WithWarmup(false)), no hay Warmer
-//     o no hay ConfigStore;
+//   - el pool es nil, no tiene log, el precalentado está apagado (WithWarmup(false)),
+//     no hay Warmer o no hay ConfigStore;
 //   - `tenantID` o `sessionID` es "" (`edgeID` vacío sí se admite);
 //   - `kind` no es "" ni `intentcfg.Kind` (`jwks`, `filters`…);
 //   - YA hay un calentamiento en vuelo para ese `(tenantID, edgeID)`: el cerrojo es
@@ -161,10 +161,10 @@ type edgeKey struct {
 // de `Run` ni al apagar el proceso. Dura poco de todos modos —cuando el stream del Edge
 // cae, la inferencia vuelve en el acto con edge_offline—.
 //
-// ⚠️ Heredado tal cual: `Warm` no comprueba `log`. Un pool construido con `log` nil y
-// con Warmer no está contemplado (el arranque siempre lo da).
+// ✎ D-F7-11: `Warm` comprueba `log`, como `Request` y `Run` (`usable`). El viejo no lo
+// hacía: un pool con `log` nil y con Warmer reventaba dentro de la goroutine.
 func (p *Pool) Warm(tenantID, edgeID, sessionID, kind string) {
-	if p == nil || !p.warmupOn || p.warmer == nil || p.cfg == nil ||
+	if p == nil || p.log == nil || !p.warmupOn || p.warmer == nil || p.cfg == nil ||
 		tenantID == "" || sessionID == "" {
 		return
 	}
