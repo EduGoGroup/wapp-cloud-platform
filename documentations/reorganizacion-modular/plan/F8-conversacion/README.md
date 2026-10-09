@@ -1,6 +1,6 @@
 # F8 · `conversacion` — el Motor de Flujos, su runtime y el cierre de todos los puentes y adaptadores
 
-> **Estado: sin empezar** (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Forma:
+> **Estado: en curso** desde el 2026-10-09 (F8-01, rama `reorg/f8-01-inventario-y-hojas` partida de `dev` @ `c0c0c03`; las 5 entradas, comprobadas: abajo). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Forma:
 > [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Rutas: **autoridad**
 > [`../FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas I1–I19 · J18–J22).
@@ -43,6 +43,13 @@
 | E4 | `grep -rn 'pendiente.Implementar' --include='*.go' internal/ \| wc -l` → **0** (nada a medias de otra fase) | el comando |
 | E5 | Jhoan decidió D-F8-1 (¿`model` en F5?) | [`../F5-catalogo/`](../F5-catalogo/README.md) o este README |
 
+**Comprobadas el 2026-10-09 (T8.1, `c0c0c03`)**: E1 ✔ (`internal/pendiente`, `internal/apipublica`, `fronteras_test.go` existen) ·
+E2 ✔ (`go list ./internal/modulos/...` → `acceso`, `captacion`, `catalogo`, `conversacion` (solo `model`), `edge`, `inferencia`,
+`solicitudes`; F7 cerrada en `ESTADO.md`) · E3 ✔ (`FaseActual = 7`, 54 rutas; ojo: `grep -c 'Handle('` da 85 porque cuenta
+líneas, no rutas — regla 6 del ecosistema: la cifra buena es la de la huella) · E4 ✔ con matiz: el `grep` literal da **11**, todas
+en `internal/candados` (tests, `testdata` y comentarios); contratos de producción en rojo, **0** · E5 ✔ (D-F8-1 = D-F5-1, «sí, en
+F5»: `C/model` existe y está verde; **T8.3 se tacha**).
+
 ## Salidas (es cierto al cerrar)
 
 - `internal/modulos/conversacion/` con 74–75 ficheros, cada uno con su `_test.go` en verde y
@@ -66,7 +73,7 @@
 
 ## Bloques de sesión
 
-Siete sesiones, **todas 💻** (para F8 ya no queda promoción web): sin PR ni traspaso, `git push origin dev`.
+Siete sesiones, **todas 💻**: cada una en **su rama partida de `dev`** y con PR a `dev` sin squash (regla 6 del `CLAUDE.md`, 2026-10-03; ✎ corregido en F8-01: aquí decía «sin PR, `git push origin dev`»).
 Cada una es un bloque de 45–90 min (objetivo, **sin medir**) y cierra con las tres cosas: tareas `[x]` con SHA,
 bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../sesiones/README.md).
 

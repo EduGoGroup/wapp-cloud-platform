@@ -3,8 +3,8 @@
 > Formato de [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md) §3. Skills:
 > `reconstruir-modulo` (la fase), `contrato-tdd` (cada fichero), `validar-antes-de-cerrar` (cada
 > gate), `procesos-testcontainers` (T8.37). `C` = `internal/modulos/conversacion`. **Las siete sesiones
-> son 💻**: commits en `dev` y `git push origin dev`, sin PR ni traspaso (el traspaso solo se escribe si
-> una sesión se corta). Rojo y verde siguen siendo commits distintos. Todo gate se lee **sin pipe**:
+> son 💻**: commits en **la rama de la sesión** (partida de `dev`), push de esa rama y PR a `dev` sin squash (regla 6
+> del `CLAUDE.md`; ✎ F8-01: aquí decía «commits en `dev`, sin PR»). Donde una tarea diga «`dev` empujado», léase «rama empujada y PR abierto». Rojo y verde siguen siendo commits distintos. Todo gate se lee **sin pipe**:
 >
 > `G`: `GOWORK=off make ci-local > /tmp/g.log 2>&1; echo GATE_RC=$? >> /tmp/g.log; tail -1 /tmp/g.log` → `GATE_RC=0`
 > `V`: `GOWORK=off go vet -tags pendiente ./...; echo rc=$?` → `rc=0`
