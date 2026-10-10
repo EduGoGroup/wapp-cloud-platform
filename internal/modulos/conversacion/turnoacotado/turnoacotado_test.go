@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/turnoacotado"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
@@ -26,6 +27,11 @@ import (
 var (
 	_ turnoacotado.Turner = (*llmvia.Selector)(nil)
 	_ turnoacotado.Turner = (*fakeTurner)(nil)
+
+	// Y el Resolver satisface el puerto del engine sin adaptador (el viejo solo lo
+	// decía en un comentario): los dos nacieron en paralelo en F8-02, y si sus
+	// firmas se separan el fallo es este, no un «sin_resolutor» en campo (T-6).
+	_ engine.QueryResolver = (*turnoacotado.Resolver)(nil)
 )
 
 // markerKey es la clave con la que los tests marcan el ctx para comprobar que es el
