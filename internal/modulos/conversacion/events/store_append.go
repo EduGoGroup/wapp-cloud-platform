@@ -25,9 +25,56 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
+
+// appendEntrySQL numera la entrada leyendo el máximo actual DENTRO de la misma
+// sentencia: entre el cálculo y la escritura no cabe una lectura ajena. Lo que sí cabe es otro INSERT concurrente
+// que calcule el mismo número; ese pierde contra el UNIQUE (event_id, seq) y lo
+// resuelve el reintento, no un candado que serializaría a todos.
+//
+// Numerar con MAX+1 —y no con una secuencia— es lo que da el «sin huecos» que pide
+// el diseño: un INSERT que falla y revierte no consume número.
+//
+// 🔧 `origin` ENTRÓ EN LA SENTENCIA CON T4.6 (Plan 044 · Ola 4). Hasta entonces la
+// columna existía —la creó la 0051 con su CHECK y su DEFAULT 'whatsapp'— y NINGÚN
+// escritor la nombraba: todas las filas caían al default, que era correcto porque
+// todas venían del canal. La segunda procedencia (`owner_pasted`, la transcripción
+// que pega el dueño) obliga a decirlo, y se dice en el INSERT y no con un UPDATE
+// posterior: una fila que nace `whatsapp` y se corrige después tiene un instante en
+// el que miente sobre su propia procedencia.
+const appendEntrySQL = `
+INSERT INTO public.conversation_event_messages
+       (event_id, seq, role, entry_kind, payload, body_enc, body_dek, body_kek_id, origin)
+SELECT $1::uuid, COALESCE(MAX(seq), 0) + 1, $2, $3, $4::jsonb, $5, $6, $7, $8
+  FROM public.conversation_event_messages WHERE event_id = $1::uuid
+RETURNING seq`
+
+// maxAppendAttempts acota los reintentos por colisión de numeración. Los
+// escritores del historial de UN evento son pocos (los mensajes de una
+// conversación llegan de uno en uno): 5 intentos sobran, y agotarlos devuelve el
+// error en vez de girar indefinidamente.
+const maxAppendAttempts = 5
+
+// entry es una entrada del historial ya resuelta a columnas. El grado del ADR-0034
+// se decide AQUÍ, en el store, y no lo elige el llamador: o trae payload en claro
+// (decision/summary) o trae cuerpo cifrado (message), nunca las dos cosas — que es
+// justo lo que exige conversation_event_messages_grade_chk.
+type entry struct {
+	role      Role
+	kind      entryKind
+	payload   []byte
+	bodyEnc   []byte
+	bodyDEK   []byte
+	bodyKEKID any
+	// origin es POR DÓNDE entró la fila. Cero-valor ⇒ OriginWhatsApp: lo resuelve
+	// appendEntry, no cada llamante, para que añadir un método de escritura no
+	// pueda dejar la columna a merced de un olvido (el mismo criterio con el que
+	// `kind` y `role` los clava cada puerta y no el llamador).
+	origin Origin
+}
 
 // AppendSummary añade el RESUMEN determinista que emitimos nosotros al dejar de
 // ser activo un evento (ADR-0029 E-4), con role='system' fijo.
@@ -48,7 +95,14 @@ import (
 // columnas del sobre a NULL. No necesita FieldCipher. Un body vacío no es JSON: ErrSummaryNotJSON,
 // sin ir a la base.
 func (s *Store) AppendSummary(ctx context.Context, eventID string, body json.RawMessage) (int, error) {
-	panic(pendiente.Implementar("events.Store.AppendSummary"))
+	if !json.Valid(body) {
+		return 0, ErrSummaryNotJSON
+	}
+	return s.appendEntry(ctx, eventID, entry{
+		role:    RoleSystem,
+		kind:    entryKindSummary,
+		payload: body,
+	})
 }
 
 // AppendDecision añade una DECISIÓN estructurada del cliente al hilo (D-043.23,
@@ -69,7 +123,15 @@ func (s *Store) AppendSummary(ctx context.Context, eventID string, body json.Raw
 // La fila: role = 'client', entry_kind = 'decision', origin = 'whatsapp', payload = payload, y las
 // tres columnas del sobre a NULL. No necesita FieldCipher y no devuelve el seq.
 func (s *Store) AppendDecision(ctx context.Context, eventID string, payload []byte) error {
-	panic(pendiente.Implementar("events.Store.AppendDecision"))
+	if !json.Valid(payload) {
+		return ErrSummaryNotJSON
+	}
+	_, err := s.appendEntry(ctx, eventID, entry{
+		role:    RoleClient,
+		kind:    entryKindDecision,
+		payload: payload,
+	})
+	return err
 }
 
 // AppendMessage añade el TEXTO LITERAL de una interacción, SIEMPRE CIFRADO
@@ -92,7 +154,25 @@ func (s *Store) AppendDecision(ctx context.Context, eventID string, payload []by
 //   - ErrNoCipher, a secas, si el store no tiene cipher;
 //   - "events: cifrar el cuerpo de la entrada: %w".
 func (s *Store) AppendMessage(ctx context.Context, eventID string, role Role, body string) (int, error) {
-	panic(pendiente.Implementar("events.Store.AppendMessage"))
+	if role != RoleClient && role != RoleBusiness && role != RoleSystem {
+		return 0, fmt.Errorf("%w: %q", ErrInvalidRole, role)
+	}
+	if s.cipher == nil {
+		return 0, ErrNoCipher
+	}
+
+	bodyEnc, bodyDEK, kekID, err := s.cipher.Encrypt(body)
+	if err != nil {
+		return 0, fmt.Errorf("events: cifrar el cuerpo de la entrada: %w", err)
+	}
+
+	return s.appendEntry(ctx, eventID, entry{
+		role:      role,
+		kind:      entryKindMessage,
+		bodyEnc:   bodyEnc,
+		bodyDEK:   bodyDEK,
+		bodyKEKID: kekID,
+	})
 }
 
 // AppendOutOfTurnMessage añade al hilo un SALIENTE FUERA DE TURNO: el texto que la
@@ -122,7 +202,22 @@ func (s *Store) AppendMessage(ctx context.Context, eventID string, role Role, bo
 //   - ErrNoCipher, a secas, si el store no tiene cipher;
 //   - "events: cifrar el cuerpo del saliente fuera de turno: %w".
 func (s *Store) AppendOutOfTurnMessage(ctx context.Context, eventID string, body string) (int, error) {
-	panic(pendiente.Implementar("events.Store.AppendOutOfTurnMessage"))
+	if s.cipher == nil {
+		return 0, ErrNoCipher
+	}
+
+	bodyEnc, bodyDEK, kekID, err := s.cipher.Encrypt(body)
+	if err != nil {
+		return 0, fmt.Errorf("events: cifrar el cuerpo del saliente fuera de turno: %w", err)
+	}
+
+	return s.appendEntry(ctx, eventID, entry{
+		role:      RoleBusiness,
+		kind:      entryKindMessageOutOfTurn,
+		bodyEnc:   bodyEnc,
+		bodyDEK:   bodyDEK,
+		bodyKEKID: kekID,
+	})
 }
 
 // AppendPastedMessage añade al hilo la TRANSCRIPCIÓN EXTERNA que el dueño pegó en
@@ -157,5 +252,76 @@ func (s *Store) AppendOutOfTurnMessage(ctx context.Context, eventID string, body
 //   - ErrNoCipher, a secas, si el store no tiene cipher;
 //   - "events: cifrar la transcripción pegada por el dueño: %w".
 func (s *Store) AppendPastedMessage(ctx context.Context, eventID string, body string) (int, error) {
-	panic(pendiente.Implementar("events.Store.AppendPastedMessage"))
+	if s.cipher == nil {
+		return 0, ErrNoCipher
+	}
+
+	bodyEnc, bodyDEK, kekID, err := s.cipher.Encrypt(body)
+	if err != nil {
+		// El error NO cita el cuerpo: es texto del cliente (ADR-0034).
+		return 0, fmt.Errorf("events: cifrar la transcripción pegada por el dueño: %w", err)
+	}
+
+	return s.appendEntry(ctx, eventID, pastedEntry(bodyEnc, bodyDEK, kekID))
+}
+
+// pastedEntry arma la fila del texto pegado. Existe como función aparte —y no
+// inline en AppendPastedMessage— para que las CUATRO decisiones de forma (rol
+// `client`, grado `message`, origen `owner_pasted`, payload NULL) se puedan afirmar
+// en un test sin Postgres (hoy, TestAppendPastedMessage_SealedClientOwnerPasted, con
+// el driver de mentira, y la suite de eventshelpertest contra el doble).
+func pastedEntry(bodyEnc, bodyDEK []byte, kekID string) entry {
+	return entry{
+		role:      RoleClient,
+		kind:      entryKindMessage,
+		bodyEnc:   bodyEnc,
+		bodyDEK:   bodyDEK,
+		bodyKEKID: kekID,
+		origin:    OriginOwnerPasted,
+	}
+}
+
+// appendEntry escribe una entrada del historial numerándola sin huecos,
+// reintentando si otro escritor se llevó ese seq.
+func (s *Store) appendEntry(ctx context.Context, eventID string, e entry) (int, error) {
+	var lastErr error
+	for range maxAppendAttempts {
+		var seq int
+		origin := e.origin
+		if origin == "" {
+			origin = OriginWhatsApp
+		}
+		err := s.db.QueryRowContext(ctx, appendEntrySQL, eventID, e.role, e.kind,
+			nullableJSON(e.payload), nullableBytes(e.bodyEnc), nullableBytes(e.bodyDEK),
+			e.bodyKEKID, string(origin)).Scan(&seq)
+		switch {
+		case err == nil:
+			return seq, nil
+		case postgres.IsUniqueViolation(err):
+			// Otro escritor se llevó ese seq: reintentar relee un máximo ya mayor.
+			lastErr = err
+		default:
+			return 0, fmt.Errorf("events: insertar entrada %q del historial: %w", e.kind, err)
+		}
+	}
+	return 0, fmt.Errorf("events: numerar la entrada del historial tras %d intentos: %w", maxAppendAttempts, lastErr)
+}
+
+// nullableJSON manda NULL en vez de una cadena vacía (que no es JSON válido para
+// el cast a jsonb) y, si hay estructura, la pasa como texto para que Postgres la
+// convierta con el `::jsonb` de la sentencia.
+func nullableJSON(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return string(b)
+}
+
+// nullableBytes manda NULL en vez de un blob vacío: el CHECK de grado razona sobre
+// IS NULL, y un []byte de longitud cero no es NULL para Postgres.
+func nullableBytes(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
 }
