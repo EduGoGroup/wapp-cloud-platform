@@ -93,25 +93,44 @@ Para cuando: el inventario E-12 está **aprobado por Jhoan** (antes no se escrib
 ## Bloque 2 · el motor · 💻 · sesión F8-02 · T8.9–T8.11, T8.14, T8.23
 Para cuando: `engine`, `menu`, `survey`, `media`, `turnoacotado` verdes; `G`, `V` rc=0. (9 ficheros.)
 
-- [ ] **T8.9 · rojo(conversacion): `engine` (2)** · 💻 · dep. T8.8 · cumple R8.2.a–c
+- [x] **T8.9 · rojo(conversacion): `engine` (2)** · 💻 · dep. T8.8 · cumple R8.2.a–c — `d8fd4ac` (22 exportados: `engine.go` 12, `consulta.go` 10; los de `consulta.go`, en inglés: tabla de abajo)
   - **Ficheros**: `C/engine/{engine,consulta}.go` + tests
   - **Hecho cuando**: 22 exportados; «núcleo puro» y «cardinalidad acotada del observador» escritos.
   - **Gate**: `V` · **Commit**: `rojo(conversacion): contrato de engine`
-- [ ] **T8.10 · rojo(conversacion): `menu`, `survey` (2), `media`** · 💻 · dep. T8.9
+- [x] **T8.10 · rojo(conversacion): `menu`, `survey` (2), `media`** · 💻 · dep. T8.9 — nivel simple, una pasada, mismo SHA que su verde: `menu` `b566ae0` · `survey` `fc085d5` · `media` `17ca94d` (35 exportados: 9 + 9 + 6 + 11)
   - **Ficheros**: `C/modules/menu/menu.go`, `C/modules/survey/{survey,projection}.go`, `C/modules/media/media.go` + tests
   - **Hecho cuando**: 35 exportados; textos de `media` literales.
   - **Gate**: `V` · **Commit**: `rojo(conversacion): contrato de menu, survey y media`
-- [ ] **T8.11 · rojo(conversacion): `turnoacotado` (3)** · 💻 · dep. T8.9
+- [x] **T8.11 · rojo(conversacion): `turnoacotado` (3)** · 💻 · dep. T8.9 — `346cf73` (9 exportados: `turnoacotado.go` 6, `troceado.go` 3, `prompt.go` 0; `prompt.go` nace en el verde —solo no exportados, lint `unused`— y su test rojo va por la API; la arista `conversacion → inferencia` ya estaba en `Capas`: no se tocó `fronteras_test.go`)
   - **Ficheros**: `C/turnoacotado/{turnoacotado,troceado,prompt}.go` + tests
   - **Hecho cuando**: importa `modulos/inferencia/llmvia` (no el viejo) y la arista `conversacion → inferencia` queda en la lista blanca de `fronteras_test.go`; `prompt.go` sin exportados con su test rojo a través de la API.
   - **Gate**: `V` · **Commit**: `rojo(conversacion): contrato de turnoacotado`
-- [ ] **T8.23 · verde(conversacion): `engine`, `menu`, `survey`, `media`, `turnoacotado`** · 💻 · dep. T8.9–T8.11
+- [x] **T8.23 · verde(conversacion): `engine`, `menu`, `survey`, `media`, `turnoacotado`** · 💻 · dep. T8.9–T8.11 — `menu` `b566ae0` · `survey` `fc085d5` · `media` `17ca94d` · `engine` `8f5f667` (los dos ficheros juntos: se llaman entre sí y separados no pasan `unused`) · `turnoacotado` `08b1e64` (los tres juntos, por lo mismo) · `4ce435f` (aserción de compilación `Resolver` ⊨ `engine.QueryResolver`). El `G` se corrió **una vez**, sobre `4ce435f`, no por commit
   - **Ficheros**: los 9
   - **Hecho cuando**: `go test -race` rc=0 por paquete; un test por promesa del contrato.
   - **Gate**: `G` por commit · **Commit**: `verde(conversacion): <fichero>` (según nivel, como T8.22)
-- [ ] **T8.14 · Cierre del bloque 2** · 💻 · dep. T8.9–T8.11, T8.23
+- [x] **T8.14 · Cierre del bloque 2** · 💻 · dep. T8.9–T8.11, T8.23 — commit de cierre de F8-02 (el que trae esta línea): `pendiente` = 0, `G` `GATE_RC=0` sobre `4ce435f`, rama `reorg/f8-02-motor` empujada y PR #61 a `dev`
   - **Hecho cuando**: `pendiente` del módulo = 0; las tres cosas del cierre; `dev` empujado.
   - **Gate**: `validar-antes-de-cerrar`
+
+> 🔤 **Correspondencia de nombres (E-11) que F8-02 deja a las sesiones siguientes** — `engine.go`, `menu`, `survey` y `media`
+> ya tenían sus exportados en inglés y se conservan. Cambian `engine/consulta.go` y `turnoacotado` (los ficheros conservan su
+> nombre; los valores observables no cambian: `"resuelto"`, `"no_concluyente"`, `"sin_resolutor"`, `"fallo"`, `"parcial"`,
+> `"bucle"` y los textos de los dos centinelas). `runtime` (F8-04/05) y el cableado (F8-06) usan estos:
+>
+> | Viejo | Nuevo |
+> |---|---|
+> | `engine.ConsultaResolver` (método `ResolverConsulta`) · `engine.WithConsultaResolver` | `engine.QueryResolver` (método `ResolveQuery`) · `engine.WithQueryResolver` |
+> | `engine.ObservadorConsulta` · `engine.WithConsultaObserver` | `engine.QueryObserver` · `engine.WithQueryObserver` |
+> | `engine.DesenlaceResuelto` / `NoConcluyente` / `SinResolutor` / `Fallo` / `Parcial` / `Bucle` | `engine.QueryOutcomeResolved` / `Inconclusive` / `NoResolver` / `Failure` / `Partial` / `Loop` |
+> | `turnoacotado.Turnero` (método `Turno`) · `turnoacotado.New(Turnero)` | `turnoacotado.Turner` (método `Turno`, sin renombrar: es el del `llmvia.Selector`) · `turnoacotado.New(Turner)` |
+> | `(*turnoacotado.Resolver).ResolverConsulta` | `(*turnoacotado.Resolver).ResolveQuery` |
+> | `turnoacotado.ErrClaseDesconocida` · `ErrSinTurnero` | `turnoacotado.ErrUnknownClass` · `ErrNoTurner` |
+> | `turnoacotado.MaxLlamadasPorTurno` · `PresupuestoTroceado` · `SueloPorLlamada` | `turnoacotado.MaxCallsPerTurn` · `ChunkingBudget` · `FloorPerCall` |
+>
+> No exportados que un test de cableado lee por reflexión: el campo `turnero` de `Resolver` es ahora `turner`
+> (`internal/arranque/inference_wiring_test.go:187,226`, para T8.32/T8.33). `diseno.md` §2.1, `arquitectura.md` §4 y la
+> trampa T-6 de `reglas.md` llevan ya los nombres nuevos, con ✎.
 
 ## Bloque 3 · `events` y `cart` · 💻 · sesión F8-03 · T8.12, T8.15–T8.17, T8.24, T8.25
 Para cuando: `events` (7) y `cart` (14) verdes; `eventshelpertest` con doble y suite; goldens idénticos; candado de orden sin etiqueta, verde y mutado. (21 ficheros + doble + testdata.)

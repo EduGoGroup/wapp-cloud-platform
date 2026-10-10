@@ -213,6 +213,44 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     ✎ En la ampliación (sobre `2677cb8`) el `broken pipe` de `callback_body_adversarial` volvió a salir, esta vez contra el
     **nuevo**: 2 de 7 pasadas en el día, una por binario. La carrera de D-F7-9 no volvió a aparecer (0 de 3).
 
+15. **(F8-02, `engine`) Un comentario del viejo no casa con su código, y cinco conductas se portan tal cual, cada una con su caso**:
+    `flujos/engine/engine.go:272` dice «No muta el estado recibido», pero `Step` escribe `VarContentRaw` en el mismo mapa de `Vars`
+    del llamante (`:305-309`) y `SetOutcome` sella en el mapa que devolvió el módulo (`:350`): el contrato nuevo lo dice. Portado y
+    fijado, **no** arreglado: un módulo que devuelve `Result{}` vacía las `Vars` de la conversación (`:324`); si el render del destino
+    falla, los efectos del módulo se devuelven igualmente junto al error, con el estado ya en el nodo roto (`:355-356`); con
+    `handled=true`, `EnterPrimed` no barre la señal de intención (`:204-207`: si un `Primer` consume y no limpia, `intent_params` llega
+    al `Save`); el veredicto que acompaña a un error del resolutor se descarta, y con trozos y un solo `Code` el desenlace es
+    `parcial` (`consulta.go:167-190`). Sin caso: la rama `if err != nil` de `EnterPrimed` (`:202-203`) es **muerta** (`tryPrime`
+    devuelve siempre `nil`), y `"message"` es inline en el render pero los predicados de durabilidad sí consultan el `Registry`
+    (`:383` frente a `:124`).
+16. **(F8-02, `menu`/`survey`/`media`) Rarezas del viejo portadas tal cual y fijadas con caso**: el reprompt, la ayuda y el menú de
+    salida re-emiten `node.Prompt` y no el `content.Prompt` que emitió `Render` (`menu.go:46,62`, `survey.go:53,74`): con contenido
+    no estático el cliente vería dos textos distintos; `survey.Step` no rechaza un `QuestionID` vacío (`survey.go:77`) y descarta en
+    silencio las respuestas previas que no son string (`:101-107`); `Projector.Project` no mira `eff.Name` ni `eff.Kind` y escribe
+    la fila aunque `meta.EventID` esté vacío (`projection.go:42-55`; el gemelo la acepta y en Postgres la rechazaría el CHECK de la
+    0054: no comprobado contra Postgres aquí); `NewProjector(nil)` se acepta y haría panic al proyectar (`:28`, dicho en el contrato,
+    sin test); `media.Step` devuelve el mismo mapa `conv.Vars` sin clonar (`media.go:67-69`; hoy inocuo, el engine no lo invoca) y
+    su validación es sensible a mayúsculas y no cruza `kind` con `mime` (`:84-103`). **Ningún test viejo de `survey` dependía de
+    D-F8-7/D-F8-8**: el proyector solo usa `InsertResults`.
+17. **(F8-02, `turnoacotado`) Encaja con el `llmvia` nuevo sin adaptador, y tres rarezas portadas con su caso.** El puerto `Turner`
+    lo satisface `*llmvia.Selector` tal cual (aserción de compilación): F8-06 cablea `turnoacotado.New(<selector>)` y `turneroBridge`
+    muere. Portado, no arreglado: una consulta de **cantidad** con trozos se trocea como elección y gasta hasta 3 inferencias sin
+    poder resolver ninguna (`turnoacotado.go:123`, `troceado.go:118`); la vía API a mitad del troceado **descarta lo ya resuelto**
+    (`troceado.go:149-153` devuelve solo `sin_resolutor`; su comentario dice «nunca hay nada parcial» y el código no lo garantiza);
+    el texto del cliente y los rótulos entran en el prompt **sin escapar** (`prompt.go:189-203`; la validación de rango en Go acota
+    el daño a elegir una opción válida equivocada). 🟡 Las tres son candidatas a decisión de Jhoan; ninguna bloquea.
+18. **(F8-02, método) `engine` y `turnoacotado` nacieron en paralelo y coincidieron en el puerto** (`ResolveQuery`, misma firma) sin
+    que nadie se lo dijera a los dos: fue suerte. Queda atado con una aserción de compilación (`4ce435f`). Para F8-03…F8-05: cuando
+    dos paquetes en paralelo comparten un puerto, el nombre se fija en el prompt de los dos sub-agentes.
+19. **(F8-02, E-13 y gates) `engine/engine.go` nace con 520 líneas** (viejo: 443; la diferencia son los comentarios de contrato), en
+    la tolerancia 500–600; no se parte. Los verdes de `engine` (2 ficheros) y de `turnoacotado` (3) van **en un commit por paquete**,
+    no por fichero: se llaman entre sí y ningún orden parcial pasa el lint `unused`. El `G` se corrió una vez sobre la cabeza
+    integrada, no por commit; cada sub-agente corrió `test -race`, vet, lint y candados de su paquete. Los tests de reloj de
+    `troceado` usan `testing/synctest` en vez del `time.Sleep` real de 400 ms del viejo.
+20. **(F8-02) Tres documentos de la fase nombraban el engine con los nombres viejos** (`diseno.md` §2.1, `arquitectura.md` §4,
+    `reglas.md` T-6: `WithConsultaResolver`, `ObservadorConsulta`, `Desenlace…`): corregidos con ✎ al cerrar la sesión; la
+    correspondencia completa está en [`tareas.md`](tareas.md), antes del bloque 3.
+
 ## Orden de lectura
 
 `README` → [`arquitectura.md`](arquitectura.md) (sobre todo §4 singleton y §5 puentes y adaptadores) →
@@ -228,7 +266,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | Sesión | Bloque | Nivel E-12 (provisional) | Tareas | Punto de parada |
 |---|---|---|---|---|
 | F8-01 | inventario E-12 y hojas | medio · `store` complejo · `content` simple | T8.1–T8.8, T8.22 | inventario **aprobado por Jhoan** (antes no se escribe código); `model`·`trigger`·`content`·`store`·`modules` verdes; suites `Contrato` en memoria y en Postgres |
-| F8-02 | motor | medio · `menu`/`media` simple | T8.9–T8.11, T8.14, T8.23 | `engine`·`menu`·`survey`·`media`·`turnoacotado` verdes |
+| F8-02 ✅ | motor | medio · `menu`/`media`/`survey` simple | T8.9–T8.11, T8.14, T8.23 | `engine`·`menu`·`survey`·`media`·`turnoacotado` verdes (2026-10-09, rama `reorg/f8-02-motor`, `d8fd4ac` … `4ce435f`) |
 | F8-03 | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (7) y `cart` (14) verdes; goldens idénticos; candado de orden verde y mutado |
 | F8-04 | `runtime` (1): contratos de los 23 y soporte | complejo | T8.18–T8.21, T8.26 | 23 contratos en rojo, candado de rachas escrito, los 12 de soporte verdes |
 | F8-05 | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo verdes, mutantes muertos, `pendiente` del runtime = 0 |

@@ -4,7 +4,8 @@
 > § «Avance de la ejecución», y en la tabla de [`sesiones/README.md`](sesiones/README.md)): F0, F1 (el piloto), F2 y
 > F3 cerradas y en `dev`; F4 y F5 cerradas el 2026-10-07 (F45-03); F6 cerrada el 2026-10-08 (F6-06) y F7 el
 > 2026-10-09 (F7-05), las dos por PR a `dev`; `FaseActual = 7`, `Conmutados` = `acceso`, `edge` y `catalogo`;
-> F9-A y F9-B hechos, F9-D pendiente; F8 y F10 sin empezar. **Recalibrado el 2026-10-03** tras la parada
+> F9-A y F9-B hechos, F9-D pendiente; **F8 en curso** (F8-01 y F8-02 hechas el 2026-10-09: las hojas y el motor de
+> `conversacion` en verde, sin conmutar; quedan F8-03 … F8-07); F10 sin empezar. **Recalibrado el 2026-10-03** tras la parada
 > de F1 ([`DECISIONES.md`](DECISIONES.md) §3; `05` E-12, §4.2, E-9, E-4). Escrito el 2026-09-28. Es el plan **ejecutable** que pedía
 > [`../ESTADO.md`](../ESTADO.md): convierte las fases F0–F10 de
 > [`05-metodo-contratos-y-tdd.md`](../05-metodo-contratos-y-tdd.md) §6 en *specs* con sus historias
@@ -12,7 +13,7 @@
 > (eran 81: las 66 pendientes se reagruparon en 41 de tamaño medio, 45–90 min).
 > La norma de fondo sigue siendo `05`: si el plan choca con ella, manda `05` y el plan se corrige.
 >
-> **Siguiente paso** (al 2026-10-08, con F6-01 … F6-05 hechas): [`sesiones/F6-06`](sesiones/F6-06-cli-cierre.md) (el cierre local de F6: suites contra Postgres y procesos P5/P6 contra los dos binarios).
+> **Siguiente paso** (al 2026-10-09, con F8-01 y F8-02 hechas): [`sesiones/F8-03`](sesiones/F8-03-cli-events-admin-cart.md) (`events` y `cart` de `conversacion`: el doble y la suite de `events.Store`, los goldens del carrito y el candado de orden de `Step`).
 > Después, la tabla de [`sesiones/README.md`](sesiones/README.md), en orden: es ella la que dice cuál toca.
 
 ## Cómo está escrito (a lo *spec-driven*, estilo Kiro)
@@ -49,7 +50,7 @@ sesión te manda al protocolo, y el protocolo te dice qué leer: el marco, la *s
 
 Sesiones: 🌐 web · 🌐❓ web si queda saldo de la promoción, si no local · 💻 solo local (Docker, UAT, `main`).
 Al 2026-10-09 están hechas las sesiones de F0, F9-A/B, F1 (con F1-06), F2, F3, F4+F5 (F45-01, F45-02 y F45-03),
-F6 y F7; la siguiente es F8-01. Qué sesión está hecha lo dice la tabla de
+F6 y F7, y F8-01 y F8-02 de F8; la siguiente es F8-03. Qué sesión está hecha lo dice la tabla de
 [`sesiones/README.md`](sesiones/README.md), no esta línea.
 
 Cifras de ficheros de producción medidas por cada *spec* sobre `dev` @ `1b18932` (con `ls`/`wc`/`go
