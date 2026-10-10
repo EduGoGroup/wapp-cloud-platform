@@ -414,8 +414,9 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
 - **Hallazgos 15–20** en el [README de F8](plan/F8-conversacion/README.md). 🟡 Para Jhoan, sin bloquear: las tres rarezas de
   `turnoacotado` (17: cantidad troceada como elección, la vía API descarta lo ya resuelto, prompt sin escapar) y las del `engine`
   (15). Siguen sin analizar los 15 y 22 de F7.
-- **Tiempo (D-R-6)**: ≈ 40 min de pared (21:17–≈ 21:57): ≈ 6 de verdad de campo y prompts, ≈ 16 los tres sub-agentes en
-  paralelo (el más largo, `engine`), ≈ 8 de integración y gates, ≈ 10 de cierre. Cabe en una sesión.
+- **Tiempo (D-R-6)**: ≈ 25 min de pared (21:17–≈ 21:42, medido con `date`): ≈ 2 de verdad de campo y prompts, ≈ 16 los tres
+  sub-agentes en paralelo (≈ 7 `menu`/`survey`/`media`, ≈ 13 `turnoacotado`, ≈ 16 `engine`), ≈ 3 de integración y gates
+  (`ci-local` ≈ 2 min con la caché caliente) y ≈ 4 de cierre. Cabe holgado en una sesión.
 
 **F8-01 · F8, inventario E-12 y hojas (2026-10-09, 💻, rama `reorg/f8-01-inventario-y-hojas` desde `origin/dev` @ `c0c0c03`). F8 EN CURSO.**
 
