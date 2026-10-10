@@ -1,4 +1,4 @@
-//go:build integracion && pendiente
+//go:build integracion
 
 package procesos
 
@@ -35,8 +35,8 @@ import (
 // escritores simultáneos y que el cuerpo vuelve entero después de cifrado. Y las cuatro carreras,
 // que aquí las serializa la base y no un mutex.
 //
-// 🔴 Lleva la etiqueta `pendiente` además de `integracion` mientras events.Store esté en rojo: un
-// panic aborta el binario ENTERO de los procesos. El verde del adaptador se la quita.
+// Llevó la etiqueta `pendiente` además de `integracion` mientras events.Store estuvo en rojo (un
+// panic aborta el binario ENTERO de los procesos). El verde del adaptador se la quitó.
 //
 // El reloj NO es el de la base: events.Store fecha con el reloj que se le inyecta, así que Now y
 // Advance mueven un reloj de este fichero y nada duerme.

@@ -41,8 +41,9 @@ package events
 
 import (
 	"context"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"database/sql"
+	"encoding/json"
+	"fmt"
 )
 
 // EntryKind es el vocabulario de `conversation_event_messages.entry_kind` VISTO
@@ -102,6 +103,33 @@ type ThreadEntry struct {
 	Text string
 }
 
+// listThreadSQL lee las ÚLTIMAS `limit` entradas del evento y las devuelve en
+// ORDEN CRONOLÓGICO.
+//
+// Por qué la subconsulta y no un simple `ORDER BY seq LIMIT`: el recorte tiene que
+// morder por el PRINCIPIO del hilo, no por el final. Un hilo largo que se recorte
+// por la cola perdería justo los mensajes de la ráfaga que acaba de cerrar la
+// ventana —lo único que el pipeline necesita sí o sí—, y se quedaría con el saludo
+// de hace dos horas. Con `ORDER BY seq DESC LIMIT n` dentro y `ORDER BY seq` fuera,
+// lo que se pierde es lo más viejo, que es lo que se puede perder.
+//
+// No filtra por `entry_kind`: quien clasifica es el llamante (REQ-10b). Filtrar
+// aquí sería tomar por él la decisión que la tarea le encarga, y además dejaría
+// FUERA sin querer al `message_out_of_turn` —el coste que la constante de ese grado
+// ya anunció: «quien escriba el primer lector tiene que decidir a conciencia si
+// quiere una clase o las dos»—. Este lector quiere las dos, y las distingue.
+const listThreadSQL = `
+SELECT seq, role, entry_kind, payload, body_enc, body_dek, body_kek_id
+  FROM (
+        SELECT seq, role, entry_kind, payload, body_enc, body_dek, body_kek_id
+          FROM public.conversation_event_messages
+         WHERE event_id = $1::uuid
+         ORDER BY seq DESC
+         LIMIT $2
+       ) t
+ ORDER BY seq
+`
+
 // ListThread devuelve el hilo de un evento en orden cronológico, DESCIFRADO en el
 // borde (REQ-10c), con como mucho `limit` entradas (las más recientes).
 //
@@ -136,8 +164,76 @@ type ThreadEntry struct {
 //   - "events: iterar el hilo del evento %s: %w";
 //   - "events: cerrar el hilo del evento %s: %w" si lo único que falla es el cierre (D-17).
 func (s *Store) ListThread(ctx context.Context, eventID string, limit int) (out []ThreadEntry, err error) {
-	panic(pendiente.Implementar("events.Store.ListThread"))
+	if s == nil || s.db == nil || eventID == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	if s.cipher == nil {
+		return nil, ErrNoCipher
+	}
+
+	rows, err := s.db.QueryContext(ctx, listThreadSQL, eventID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("events: leer el hilo del evento %s: %w", eventID, err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			out, err = nil, fmt.Errorf("events: cerrar el hilo del evento %s: %w", eventID, cerr)
+		}
+	}()
+
+	for rows.Next() {
+		var (
+			e                 ThreadEntry
+			payload, enc, dek []byte
+			kekID             sql.NullString
+		)
+		if serr := rows.Scan(&e.Seq, &e.Role, &e.Kind, &payload, &enc, &dek, &kekID); serr != nil {
+			return nil, fmt.Errorf("events: scan de una entrada del hilo del evento %s: %w", eventID, serr)
+		}
+		text, terr := s.entryText(payload, enc, dek, kekID)
+		if terr != nil {
+			// El error NO lleva el cuerpo, ni siquiera un trozo: nombra evento y seq.
+			return nil, fmt.Errorf("events: resolver la entrada %d del hilo del evento %s: %w", e.Seq, eventID, terr)
+		}
+		e.Text = text
+		out = append(out, e)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("events: iterar el hilo del evento %s: %w", eventID, rerr)
+	}
+	return out, nil
 }
+
+// listPastedSQL lee SOLO las transcripciones que pegó el dueño en este evento
+// (Plan 044 · Ola 4 · T4.6). Es la única consulta del árbol que filtra por
+// `origin`, y ese filtro es todo su motivo de existir: el dedupe del `text` de
+// `/reanalyze` es por `(event_id, origin, hash del texto saneado)` y las filas de
+// `whatsapp` no compiten en él — un cliente que escribiera por WhatsApp la misma
+// frase que el dueño pega NO debe impedir que la transcripción se guarde, porque
+// son dos hechos distintos.
+//
+// 🔴 EL HASH NO ESTÁ EN LA SENTENCIA, Y NO PUEDE ESTARLO. No hay columna donde
+// guardarlo: el CHECK de grado (`conversation_event_messages_grade_chk`) obliga a
+// `payload IS NULL` en toda fila `message`, así que la única sede posible sería una
+// columna nueva. Se descartó: el cuerpo va CIFRADO con DEK fresca por fila (nonce
+// distinto cada vez), de modo que dos filas con el mismo texto tienen `body_enc`
+// distintos y no hay forma de compararlas en SQL. El dedupe se resuelve en memoria,
+// descifrando las pocas filas que esta consulta devuelve.
+//
+// No lleva LIMIT: las filas `owner_pasted` de un evento son las veces que el dueño
+// pegó texto en ese pedido —unidades, no cientos—, y un LIMIT que mordiera dejaría
+// pasar un duplicado en silencio, que es justo lo que esto existe para impedir.
+const listPastedSQL = `
+SELECT seq, body_enc, body_dek, body_kek_id
+  FROM public.conversation_event_messages
+ WHERE event_id = $1::uuid
+   AND entry_kind = 'message'
+   AND origin = $2
+ ORDER BY seq
+`
 
 // ListPastedByOwner devuelve, DESCIFRADAS, las transcripciones que el dueño pegó en
 // este evento. Es lo que el dedupe de T4.6 compara contra el texto entrante.
@@ -160,5 +256,84 @@ func (s *Store) ListThread(ctx context.Context, eventID string, limit int) (out 
 //   - "events: iterar las transcripciones pegadas del evento %s: %w";
 //   - "events: cerrar las transcripciones pegadas del evento %s: %w" (D-17).
 func (s *Store) ListPastedByOwner(ctx context.Context, eventID string) (out []string, err error) {
-	panic(pendiente.Implementar("events.Store.ListPastedByOwner"))
+	if s == nil || s.db == nil || eventID == "" {
+		return nil, nil
+	}
+	if s.cipher == nil {
+		return nil, ErrNoCipher
+	}
+
+	rows, err := s.db.QueryContext(ctx, listPastedSQL, eventID, string(OriginOwnerPasted))
+	if err != nil {
+		return nil, fmt.Errorf("events: leer las transcripciones pegadas del evento %s: %w", eventID, err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			out, err = nil, fmt.Errorf("events: cerrar las transcripciones pegadas del evento %s: %w", eventID, cerr)
+		}
+	}()
+
+	for rows.Next() {
+		var (
+			seq      int
+			enc, dek []byte
+			kekID    sql.NullString
+		)
+		if serr := rows.Scan(&seq, &enc, &dek, &kekID); serr != nil {
+			return nil, fmt.Errorf("events: scan de una transcripción pegada del evento %s: %w", eventID, serr)
+		}
+		// Se pasa `payload` en nil a propósito: estas filas son nivel 2 por el CHECK
+		// de grado, así que el brazo del payload de entryText no puede ejecutarse. Se
+		// reusa la MISMA función que ListThread para que el descifrado tenga un solo
+		// borde, que es lo que pide REQ-10c.
+		text, terr := s.entryText(nil, enc, dek, kekID)
+		if terr != nil {
+			// El error NO lleva el cuerpo: nombra evento y seq.
+			return nil, fmt.Errorf("events: descifrar la transcripción %d del evento %s: %w", seq, eventID, terr)
+		}
+		out = append(out, text)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("events: iterar las transcripciones pegadas del evento %s: %w", eventID, rerr)
+	}
+	return out, nil
+}
+
+// entryText resuelve el GRADO de una entrada a texto plano. Es UNA función para
+// los cuatro `entry_kind` a propósito: la diferencia que atiende es de NIVEL
+// (ADR-0034), que es una propiedad de la FILA —o trae cuerpo cifrado, o trae
+// payload, nunca las dos, y eso lo impone
+// `conversation_event_messages_grade_chk`—, no de la clase que el llamante decide.
+//
+// 🔑 Que el resumen se renderice con Summary.Render() —el MISMO texto que el
+// cliente leyó al reanudar— y no con el JSON en bruto no es cosmética: hace que el
+// contexto que ve el LLM esté escrito en el mismo idioma que el resto del hilo. Un
+// `{"kind":"cart","lines":[…]}` metido en un prompt es una invitación a que el
+// modelo lo trate como datos ya validados.
+func (s *Store) entryText(payload, enc, dek []byte, kekID sql.NullString) (string, error) {
+	if len(enc) > 0 {
+		// NIVEL 2: cuerpo cifrado. Se descifra con la KEK que envolvió ESTA fila
+		// (body_kek_id), no con la current: tras una rotación parcial coexisten filas
+		// de varias KEK (Plan 012).
+		return s.cipher.Decrypt(enc, dek, kekID.String)
+	}
+	if len(payload) == 0 {
+		return "", nil
+	}
+	// NIVEL 1: estructura EN CLARO. Solo el resumen tiene render; lo que no lo sea
+	// —una `decision`— devuelve cadena vacía por el default de Render, y el
+	// compositor lo descarta. Un payload ilegible NO es un error de lectura del
+	// hilo: es una entrada que no aporta texto, y tratarla como fallo dejaría sin
+	// presupuesto a un cliente por una fila vieja mal formada.
+	var sum Summary
+	if err := json.Unmarshal(payload, &sum); err != nil {
+		//nolint:nilerr // degradación intencional: una entrada de nivel 1 que no sea
+		// un resumen legible NO aporta texto, y eso no es un fallo de LECTURA del
+		// hilo. Propagar el error dejaría a un cliente sin presupuesto por una fila
+		// vieja mal formada. El error tampoco se loguea: su mensaje cita el fragmento
+		// que no supo leer, y ese fragmento es contenido (mismo criterio que
+		// intakes/buyerdata.go con json.Marshal).
+		return "", nil
+	}
+	return sum.Render(), nil
 }
