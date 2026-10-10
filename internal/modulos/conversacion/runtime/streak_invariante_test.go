@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // Porta la REGLA de internal/flujos/runtime/streak_invariante_test.go @ e0159171
@@ -21,17 +19,22 @@ import (
 
 // streakProductionDir es el directorio cuyos .go de producción recorre el candado: el del
 // propio paquete. Es una constante —y no una lista de nombres de fichero— a propósito:
-// incoming.go y events.go nacen PARTIDOS POR TEMA en el verde (E-13), y un candado atado a
-// dos nombres dejaría de ver los Delete que se muden a incoming_<tema>.go sin enterarse.
+// incoming.go y events.go están PARTIDOS POR TEMA (E-13), y un candado atado a dos nombres
+// dejaría de ver los Delete que viven en incoming_<tema>.go y events_<tema>.go sin enterarse.
 const streakProductionDir = "."
 
 // expectedDeletes es el número de caminos que borran el estado de la conversación.
 //
-// 🔴 HAY QUE RE-MEDIRLA sobre el código nuevo al pasar a verde incoming.go y events.go
-// (F8-04b). Hoy vale lo que mide el viejo: 6 —events.go:716 (la entrada a un evento con
-// flujo) y :1221 (la suelta por inactividad del evento); incoming.go:239 (el TTL del limbo),
-// :450 (la suelta del estado terminal), :489 (la suelta del menú huérfano) y :1077 (el
-// escape)—. Con los contratos sin lógica el candado ve 0 y por eso está en rojo.
+// RE-MEDIDA sobre el código nuevo en el verde (F8-05): 6, los mismos seis caminos del viejo
+// (events.go:716 y :1221; incoming.go:239, :450, :489 y :1077 @ e0159171), repartidos ahora
+// así: events_switch.go (la entrada a un evento con flujo), events_clock.go (la suelta por
+// inactividad del evento), incoming.go (el TTL del limbo) e incoming_advance.go ×3 (la suelta
+// del estado terminal, la del menú huérfano y el escape).
+//
+// Regla de conteo: una por SENTENCIA de producción del paquete (sin _test.go, sin
+// subdirectorios) que contiene una llamada `<x>.store.Delete(...)`, contada en su bloque más
+// interno. Coincide con `grep -n 'store\.Delete(' *.go` sin los _test.go: 6 líneas, una
+// llamada por línea. Cada una se comprobó por mutación: quitar su Close pone rojo el candado.
 const expectedDeletes = 6
 
 // streakSlack es cuántas sentencias del MISMO bloque, a partir de la del Delete, pueden
