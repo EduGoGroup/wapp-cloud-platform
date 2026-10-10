@@ -437,6 +437,27 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   ✎ **Decidido por Jhoan (2026-10-10, tras F8-06b): se borra en F8-07**, en su propio commit. No es código viejo que
   espere a F10: es código nuevo que quedó huérfano, y dejarlo invita a reabrir la carrera de D-F7-9.
 
+### D-36 · 🟡 Los cambios de conducta visibles del binario nuevo, sin revisar contra los consumidores
+
+> Abierta el 2026-10-10 por decisión de Jhoan tras F8-06b: **sesión aparte, cuando termine el plan**. La reconstrucción
+> se hizo mirando solo este repo; los consumidores (`wapp-client-console`, `wapp-guardian-bff`, `wapp-platform-console`,
+> el Edge) no se tocaron.
+
+- **Qué es**: cada vez que el árbol nuevo responde distinto del viejo a propósito (una «divergencia deliberada»), un
+  consumidor que esperaba la respuesta vieja puede pintarla mal o no tratarla.
+- **El caso que la abre** (F8-06b, T8.40, hallazgo 54 de `reorganizacion-modular/plan/F8-conversacion/README.md`):
+  `POST …/reanalyze` devuelve ahora **500** «no se pudo pedir el re-análisis de la solicitud» cuando falla la composición
+  del literal; el viejo respondía 200 «en curso» y el job moría después. **No se miró** cómo lo muestra la consola del
+  cliente.
+- **Por dónde empezar**: el inventario no está hecho. Punto de partida medido el 2026-10-10: 26 comentarios «Divergencia
+  deliberada del viejo» en 14 ficheros de producción de `internal/modulos`, `internal/nucleo`, `internal/apipublica` e
+  `internal/arranque` (`grep` de la frase literal, sin tests), más las decisiones de `plan/DECISIONES.md`. **La mayoría
+  son internas** (logs, orden de pasos, reintentos) y no llegan a un consumidor: hay que separarlas.
+- **Qué hace la sesión**: (1) listar las divergencias que cambian algo observable desde fuera (código HTTP, cuerpo,
+  texto de error, trama gRPC); (2) por cada una, mirar en el consumidor cómo trata la respuesta nueva; (3) adaptar el
+  consumidor o, si no compensa, anotar por qué se deja.
+- **Veredicto**: después del relevo de F10, en una sesión propia que abarca varios repos.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes

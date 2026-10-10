@@ -626,7 +626,8 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     abre. 🟡 **Cambia lo que ve el dueño cuando falla la composición**: antes, 200 y un job sin literal que el worker mataba;
     ahora no se abre job y la petición devuelve `reanalisis: componer el literal del evento <id>: <causa>`, que la cara saca
     como 500 «no se pudo pedir el re-análisis de la solicitud» (es lo que pedía T8.40). Desaparece el ERROR «el job quedó
-    abierto pero SIN literal». El sobre vacío tras componer no es alcanzable aquí (`sourceOfMaterial` usa el mismo criterio
+    abierto pero SIN literal». ✎ Cómo lo muestra la consola del cliente **no se miró**: deuda **D-36** de `deuda.md`
+    (Jhoan, 2026-10-10: sesión aparte al terminar el plan, para todos los cambios que afectan a consumidores). El sobre vacío tras componer no es alcanzable aquí (`sourceOfMaterial` usa el mismo criterio
     que el compositor): documentado en el puerto, sin test.
 55. **(F8-06b, lo que queda sin llamante) 🟡 `PutSourceText` y `ComposeAtFlush` ya no los llama nadie en producción.** Tras
     T8.40 quedan: `(*SourceTextComposer).ComposeAtFlush`, `intake.JobStore.PutSourceText` con sus dos implementaciones, la
