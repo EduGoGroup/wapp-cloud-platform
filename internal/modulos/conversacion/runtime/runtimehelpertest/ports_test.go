@@ -1,22 +1,19 @@
 package runtimehelpertest_test
 
 import (
-	"context"
 	"errors"
 	"slices"
 	"testing"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime/runtimehelpertest"
 )
 
-// Las formas de los dos puertos que runtime_engine.go declarará en la ola siguiente, copiadas del
-// viejo (internal/flujos/runtime/runtime_engine.go @ e0159171). Cuando nazcan, estas dos
-// aserciones se cambian por las de verdad contra runtime.ReplyLimiter y runtime.DepositReminder.
+// Aserciones de compilación: los dos dobles satisfacen los puertos que declara
+// runtime_engine.go.
 var (
-	_ interface{ Allow(key string) bool } = (*runtimehelpertest.ReplyLimiter)(nil)
-	_ interface {
-		RemindContact(ctx context.Context, tenantID, contactID string) []string
-	} = (*runtimehelpertest.DepositReminder)(nil)
+	_ runtime.ReplyLimiter    = (*runtimehelpertest.ReplyLimiter)(nil)
+	_ runtime.DepositReminder = (*runtimehelpertest.DepositReminder)(nil)
 )
 
 // TestTenantResolver_FixedAnswerCallsAndInjectedError: contesta el tenant y el perfil fijados, tal
