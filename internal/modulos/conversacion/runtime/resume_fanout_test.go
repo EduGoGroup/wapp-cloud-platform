@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // resume_fanout_test.go prueba, por HandleIncoming, el FAN-OUT de efectos del contrato de

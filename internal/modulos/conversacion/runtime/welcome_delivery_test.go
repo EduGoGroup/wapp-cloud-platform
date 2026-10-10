@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // welcome_delivery_test.go: la entrega y el sello de la bienvenida (WL-11…WL-13) y lo que la

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // incoming_test.go trae el montaje común de los tests del camino del entrante (incoming.go) y
@@ -12,7 +10,10 @@ package runtime_test
 //
 // OnIncoming lanza una goroutine con un context.WithTimeout sobre el reloj REAL: sus tests
 // corren en una burbuja de testing/synctest, donde ese reloj es falso y solo avanza cuando
-// todas las goroutines están paradas. No hay ni una espera de verdad.
+// todas las goroutines están paradas. No hay ni una espera de verdad. La excepción es
+// TestOnIncoming_SameConversationIsProcessedOneAtATime (incoming_lock_test.go, partido por
+// E-13), que va FUERA de la burbuja (la espera de un sync.Mutex no es durable para synctest)
+// y observa el candado por su conteo.
 
 import (
 	"context"
@@ -454,33 +455,6 @@ func TestOnIncoming_LogsTheErrorAndNeverPropagatesIt(t *testing.T) {
 			t.Errorf("clave error = %q, quería el error de HandleIncoming con su causa", got)
 		}
 		incomingWantTexts(t, h)
-	})
-}
-
-// TestOnIncoming_SameConversationIsProcessedOneAtATime: la serialización por conversación la
-// sigue dando HandleIncoming. Con el primer turno parado en su envío, el segundo entrante de
-// la MISMA conversación no avanza; al soltarlo, se procesan los dos en orden.
-func TestOnIncoming_SameConversationIsProcessedOneAtATime(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h := newHarness(t)
-		h.seedFlow(incomingStepFlow())
-		h.seedRule(incomingKeywordRule(incomingFlowID))
-		release := incomingBlockSends(h)
-
-		incomingDeliver(h, h.incoming("wa-1", incomingKeyword))
-		synctest.Wait()
-		incomingDeliver(h, h.incoming("wa-2", "1"))
-		synctest.Wait()
-
-		if attempts := h.sender.Attempts(); len(attempts) != 1 {
-			t.Fatalf("intentos de envío = %d, quería 1: el segundo turno espera el candado de la conversación", len(attempts))
-		}
-		incomingWantNode(t, h, "root")
-
-		close(release)
-		synctest.Wait()
-		incomingWantTexts(t, h, incomingRootPrompt, incomingSubPrompt)
-		incomingWantNode(t, h, "sub")
 	})
 }
 

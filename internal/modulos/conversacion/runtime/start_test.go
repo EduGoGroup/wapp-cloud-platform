@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // start_test.go prueba el contrato de start.go: la puerta de la API (Start, con sus dos

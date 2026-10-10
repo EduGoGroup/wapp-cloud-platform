@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // events_test.go prueba el PLANO DE EVENTOS del runtime (events.go) por sus puertas

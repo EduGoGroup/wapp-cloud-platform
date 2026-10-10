@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // incoming_aggregation_test.go: AG-7, el puente del entrante con la ventana de captación

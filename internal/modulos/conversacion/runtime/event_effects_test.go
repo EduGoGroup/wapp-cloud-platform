@@ -2,15 +2,14 @@ package runtime
 
 import "testing"
 
-// event_effects.go solo declara datos (diez constantes): no tiene cuerpo que implementar, así
-// que su test no lleva la etiqueta `pendiente` y pasa desde el primer día. Lo que fija son los
-// literales, que se escriben en flow_events.name y en payload.reason de una bitácora append-only
+// Este test fija los DATOS de event_effects.go (diez constantes) y pasa desde el primer día:
+// los literales, que se escriben en flow_events.name y en payload.reason de una bitácora append-only
 // y de los que lee el colector de wapp_flow_event_lifecycle_total: un renombrado distraído no
 // rompería nada más que esto.
 //
 // Lo que el runtime hace al EMITIRLOS (el kind "event" de la columna, el payload
 // {history_id, kind}, la clave reason solo en event_escaped, el EffectContext sacado de la fila
-// del evento) solo se ve a través del Runtime: se prueba en la ola de event_lifecycle/incoming.
+// del evento) solo se ve a través del Runtime: lo prueban los tests de event_lifecycle e incoming.
 
 // TestEventLifecycleEffects_Literals: los siete efectos de ciclo de vida, byte a byte.
 func TestEventLifecycleEffects_Literals(t *testing.T) {

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // harness_doubles_test.go son los dobles PROPIOS del arnés (harness_test.go, de donde se

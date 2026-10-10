@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // runtime_engine_pool_test.go prueba lo que New deja resuelto para OnIncoming (RT-3): el plazo

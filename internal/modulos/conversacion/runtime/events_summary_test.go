@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // events_summary_test.go prueba el RESUMEN del evento que se abandona y la COLETILLA de

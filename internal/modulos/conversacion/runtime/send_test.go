@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // send_test.go prueba, por Start y por HandleIncoming y leyendo el doble del Sender, el

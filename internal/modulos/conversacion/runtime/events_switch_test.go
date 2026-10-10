@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // events_switch_test.go prueba, por HandleIncoming, el SALTO POR TIPO con el gesto «ve»

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // resume_test.go prueba, por HandleIncoming, la REANUDACIÓN por módulo (RS-1…RS-6 del

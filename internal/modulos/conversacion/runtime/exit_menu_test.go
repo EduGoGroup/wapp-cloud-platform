@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // exit_menu_test.go prueba, por HandleIncoming, el contrato de exit_menu.go (XM-1…XM-9): la

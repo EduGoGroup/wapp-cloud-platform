@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // event_lifecycle_cancel_test.go prueba CancelEventForTenant (event_lifecycle.go): la

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // incoming_trigger_test.go: el DISPARO —un entrante sin conversación viva (incoming.go §3)—,

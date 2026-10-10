@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // events_start_new_test.go prueba StartNewOfKind (events.go), la TERCERA puerta del

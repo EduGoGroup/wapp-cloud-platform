@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // incoming_guards_test.go: lo que HandleIncoming hace ANTES de tocar la conversación

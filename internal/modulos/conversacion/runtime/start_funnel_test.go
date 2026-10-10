@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // start_funnel_test.go prueba, por HandleIncoming, las reglas del embudo de arranque de

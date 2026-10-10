@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // thread_test.go: los productores de filas de TEXTO LITERAL del hilo del evento (thread.go,
