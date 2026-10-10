@@ -1,11 +1,11 @@
-// Copia de internal/bootstrap/arranque/contenedor.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo acceso (F2, T2.31, conmutar(acceso)), edge (F3, T3.28, conmutar(edge)) e inferencia (F4,
-// T4.24, conmutar(inferencia)), que son internal/modulos/{acceso,edge,inferencia}: un solo gateway,
-// el nuevo, que recibe acceso sin adaptador, y un solo selector de vía, el nuevo. Y solicitudes (F6,
-// T6.24, conmutar(solicitudes)), que es internal/modulos/solicitudes salvo intakeStoreViejo. Y captación
-// (F7, T7.23, conmutar(captacion)), que es internal/modulos/captacion salvo legacyIntakeJobs, la
-// segunda instancia vieja de la cola que bridge_captacion.go construye para el agregador y el
-// compositor de flujos/runtime (F8).
+// Copia de internal/bootstrap/arranque/contenedor.go @ 80807ba (F0 · 05 §6). Nació cableando
+// paquetes VIEJOS y cada conmutar(<módulo>) le cambió los suyos: acceso (F2, T2.31), edge (F3,
+// T3.28), inferencia (F4, T4.24), solicitudes (F6, T6.24) y captación (F7, T7.23).
+//
+// 🔀 F8 · conmutar(conversacion) (T8.32): YA NO QUEDA NINGÚN PAQUETE VIEJO. El motor de flujos, sus
+// almacenes, el runtime, el agregador, el compositor y el turno acotado son los de
+// internal/modulos/conversacion, y con ellos murieron las dos segundas instancias viejas que este
+// struct guardaba (intakeStoreViejo, de F6, y legacyIntakeJobs, de F7): de cada almacén hay UNO.
 package arranque
 
 import (
@@ -18,14 +18,6 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
-	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
-	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
-	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
-	intakesviejo "github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
@@ -33,6 +25,14 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/pipeline"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/reanalisis"
+	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/admin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/engine"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
+	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime"
+	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/trigger"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/turnoacotado"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/filtercfg"
@@ -52,7 +52,6 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/turnoacotado"
 )
 
 // contenedor es el estado compartido del arranque: todo lo que una fase construye
@@ -107,15 +106,9 @@ type contenedor struct {
 	intakeStore       *intakes.Postgres
 	buyerDataStore    *intakes.PostgresBuyerData
 	integrationsStore *integrations.Postgres
-	// intakeStoreViejo es la SEGUNDA instancia, VIEJA, del almacén de solicitudes (D-F6-1,
-	// mantenida por Jhoan el 2026-10-07): internal/intakes sobre el mismo pool y el mismo cipher.
-	// No tiene estado propio. Existe porque dos puertos de un paquete viejo nombran tipos del
-	// intakes viejo en su firma y el almacén nuevo no los satisface: los argumentos 2 y 3 del
-	// proyector del carrito (cart.NewProjector, fase 7). Es su ÚNICO lector desde F7
-	// (conmutar(captacion)): la etapa draft, las zonas de envío del pipeline y el re-análisis, que
-	// eran los otros tres, son ya los de internal/modulos/captacion y leen de intakeStore. Muere
-	// en F8, con el carrito.
-	intakeStoreViejo *intakesviejo.Postgres
+	// 🔀 F8 · conmutar(conversacion): aquí vivía intakeStoreViejo, la SEGUNDA instancia, VIEJA, del
+	// almacén de solicitudes (D-F6-1). Murió con el carrito viejo: el proyector del carrito nuevo
+	// (cart.NewProjector, fase 7) recibe intakeStore en sus dos puertos.
 	// tenantVars es el único almacén de variables del tenant: lo leen G11–G12 de la cara nueva
 	// (fase 8) y el worker del puente CRM (fase 9), que antes construían uno cada una.
 	tenantVars          *tenantvars.Postgres
@@ -124,16 +117,13 @@ type contenedor struct {
 	degradationNotifier *degradation.Notifier
 	// intakeJobStore es la cola del pipeline de captación, la NUEVA (internal/modulos/captacion/
 	// intake) desde F7: la leen el worker y la puerta del re-análisis.
+	//
+	// 🔀 F8 · conmutar(conversacion): y también el compositor (fase 5) y el agregador (fase 7), que
+	// son ya los de conversacion/runtime y nombran los tipos de la captación nueva. La segunda
+	// instancia vieja que existía para ellos (legacyIntakeJobs, D-F7-1) murió con
+	// bridge_captacion.go: UNA cola.
 	intakeJobStore *intake.Postgres
-	// legacyIntakeJobs es la SEGUNDA instancia, VIEJA, de esa misma cola (D-F7-1): internal/intake
-	// sobre el mismo pool, sin estado propio. Existe porque el agregador y el compositor de
-	// flujos/runtime (F8) nombran el WindowKey, el Append y el SourceText del intake viejo en sus
-	// puertos y la cola nueva no los satisface. El tipo es un alias que declara
-	// bridge_captacion.go, que es también quien la construye: así este fichero no importa el
-	// paquete viejo. Sus DOS lectores son el compositor (fase 5) y el agregador (fase 7). Muere
-	// en F8, con el adaptador.
-	legacyIntakeJobs *legacyIntakeJobs
-	eventStore       *events.Store
+	eventStore     *events.Store
 
 	// ─── Fase 4 · gateway ───────────────────────────────────────────────────
 	inferStats *inferstats.Store
@@ -168,10 +158,10 @@ type contenedor struct {
 	intakeAhead        *intakeahead.Pool
 	// 🔴 EL OTRO CAMPO DIFERIDO, y el mismo patrón por el mismo motivo: el agregador
 	// PIDE por el pool (intakeAhead) y el pool RESPONDE al agregador, así que se
-	// necesitan mutuamente. La clausura SinkFunc que recibe el pool (classifiedSink,
-	// bridge_captacion.go) lee este campo al llamar. La alternativa era un setter público sobre el agregador, o sea dejar el
-	// cable mutable en caliente para arreglar un problema que solo existe durante el
-	// arranque.
+	// necesitan mutuamente. La clausura SinkFunc que recibe el pool (escrita en línea en
+	// fase7_flujos.go, como en el arranque viejo, desde F8) lee este campo al llamar. La
+	// alternativa era un setter público sobre el agregador, o sea dejar el cable mutable en
+	// caliente para arreglar un problema que solo existe durante el arranque.
 	intakeAggregator *flowruntime.IntakeAggregator
 	dispatcher       *events.Dispatcher
 	flowRuntime      *flowruntime.Runtime
@@ -188,9 +178,10 @@ type contenedor struct {
 	enrollLis     net.Listener
 	connectLis    net.Listener
 
-	// publicCompuesto es el estrangulador que sirve publicSrv (cara nueva delante del
-	// publicapi viejo). F0 · desviación de la copia (TX.4): se guarda para que el
-	// candado de mudanzas resuelva las 73 rutas del :8103 por Compuesto.Resolver.
+	// publicCompuesto es el estrangulador que sirve publicSrv. F0 · desviación de la copia
+	// (TX.4): se guarda para que el candado de mudanzas resuelva las 73 rutas del :8103 por
+	// Compuesto.Resolver. 🔀 F8 · conmutar(conversacion): detrás de la cara nueva ya no hay
+	// publicapi viejo, sino un mux vacío (http.go); las 73 las sirve la cara.
 	publicCompuesto *apipublica.Compuesto
 	// publicCara es la cara nueva que va dentro de publicCompuesto. F2 · conmutar(acceso):
 	// se guarda para que el candado de mudanzas compare sus Patrones() con el mapa sobre

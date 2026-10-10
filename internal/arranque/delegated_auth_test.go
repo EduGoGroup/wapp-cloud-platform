@@ -1,5 +1,5 @@
-// Copia de internal/bootstrap/arranque/delegated_auth_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo acceso (F2) y el gateway (F3), que son los de internal/modulos.
+// Copia de internal/bootstrap/arranque/delegated_auth_test.go @ 80807ba (F0 · 05 §6). Desde F8
+// (conmutar(conversacion)) el arranque que este test ejercita no cablea ningún paquete viejo.
 package arranque
 
 import (

@@ -13,9 +13,9 @@ import (
 
 	"github.com/EduGoGroup/wapp-shared/logger"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/anclaje"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 )
 
@@ -114,9 +114,11 @@ type DraftInput struct {
 // tiene, PARIRLO. Dos métodos, ni uno más: el pipeline no lista solicitudes, no las
 // transiciona y —R-06— NO ESCRIBE REVISIONES por aquí.
 //
-// 🔴 PUENTE 1 (05 §4.1, muere en F8): `store.Intake` es del almacén VIEJO de flujos, que
-// aún no tiene gemelo en `conversacion`. Lo satisfacen `*store.PostgresRepository` y
-// `*store.MemoryRepository`. La lectura NO filtra por estado (D-044.46).
+// 🔀 F8 · conmutar(conversacion): `store.Intake` es del almacén NUEVO de flujos,
+// `conversacion/store` (fue el PUENTE 1 de 05 §4.1 hacia `internal/flujos/store`, de F7 a
+// F8; murió en T8.31 sin cambiar nombres ni firmas). Lo satisfacen
+// `*store.PostgresRepository` y `*store.MemoryRepository`. La lectura NO filtra por
+// estado (D-044.46).
 type IntakeStore interface {
 	GetIntakeByEvent(ctx context.Context, tenantID, eventID string) (store.Intake, bool, error)
 	UpsertIntake(ctx context.Context, o store.Intake) error

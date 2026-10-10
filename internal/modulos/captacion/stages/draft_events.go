@@ -6,8 +6,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
 )
 
 // draft_events.go — LOS EVENTOS de la etapa `draft` (trozo de draft.go, E-13): las dos
@@ -104,8 +104,9 @@ const (
 // EventWriter (antes `EscritorEvento`) es lo ÚNICO que esta etapa necesita del outbox de
 // efectos: añadir una fila.
 //
-// 🔴 PUENTE 1 (05 §4.1, muere en F8): `store.FlowEvent` es del almacén VIEJO de flujos.
-// Lo satisfacen `*store.PostgresRepository` y `*store.MemoryRepository`.
+// 🔀 F8 · conmutar(conversacion): `store.FlowEvent` es del almacén NUEVO de flujos,
+// `conversacion/store` (fue el PUENTE 1 de 05 §4.1, de F7 a F8; murió en T8.31). Lo
+// satisfacen `*store.PostgresRepository` y `*store.MemoryRepository`.
 type EventWriter interface {
 	InsertFlowEvent(ctx context.Context, ev store.FlowEvent) error
 }

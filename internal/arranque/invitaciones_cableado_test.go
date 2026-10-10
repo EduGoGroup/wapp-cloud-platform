@@ -26,7 +26,7 @@ import (
 // arranque tiene que hacer para que T-A2 y T-A8 existan en producción, retargeteadas en
 // F2 (T2.31, conmutar(acceso)): que buildRolePlane construya el servicio con el usecase
 // NUEVO (internal/modulos/acceso/iam/usecase) y que buildPublicAPIServer se lo pase a la
-// cara nueva (apipublica.RolePlaneDeps.Invitations), dejando a nil el de la vieja.
+// cara nueva (apipublica.RolePlaneDeps.Invitations), y solo a ella (la vieja murió en F8).
 func TestCableado_LaPuertaDeInvitacionesEstaEnchufada(t *testing.T) {
 	t.Parallel()
 	fset := token.NewFileSet()
@@ -61,14 +61,14 @@ func TestCableado_LaPuertaDeInvitacionesEstaEnchufada(t *testing.T) {
 
 	// La otra mitad: construirla y no pasarla tiene el MISMO efecto que no construirla —las
 	// tres rutas /api/v1/invitations no se montan y la dueña se queda sin la ÚNICA vía para
-	// incorporar a alguien a quien no puede buscar—. Y dársela también a la vieja la
-	// registraría dos veces, tapada por la nueva.
+	// incorporar a alguien a quien no puede buscar—. Y dársela a una segunda cara la
+	// registraría dos veces.
 	visto := cableadoDelPlanoDeRolesEn(t)
 	if visto.planoDe == "" {
 		t.Fatal("internal/arranque/http.go NO llama a buildRolePlane")
 	}
 	visto.exigeDelPlano(t, "Invitations")
-	visto.exigeViejoANil(t, "Invitations")
+	visto.requireSingleFace(t)
 }
 
 // TestCableado_LasTresRutasDeInvitacionesLlevanSuScope.

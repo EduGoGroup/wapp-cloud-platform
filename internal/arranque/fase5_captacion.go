@@ -1,13 +1,15 @@
-// Copia de internal/bootstrap/arranque/fase5_captacion.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge, e inferencia, que desde
-// F4 (T4.24, conmutar(inferencia)) es internal/modulos/inferencia: el selector de vía, su adaptador
-// local y el cargador de prompts son los nuevos. turnoacotado sigue viejo y recibe el selector
-// nuevo detrás de bridge_inferencia.go. Desde F6 (T6.24, conmutar(solicitudes)) el generador de
-// cotización es el de internal/modulos/solicitudes. Y desde F7 (T7.23, conmutar(captacion)) las
-// cinco etapas, el aforo, el worker y el re-análisis son los de internal/modulos/captacion, y la
-// caché del catálogo la de internal/modulos/catalogo/indice: leen del almacén NUEVO de solicitudes
-// (c.intakeStore) y de la cola NUEVA (c.intakeJobStore). Lo único viejo de captación que queda
-// aquí es el compositor del literal, de flujos/runtime (F8), cosido por bridge_captacion.go.
+// Copia de internal/bootstrap/arranque/fase5_captacion.go @ 80807ba (F0 · 05 §6). Nació cableando
+// paquetes VIEJOS y cada conmutar(<módulo>) le cambió los suyos: edge desde F3 (T3.28); inferencia
+// desde F4 (T4.24: el selector de vía, su adaptador local y el cargador de prompts); el generador
+// de cotización de internal/modulos/solicitudes desde F6 (T6.24); y desde F7 (T7.23) las cinco
+// etapas, el aforo, el worker y el re-análisis de internal/modulos/captacion, con la caché del
+// catálogo de internal/modulos/catalogo/indice: leen del almacén NUEVO de solicitudes
+// (c.intakeStore) y de la cola NUEVA (c.intakeJobStore).
+//
+// 🔀 F8 · conmutar(conversacion) (T8.32): el compositor del literal y el turno acotado son los de
+// internal/modulos/conversacion/{runtime,turnoacotado}, y reciben la cola nueva y el selector nuevo
+// SIN adaptador: bridge_inferencia.go y bridge_captacion.go murieron. Esta fase ya no cablea nada
+// viejo.
 package arranque
 
 import (
@@ -17,15 +19,15 @@ import (
 
 	"github.com/EduGoGroup/wapp-shared/textmatch"
 
-	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/pipeline"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/reanalisis"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/stages"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/indice"
+	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/turnoacotado"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes/quotetext"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/turnoacotado"
 )
 
 // EL PLAZO DE LA COTIZACIÓN SUGERIDA (G7), EN UN SOLO SITIO (FX mapa §4.3, reglas.md T-9).
@@ -95,12 +97,12 @@ func (faseCaptacion) ejecutar(_ context.Context, c *contenedor) error {
 	// 🔴 ES EL MISMO OBJETO que consume `/reanalyze`: dos compositores serían dos
 	// `source_text` que divergen en el primer rótulo que cambie.
 	//
-	// 🔀 F7 · conmutar(captacion): el compositor es de flujos/runtime y sigue VIEJO hasta F8
-	// (reglas de F7, T-2), así que escribe por la instancia VIEJA de la cola
-	// (c.legacyIntakeJobs, D-F7-1): su puerto SourceTextWriter nombra el WindowKey y el
-	// SourceText del intake viejo. El re-análisis nuevo lo recibe detrás de composerBridge
-	// (bridge_captacion.go), que es este mismo objeto y no otro (T-5).
-	c.intakeComposer = flowruntime.NewSourceTextComposer(c.log, c.eventStore, c.legacyIntakeJobs, c.flowDeps.cipher)
+	// 🔀 F8 · conmutar(conversacion): el compositor es el de conversacion/runtime y escribe por
+	// LA cola (c.intakeJobStore, la única): su puerto SourceTextWriter nombra el WindowKey y el
+	// SourceText de la captación nueva. De F7 a F8 escribía por una segunda instancia vieja
+	// (D-F7-1) y el re-análisis lo recibía detrás de composerBridge; hoy lo recibe tal cual, y
+	// sigue siendo este mismo objeto y no otro (T-5).
+	c.intakeComposer = flowruntime.NewSourceTextComposer(c.log, c.eventStore, c.intakeJobStore, c.flowDeps.cipher)
 
 	if err := construirSelectorDeVia(c); err != nil {
 		return err
@@ -160,13 +162,17 @@ func construirSelectorDeVia(c *contenedor) error {
 	c.llmSelector = llmSelector
 
 	// EL RESOLUTOR DEL TURNO ACOTADO (T3.5-2). Es un consumidor MÁS del selector, como
-	// las cinco etapas y el aforo — su único argumento ES el selector, detrás de
-	// turneroBridge (bridge_inferencia.go): turnoacotado sigue siendo el paquete viejo
-	// hasta F8 y pide el TurnoRequest y el centinela del llmvia viejo; el adaptador los
-	// traduce y delega en ESTE selector, no en uno aparte (R4.7.b, R4.7.c).
+	// las cinco etapas y el aforo — su único argumento ES el selector, ESTE y no uno
+	// aparte (R4.7.b).
+	//
+	// 🔀 F8 · conmutar(conversacion): el resolutor es el de conversacion/turnoacotado, cuyo
+	// puerto Turner nombra el TurnoRequest y el centinela ErrViaSinTurnoAcotado del llmvia
+	// NUEVO: el *llmvia.Selector lo satisface tal cual. turneroBridge (bridge_inferencia.go,
+	// F4), que traducía los dos al llmvia viejo, murió (R4.7.c ya no necesita traducción).
+	//
 	// Si falla es porque el selector vino nil, o sea un bug de este mismo arranque:
 	// se aborta en vez de arrancar con el tercer escalón del carrito apagado.
-	consultaResolver, err := turnoacotado.New(&turneroBridge{sel: c.llmSelector})
+	consultaResolver, err := turnoacotado.New(c.llmSelector)
 	if err != nil {
 		return fmt.Errorf("resolutor del turno acotado: %w", err)
 	}
@@ -259,9 +265,11 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	//
 	// 🔀 F7 · conmutar(captacion): la revisión la escribe el almacén NUEVO de solicitudes
 	// (c.intakeStore, con el cipher del literal), ya no la instancia vieja de D-F6-1: el
-	// puerto RevisionWriter nombra el intakes.Revision de internal/modulos/solicitudes. Los
-	// otros dos puertos (IntakeStore, EventWriter) siguen en el flowStore VIEJO, y es un
-	// puente declarado (stages → flujos/store): mueren en F8.
+	// puerto RevisionWriter nombra el intakes.Revision de internal/modulos/solicitudes.
+	//
+	// 🔀 F8 · conmutar(conversacion): los otros dos puertos (IntakeStore, EventWriter) los sirve
+	// el flowStore NUEVO (conversacion/store). El puente de import stages → flujos/store que los
+	// ataba al viejo murió (T8.31).
 	//
 	// 🔧 `stages.WithCRMPush` ES DE T4.6 (Plan 044 · Ola 4), y cierra T4.10 mitad 2.
 	// Sin esta opción la etapa produce el borrador igual, pero un RE-ANÁLISIS pedido
@@ -320,8 +328,8 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	// El worker usa `c.intakeJobStore` —el MISMO `*intake.Postgres` NUEVO que las cinco
 	// etapas y que la puerta del re-análisis— y no una construcción propia: aquí entra por
 	// `intake.PipelineStore` (la máquina de estados del worker, machine.go). El agregador
-	// escribe en la MISMA tabla por la instancia vieja de la cola (D-F7-1, hasta F8): son
-	// dos tipos sobre un solo *sql.DB, no dos pools.
+	// escribe en la MISMA tabla por ESTE MISMO objeto (🔀 F8 · conmutar(conversacion): la
+	// instancia vieja de la cola, D-F7-1, murió).
 	//
 	// El cipher es el descifrador del sobre del literal, y es `c.flowDeps.cipher`: el
 	// MISMO keyring del Plan 012 con el que el compositor cerró ese sobre al cerrar la
@@ -365,16 +373,16 @@ func construirPuertasDelDueno(c *contenedor) error {
 	//                       F7 es el almacén NUEVO de solicitudes: el puerto Intakes devuelve
 	//                       el intakes.ReanalysisTarget de internal/modulos/solicitudes;
 	//   · eventStore      → el hilo cifrado del evento, descifrado en el borde, y la
-	//                       fila del texto que pega el dueño (origin='owner_pasted'). Es el
-	//                       store VIEJO de flujos/events, por un puente declarado (F8);
+	//                       fila del texto que pega el dueño (origin='owner_pasted'). Desde
+	//                       F8 es el store NUEVO, conversacion/events (el puente murió);
 	//   · intakeJobStore  → el MISMO *intake.Postgres NUEVO del worker: aquí satisface
 	//                       OTRO puerto, el de esta puerta, que solo puede preguntar por
 	//                       el job vivo y abrir el del re-análisis;
 	//   · intakeComposer  → el MISMO compositor que corre al cerrar una ventana. Dos
 	//                       compositores serían dos `source_text` que divergen en el
-	//                       primer rótulo que cambie. Es el VIEJO de flujos/runtime (F8)
-	//                       detrás de composerBridge (bridge_captacion.go), que solo
-	//                       convierte el WindowKey nuevo en el viejo (T-3, T-5);
+	//                       primer rótulo que cambie. Desde F8 es el de
+	//                       conversacion/runtime y entra TAL CUAL: su ComposeAtFlush ya
+	//                       nombra el WindowKey nuevo (composerBridge murió; T-3, T-5);
 	//   · entResolver     → el MISMO resolver CACHEADO que gatea el resto del carril.
 	//                       Un segundo sería una segunda caché y una segunda verdad
 	//                       sobre el plan del tenant;
@@ -383,13 +391,14 @@ func construirPuertasDelDueno(c *contenedor) error {
 	//                       esta puerta necesita saber SI hay clave, nunca cuál es.
 	//                       Desde F7 es el almacén NUEVO tal cual: el servicio nuevo
 	//                       pide el Config del tenantllm nuevo, y llmConfigBridge
-	//                       (bridge_inferencia.go, F4) murió con este commit.
+	//                       (bridge_inferencia.go, F4) murió en F7.
 	//
 	// Y un OCTAVO argumento que no es una dependencia: el límite del hilo. El servicio
-	// nuevo no lo importa del runtime viejo (sería un puente más) ni trae un default (serían
-	// dos verdades con la del compositor): lo RECIBE, y aquí llega legacyThreadLimit, que
-	// bridge_captacion.go deriva de flowruntime.DefaultThreadLimit. Con ≤ 0 el constructor
-	// falla, y el arranque con él.
+	// no lo importa del runtime ni trae un default (serían dos verdades con la del
+	// compositor): lo RECIBE, y aquí llega flowruntime.DefaultThreadLimit, la MISMA constante
+	// con la que el compositor lee el hilo al cerrar una ventana (🔀 F8 ·
+	// conmutar(conversacion): antes llegaba por legacyThreadLimit, de bridge_captacion.go).
+	// Con ≤ 0 el constructor falla, y el arranque con él.
 	//
 	// ⚠️ Si esto devuelve error, el arranque MUERE en vez de montar la ruta a medias:
 	// un 500 a mitad de camino en una puerta que abre trabajo en la cola es peor que
@@ -397,7 +406,7 @@ func construirPuertasDelDueno(c *contenedor) error {
 	// ruta sencillamente no se monta y responde 404 — lo custodia el test de cableado de
 	// este paquete.
 	reanalysisSvc, err := reanalisis.NewService(c.log, c.intakeStore, c.eventStore, c.intakeJobStore,
-		&composerBridge{composer: c.intakeComposer}, c.entResolver, c.tenantLLMStore, legacyThreadLimit)
+		c.intakeComposer, c.entResolver, c.tenantLLMStore, flowruntime.DefaultThreadLimit)
 	if err != nil {
 		return fmt.Errorf("re-análisis desde el origen: %w", err)
 	}

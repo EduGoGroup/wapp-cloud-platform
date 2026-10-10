@@ -1,5 +1,5 @@
-// Copia de internal/bootstrap/arranque/filters_config_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo el store de intenciones, que desde F7 (conmutar(captacion)) es el de internal/modulos/captacion/intentcfg.
+// Copia de internal/bootstrap/arranque/filters_config_test.go @ 80807ba (F0 · 05 §6). Desde F8
+// (conmutar(conversacion)) el arranque que este test ejercita no cablea ningún paquete viejo.
 package arranque
 
 import (

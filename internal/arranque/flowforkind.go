@@ -1,11 +1,12 @@
-// Copia de internal/bootstrap/arranque/flowforkind.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/flowforkind.go @ 80807ba (F0 · 05 §6).
+// 🔀 F8 · conmutar(conversacion): el almacén de reglas es el de internal/modulos/conversacion/trigger.
 package arranque
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/trigger"
 )
 
 // flowForKind resuelve «qué flujo arranca este tipo de evento» leyendo las reglas

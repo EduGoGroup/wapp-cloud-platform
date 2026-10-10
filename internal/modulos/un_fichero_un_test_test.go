@@ -82,13 +82,10 @@ func TestUnFicheroUnTest(t *testing.T) {
 		t.Fatalf("el recorrido (%d ficheros) no vio %s: raíz o alcance equivocados", len(fuentes), testigo)
 	}
 	bridges := walkBridges(t)
-	// Testigo de los adaptadores: hoy existe bridge_contact.go, que muere en F8 (05 §4.2). Si
-	// el recorrido no lo ve, el candado no está mirando los adaptadores. Cuando muera el último
-	// adaptador, este testigo se retira con él.
-	const bridgeWitness = "internal/arranque/bridge_contact.go"
-	if !vio(bridges, bridgeWitness) {
-		t.Fatalf("el recorrido de adaptadores (%d ficheros) no vio %s: bridgeDirs equivocado", len(bridges), bridgeWitness)
-	}
+	// 🔀 F8 · conmutar(conversacion): el testigo de los adaptadores (bridge_contact.go) se
+	// retiró con el último adaptador (05 §4.2, T8.32). El recorrido se conserva: si alguien
+	// crea un bridge_<x>.go, sigue debiendo su test; que hoy salga vacío es lo esperado.
+	//
 	// Solo adaptadores: un fichero del arranque que no lo sea no puede colarse en el alcance.
 	const notABridge = "internal/arranque/orquestador.go"
 	if vio(bridges, notABridge) {

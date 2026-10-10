@@ -3,8 +3,8 @@ package arranque
 // mudanzas.go — qué rutas del :8103 sirve ya la cara NUEVA (internal/apipublica).
 //
 // Fichero nuevo del arranque nuevo (no es copia del viejo: F0 · TX.4, D-10). La cara
-// HTTP nueva crece por olas delante del publicapi viejo (estrangulador,
-// apipublica.Componer en http.go), y cada fase muda SUS rutas según el mapa de
+// HTTP nueva creció por olas delante del publicapi viejo (estrangulador,
+// apipublica.Componer en http.go), y cada fase mudó SUS rutas según el mapa de
 // documentations/reorganizacion-modular/plan/FX-cara-http/mapa-de-rutas.md, cuya
 // copia ejecutable es testdata/mapa.tsv (id · listener · patrón · fase).
 //
@@ -13,6 +13,10 @@ package arranque
 // partida entre las dos caras ni un comodín de la nueva solapando un literal que
 // sigue en la vieja. Por eso la tarea `conmutar(<m>)` de cada fase sube FaseActual
 // en el MISMO commit que monta las rutas: la tabla y el cableado avanzan juntos.
+//
+// 🔀 F8 · conmutar(conversacion) (FX TX.24): con las 19 de conversación (I1–I19) la cara
+// nueva sirve las 73 rutas del :8103 y a la vieja no le queda ninguna: publicapi ya no se
+// registra y detrás del estrangulador hay un mux vacío (http.go).
 
 import "github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 
@@ -20,15 +24,16 @@ import "github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 // cara nueva: 0 en F0 (la cara nace vacía y todo cae al publicapi viejo), 2 tras
 // conmutar acceso, 3 tras conmutar edge, 4 tras conmutar inferencia, 5 tras la conmutación nominal de catalogo (no muda ninguna ruta), 6 tras conmutar solicitudes, 7 tras conmutar captacion, 8 tras conmutar conversacion. La fase de una fila del mapa se
 // escribe «F<n>»; la fila pertenece a la cara nueva si n ≤ FaseActual.
-const FaseActual = 7
+const FaseActual = 8
 
 // newFaceDeps es todo lo que la cara nueva necesita para montar sus áreas, y el ÚNICO sitio
 // donde se agrupa: un campo por módulo. La fase que muda rutas declara aquí su <módulo>FaceDeps,
 // le añade un campo a este struct y su Mount* a caraNueva; en la fase 8 lo rellena con su
 // <módulo>DepsOfTheNewFace(c). Ni la firma ni el cuerpo de buildPublicAPIServer se tocan.
 //
-// Lo arman a dos manos: la fase 8 pone las áreas de los módulos (edge, inference, requests, capture) y
-// buildPublicAPIServer (http.go) las cinco de acceso, cuyos servicios construye él. El candado
+// Lo arman a dos manos: la fase 8 pone las áreas de los módulos (edge, inference, requests,
+// capture, conversation) y buildPublicAPIServer (http.go) las cinco de acceso, cuyos servicios
+// construye él. El candado
 // de mudanzas lo arma con dobles.
 type newFaceDeps struct {
 	// common es lo compartido por todas las áreas: middleware, auditor y logger.
@@ -49,6 +54,8 @@ type newFaceDeps struct {
 	requests requestsFaceDeps
 	// capture enciende H1, E1 y E2 (F7): el módulo captacion.
 	capture captureFaceDeps
+	// conversation enciende I1–I19 (F8): el módulo conversacion.
+	conversation conversationFaceDeps
 }
 
 // edgeFaceDeps es lo que la cara nueva necesita para D1–D6 (F3 · conmutar(edge)). Lo arma la
@@ -104,8 +111,29 @@ type captureFaceDeps struct {
 	intents apipublica.IntentsDeps
 }
 
+// conversationFaceDeps es lo que la cara nueva necesita para I1–I19 (F8 · conmutar(conversacion),
+// FX TX.24): las seis áreas del módulo conversacion. Lo arma la fase 8
+// (conversationDepsOfTheNewFace) con el almacén de flujos, el registro de módulos, EL runtime, el
+// almacén de reglas, el comprobador de flujo durable, el presignador, el almacén del evento y el
+// resolver de derechos del contenedor; buildPublicAPIServer no le añade nada.
+type conversationFaceDeps struct {
+	// flows enciende I1–I4 (definiciones y arranque) e I11–I13 (reglas de disparo).
+	flows apipublica.FlowsDeps
+	// media enciende I5 (`POST /api/v1/media/upload-url`).
+	media apipublica.MediaDeps
+	// tenantContent enciende I6–I10 (los blobs de tenant_content).
+	tenantContent apipublica.TenantContentDeps
+	// catalogImport enciende I14–I17 (import de catálogo: JSON, tabular, plantilla y prompt). Es
+	// UN solo valor para los tres Mount del área: las cuatro rutas comparten condición de montaje.
+	catalogImport apipublica.CatalogImportDeps
+	// events enciende I18 (`GET /api/v1/conversation-events`).
+	events apipublica.ConversationEventsDeps
+	// eventCancel enciende I19 (`POST /api/v1/conversation-events/{id}/cancel`).
+	eventCancel apipublica.ConversationEventCancelDeps
+}
+
 // caraNueva construye la cara nueva con las rutas de las fases ≤ FaseActual: desde F2,
-// las 23 de acceso (A1–A7, B1–B14, C1–C2); desde F3, además las 6 de edge (D1–D6); desde F4, además las 4 de inferencia (F1–F4); desde F6, además las 18 de solicitudes (G1–G18); desde F7, además las 3 de captación (H1, E1–E2). Cada fase añade aquí su apipublica.Mount<Área>
+// las 23 de acceso (A1–A7, B1–B14, C1–C2); desde F3, además las 6 de edge (D1–D6); desde F4, además las 4 de inferencia (F1–F4); desde F6, además las 18 de solicitudes (G1–G18); desde F7, además las 3 de captación (H1, E1–E2); desde F8, además las 19 de conversación (I1–I19): las 73. Cada fase añade aquí su apipublica.Mount<Área>
 // en el MISMO commit que sube FaseActual. Las condiciones de montaje (qué dependencia nil
 // apaga qué ruta) son las de cada Mount*: aquí no se decide nada.
 func caraNueva(d newFaceDeps) *apipublica.Cara {
@@ -133,5 +161,17 @@ func caraNueva(d newFaceDeps) *apipublica.Cara {
 	// cara tapando un literal de la otra.
 	apipublica.MountReanalyze(cara, d.common, d.capture.reanalyze)
 	apipublica.MountIntents(cara, d.common, d.capture.intents)
+	// 🔀 F8 · conmutar(conversacion) (FX TX.24): I1–I19, en el orden del mapa. Las condiciones de
+	// montaje son las de la cara vieja: I1–I10 siempre; I11–I13 si hay almacén de reglas; I14–I17
+	// si hay lector, escritor versionado y resolver de derechos (los tres Mount reciben el MISMO
+	// valor); I18 e I19, si hay su puerto y el resolver. I4 e I19 reciben EL runtime (T-1).
+	apipublica.MountFlows(cara, d.common, d.conversation.flows)
+	apipublica.MountMedia(cara, d.common, d.conversation.media)
+	apipublica.MountTenantContent(cara, d.common, d.conversation.tenantContent)
+	apipublica.MountCatalogImport(cara, d.common, d.conversation.catalogImport)
+	apipublica.MountCatalogTabular(cara, d.common, d.conversation.catalogImport)
+	apipublica.MountCatalogTemplate(cara, d.common, d.conversation.catalogImport)
+	apipublica.MountConversationEvents(cara, d.common, d.conversation.events)
+	apipublica.MountConversationEventCancel(cara, d.common, d.conversation.eventCancel)
 	return cara
 }

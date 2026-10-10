@@ -55,8 +55,8 @@ import (
 
 	"github.com/EduGoGroup/wapp-shared/logger"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 )
@@ -138,9 +138,9 @@ type Intakes interface {
 }
 
 // Thread (antes `Hilo`) es el historial cifrado del evento, DESCIFRADO en el borde
-// (REQ-10c). Lo satisface `*events.Store`, que es quien tiene el FieldCipher; por sus
-// tipos (`events.ThreadEntry`) este paquete declara un puente de import a
-// `internal/flujos/events`, que muere en F8.
+// (REQ-10c). Lo satisface `*events.Store`, que es quien tiene el FieldCipher. Sus tipos
+// (`events.ThreadEntry`) son los de `conversacion/events` (🔀 F8 · conmutar(conversacion):
+// de F7 a F8 fue un puente de import a `internal/flujos/events`; murió en T8.31).
 //
 // `AppendPastedMessage` añade el texto del dueño como UNA fila más del hilo, con
 // `origin='owner_pasted'`, y devuelve su `seq`; `ListPastedByOwner` devuelve, ya
@@ -166,8 +166,9 @@ type Jobs interface {
 // sobre del job. Es el MISMO compositor que corre al cerrar una ventana del pipeline
 // normal (R-08, T-5), y por eso este paquete no escribe un segundo: dos caminos que
 // producen el `source_text` divergirían en el primer rótulo que cambie. La clave es el
-// `intake.WindowKey` NUEVO; el adaptador que lo cose al compositor viejo es del
-// arranque (F7-04).
+// `intake.WindowKey` NUEVO, la misma del compositor de `conversacion/runtime`, que el
+// arranque pasa SIN adaptador (🔀 F8 · conmutar(conversacion): el que lo cosía al
+// compositor viejo, de F7-04, murió con `bridge_captacion.go`).
 type Composer interface {
 	ComposeAtFlush(ctx context.Context, key intake.WindowKey) error
 }
@@ -215,8 +216,9 @@ type Service struct {
 //     «¿hay material?» tiene que mirar exactamente las entradas que se van a componer,
 //     o un hilo largo pasaría la comprobación y se compondría vacío. El viejo lo
 //     importaba (`runtime.DefaultThreadLimit`, 200); aquí ENTRA POR CONSTRUCTOR para no
-//     declarar un puente de import a `internal/flujos/runtime` ni una segunda constante
-//     (dos constantes serían dos verdades). Lo pasa el arranque.
+//     importar el runtime de la conversación ni declarar una segunda constante (dos
+//     constantes serían dos verdades). Lo pasa el arranque: `DefaultThreadLimit` de
+//     `conversacion/runtime`.
 //   - Un `threadLimit` <= 0 se RECHAZA: `(nil, error)` que envuelve ErrNotWired
 //     (`errors.Is`) y cuyo texto es
 //     `reanalisis: el límite del hilo debe ser positivo (<n>): ` seguido del de

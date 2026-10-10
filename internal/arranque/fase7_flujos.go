@@ -1,10 +1,14 @@
-// Copia de internal/bootstrap/arranque/fase7_flujos.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge. Desde F6 (T6.24,
-// conmutar(solicitudes)) el motor viejo recibe los objetos NUEVOS de solicitudes por sus puertos
-// estructurales; solo el proyector del carrito sigue leyendo de c.intakeStoreViejo. Desde F7 (T7.23,
-// conmutar(captacion)) el pool que pide las clasificaciones es el de internal/modulos/captacion; el
-// agregador de ventanas, que es de flujos/runtime y sigue viejo hasta F8, se cose a él por
-// bridge_captacion.go y escribe por la instancia vieja de la cola (c.legacyIntakeJobs).
+// Copia de internal/bootstrap/arranque/fase7_flujos.go @ 80807ba (F0 · 05 §6). Nació cableando
+// paquetes VIEJOS: edge cambió en F3 (T3.28), los objetos de solicitudes en F6 (T6.24) y el pool que
+// pide las clasificaciones en F7 (T7.23).
+//
+// 🔀 F8 · conmutar(conversacion) (T8.33): TODO lo que construye esta fase es de
+// internal/modulos/conversacion —registro de módulos, engine, comprobador de flujo durable,
+// agregador, despachador y runtime— y lo cablea SIN adaptadores: UN runtime.New, UN
+// NewIntakeAggregator, las 22 opciones, los cuatro hooks del gateway y la fuente del gauge, igual
+// que el arranque viejo con los nombres nuevos (E-11: WithQueryResolver, WithQueryObserver). El
+// proyector del carrito lee de c.intakeStore y el agregador escribe por c.intakeJobStore: las dos
+// segundas instancias viejas murieron con bridge_captacion.go.
 package arranque
 
 import (
@@ -14,18 +18,19 @@ import (
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 	"golang.org/x/time/rate"
 
-	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/media"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/menu"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/survey"
-	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intakeahead"
+	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/admin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/content"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/engine"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules/cart"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules/media"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules/menu"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules/survey"
+	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/trigger"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
 )
@@ -80,6 +85,10 @@ func (faseFlujos) ejecutar(_ context.Context, c *contenedor) error {
 	// literalmente lo que ya pasó dos veces en este plan. Lo custodia
 	// TestTurnoAcotadoCableado, contra el AST de este paquete.
 	//
+	// 🔀 F8 · conmutar(conversacion) (T-6): en el engine nuevo las dos opciones se llaman
+	// WithQueryResolver y WithQueryObserver (eran WithConsultaResolver y WithConsultaObserver,
+	// E-11). El resolutor es el MISMO c.consultaResolver de la fase 5.
+	//
 	// Y EL OBSERVADOR de desenlaces, que se cablea igual: el engine no tiene logger
 	// —es el núcleo puro de la máquina de estados— así que publica por callback, como
 	// el carrito publica los escalones de su cascada. Sin él una degradación sería
@@ -88,15 +97,17 @@ func (faseFlujos) ejecutar(_ context.Context, c *contenedor) error {
 	// cliente no sale por aquí (engine/consulta.go).
 	c.flowEngine = engine.New(c.flowReg,
 		engine.WithContentSource(content.NewRouter(content.NewStatic(), content.NewJSON(c.flowStore))),
-		engine.WithConsultaResolver(c.consultaResolver),
-		engine.WithConsultaObserver(observaConsultas(c.log)))
+		engine.WithQueryResolver(c.consultaResolver),
+		engine.WithQueryObserver(observaConsultas(c.log)))
 
 	// Puerto ESTRECHO de T2.6/T2.7 (Plan 054 · F3, D-054.6/D-054.8): junta el MISMO
 	// flowStore/flowEngine que ya alimentan DefinitionHandler/StartHandler/flowRuntime
 	// —cero dependencias nuevas, solo una lectura nueva sobre objetos que YA existen—
 	// para responder «¿el flujo de esta regla tiene contenido durable?» en tiempo de
 	// CONFIGURACIÓN. Parámetro POSICIONAL de los tres constructores CRUD de la fase de
-	// transporte (y de publicapi.Deps.DurableFlowChecker): omitirlo no compila.
+	// transporte: omitirlo no compila. Es también el campo TriggersDurableFlow de las reglas
+	// de disparo de la cara nueva (apipublica.FlowsDeps; en la cara vieja,
+	// publicapi.Deps.TriggersDurableFlow).
 	c.durableFlowChecker = flowadmin.NewEngineDurableFlowChecker(c.flowStore, c.flowEngine)
 
 	c.replyLimiter = ratelimit.NewLimiter(rate.Limit(c.cfg.Flow.ReplyRate), c.cfg.Flow.ReplyBurst)
@@ -152,15 +163,21 @@ func (faseFlujos) ejecutar(_ context.Context, c *contenedor) error {
 // agregador, es decir, dejar el cable mutable en caliente para arreglar un problema
 // que solo existe durante el arranque.
 //
-// 🔀 F7 · conmutar(captacion): el pool es el NUEVO y el agregador sigue VIEJO (es de
-// flujos/runtime, F8), y cada uno nombra SU WindowKey: mismos cuatro campos, dos tipos que
-// el compilador no mezcla (reglas de F7, T-3). Los dos sentidos del nudo pasan por
-// bridge_captacion.go, que es el único sitio donde se convierte la clave: classifiedSink
-// para la respuesta (pool → agregador) y aheadBridge para la petición (agregador → pool).
-// La clausura sigue resolviéndose al llamar; solo cambió de fichero.
+// 🔀 F8 · conmutar(conversacion): el pool y el agregador son los dos NUEVOS y nombran el MISMO
+// intake.WindowKey (captacion/intake), así que los dos sentidos del nudo van directos, como en
+// el arranque viejo: la clausura de aquí abajo para la respuesta (pool → agregador) y el pool
+// tal cual en WithAheadRequester para la petición (agregador → pool). De F7 a F8 pasaban por
+// bridge_captacion.go (classifiedSink y aheadBridge), que convertía la clave entre los dos
+// tipos; murió.
 func cablearVentanaDeCaptacion(c *contenedor) {
 	c.intakeAhead = intakeahead.New(c.log, c.intentStore, c.llmSelector,
-		classifiedSink(c),
+		// 🔴 CLAUSURA DIFERIDA: cuando esta línea corre c.intakeAggregator es nil (se construye
+		// más abajo). El campo se lee AL LLAMAR, no al construir. No comprueba nil a propósito:
+		// una guarda cambiaría un fallo ruidoso de arranque mal ordenado por una clasificación
+		// tragada en silencio.
+		intakeahead.SinkFunc(func(key intake.WindowKey, intent string, confidence float64) {
+			c.intakeAggregator.OnClassified(key, intent, confidence)
+		}),
 		// EL CALENTAMIENTO DE LA CACHÉ DE PREFIJO (T1.7-4). El emisor es el MISMO
 		// selector de vía, porque decidir si un tenant tiene caché que calentar es
 		// preguntar por la vía y eso se hace en un solo sitio (C2). Sin este cable el
@@ -194,10 +211,10 @@ func cablearVentanaDeCaptacion(c *contenedor) {
 		"max_output_tokens_env", "WAPP_LLM_MAX_OUTPUT_TOKENS_ENABLED")
 
 	// El AGREGADOR DE VENTANAS (T1.1/T1.2). Tres dependencias y ninguna más:
-	//   - legacyIntakeJobs, para escribir la ventana (UNA sentencia por entrante). Es la
-	//     instancia VIEJA de la cola (D-F7-1, bridge_captacion.go): el puerto JobStore del
-	//     agregador nombra los tipos del intake viejo. Misma tabla y mismo *sql.DB que la
-	//     cola nueva del worker; muere en F8;
+	//   - intakeJobStore, para escribir la ventana (UNA sentencia por entrante). Es LA cola
+	//     (🔀 F8 · conmutar(conversacion): el mismo objeto que leen el worker, las etapas y
+	//     el re-análisis; el puerto JobStore del agregador nuevo nombra sus tipos, y la
+	//     segunda instancia vieja de D-F7-1 murió);
 	//   - flowStore, para leer `aggregation_window_seconds` EN EL BARRIDO (nunca en
 	//     línea con el mensaje: eso sería el SELECT que D-044.26 prohíbe);
 	//   - entResolver, el MISMO resolver CACHEADO CON TTL que ya usan el hilo y el
@@ -218,11 +235,14 @@ func cablearVentanaDeCaptacion(c *contenedor) {
 	// que hasta la Ola 1.6 llegaba adjunta al mensaje (D-044.31 mató el push). Sin
 	// ella el agregador no adelanta nunca y toda ventana cierra por su reloj — que es
 	// una forma legítima (T1.7), no una avería, pero deja sobre la mesa el minuto de
-	// latencia que esta ola existe para recortar. Desde F7 quien pide es el pool NUEVO
-	// detrás de aheadBridge, que convierte la clave vieja del agregador en la nueva.
-	c.intakeAggregator = flowruntime.NewIntakeAggregator(c.log, c.legacyIntakeJobs, c.flowStore, c.entResolver,
+	// latencia que esta ola existe para recortar. Quien pide es el pool de captación, tal
+	// cual (🔀 F8 · conmutar(conversacion): sin aheadBridge).
+	//
+	// 🔴 D-F7-9 NO SE ARREGLA AQUÍ: agregador y compositor se cablean tal cual, como en el
+	// arranque viejo (cierre de ventana y sobre siguen siendo dos actos; es de F8-06b).
+	c.intakeAggregator = flowruntime.NewIntakeAggregator(c.log, c.intakeJobStore, c.flowStore, c.entResolver,
 		flowruntime.WithSourceComposer(c.intakeComposer),
-		flowruntime.WithAheadRequester(&aheadBridge{pool: c.intakeAhead}))
+		flowruntime.WithAheadRequester(c.intakeAhead))
 
 	// EL DISPARADOR POR EVENTO (D-044.43). Mismo molde que `gw.OnWarmup` de arriba y
 	// sobre el MISMO objeto que se registra en el servidor gRPC de la fase de
@@ -239,6 +259,12 @@ func cablearVentanaDeCaptacion(c *contenedor) {
 
 // construirRuntimeDeFlujos arma el runtime del Motor con sus opciones. Es la lista de
 // cables más larga del arranque y cada uno lleva escrito qué se rompe sin él.
+//
+// 🔀 F8 · conmutar(conversacion) (T-1): es EL runtime, el único del proceso, y es el de
+// conversacion/runtime. El mismo puntero (c.flowRuntime) lo reciben el gateway (OnIncoming),
+// las rutas I4 e I19 de la cara nueva y J19 de :8100: dos instancias partirían el candado por
+// conversación, el limitador, las rachas y el semáforo sin dar un solo error. El gateway
+// (c.gw) entra como Sender SIN adaptador (T-13) y los contactos son el resolver del núcleo.
 func construirRuntimeDeFlujos(c *contenedor) *flowruntime.Runtime {
 	return flowruntime.New(c.flowStore, c.flowEngine, c.gw, c.flowResolver, c.flowDeps.contacts, c.log,
 		// WithDecisionThread (T4.5.7a): el MISMO eventStore que gobierna el ciclo de
@@ -246,12 +272,13 @@ func construirRuntimeDeFlujos(c *contenedor) *flowruntime.Runtime {
 		// estrecho DecisionAppender. Una segunda instancia sería un segundo cipher
 		// y un segundo reloj sobre conversation_events.
 		//
-		// 🔀 F6 · conmutar(solicitudes): el proyector del carrito recibe en sus argumentos 2 y 3
-		// (escritor de revisiones y garante del envío) la instancia VIEJA del almacén (D-F6-1):
-		// esos dos puertos nombran intakes.Revision e intakes.ShippingPolicy del paquete viejo.
-		// Muere en F8. El 4.º, el escritor de datos del comprador, es de stdlib y recibe el NUEVO.
+		// 🔀 F8 · conmutar(conversacion): el proyector del carrito recibe en sus argumentos 2 y 3
+		// (escritor de revisiones y garante del envío) EL almacén de solicitudes, c.intakeStore,
+		// dos veces: los puertos del carrito nuevo nombran los tipos de
+		// internal/modulos/solicitudes/intakes. De F6 a F8 recibía una segunda instancia vieja
+		// (D-F6-1), que murió. El 4.º es el escritor de datos del comprador.
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(c.flowStore,
-			cart.NewProjector(c.flowStore, c.intakeStoreViejo, c.intakeStoreViejo, c.buyerDataStore),
+			cart.NewProjector(c.flowStore, c.intakeStore, c.intakeStore, c.buyerDataStore),
 			survey.NewProjector(c.flowStore)).WithDecisionThread(c.eventStore)),
 		// Puente CRM (Plan 042 · Ola 3): SOLO encola (INV-02); el worker que
 		// entrega de verdad se arranca en la fase de fondo.
@@ -260,7 +287,7 @@ func construirRuntimeDeFlujos(c *contenedor) *flowruntime.Runtime {
 		// eff.Payload al cerrar, así que tiene que correr DESPUÉS del PersistSink.
 		// Eso ya NO depende de que esta línea vaya debajo de la anterior: el sink
 		// declara PhaseNotify y Runtime.New ordena el fan-out por fase (Plan 042 ·
-		// Ola 3.1, ver SinkPhase en flujos/runtime/event_sink.go). El orden de
+		// Ola 3.1, ver SinkPhase en conversacion/runtime/event_sink.go). El orden de
 		// estas dos líneas es legible, no load-bearing.
 		flowruntime.WithEventSink(flowruntime.NewWebhookSink(c.log, cart.EffectCartClosed, c.integrationsStore, c.webhookGate)),
 		// Ventana de captación (Plan 044 · Ola 1). NO es un EventSink y por eso no
@@ -268,7 +295,7 @@ func construirRuntimeDeFlujos(c *contenedor) *flowruntime.Runtime {
 		// módulo, porque EffectContext no lleva `wa_message_id` (y `source_refs` es
 		// justo una lista de ellos) y porque un turno de texto libre —el caso que
 		// este plan resuelve— no declara ningún efecto. El porqué entero está en la
-		// cabecera de internal/flujos/runtime/aggregator.go.
+		// cabecera de internal/modulos/conversacion/runtime/aggregator.go.
 		flowruntime.WithAggregator(c.intakeAggregator),
 		// La BIENVENIDA ÚNICA (Plan 044 · Ola 1.8 · T1.8-2, D6): el «estamos
 		// procesando» que el cliente recibe al primer mensaje de una conversación y
@@ -323,7 +350,7 @@ func construirRuntimeDeFlujos(c *contenedor) *flowruntime.Runtime {
 		// con fecha de caducidad —«hasta que el Plan 044 (su LECTOR) exista»— y el 044
 		// es esa fecha. El gate NO se fue con él: sigue entero y sigue siendo por
 		// tenant, y es la línea de arriba (WithEntitlements) la que lo sostiene — sin
-		// `llm_intake`, cero filas. Ver internal/flujos/runtime/thread.go.
+		// `llm_intake`, cero filas. Ver internal/modulos/conversacion/runtime/thread.go.
 		// (Esta lápida vive DENTRO de una lista de argumentos, no sobre una declaración:
 		// `revive`/`exported` no la mira. La línea en blanco es solo para que no se lea
 		// como si documentara el WithReplyLimiter de debajo.)
@@ -378,9 +405,9 @@ func construirRuntimeDeFlujos(c *contenedor) *flowruntime.Runtime {
 //
 // Vive como función con nombre y no como closure inline porque gocyclo imputa los
 // FuncLit anidados a la función madre.
-func observaConsultas(log sharedlogger.Logger) engine.ObservadorConsulta {
+func observaConsultas(log sharedlogger.Logger) engine.QueryObserver {
 	return func(clase, nivel, desenlace string) {
-		if desenlace == engine.DesenlaceResuelto {
+		if desenlace == engine.QueryOutcomeResolved {
 			log.Info("flujos: consulta resuelta", "clase", clase, "nivel", nivel)
 			return
 		}

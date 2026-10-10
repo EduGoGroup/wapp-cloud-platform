@@ -59,7 +59,6 @@ func TestFileSizeBites(t *testing.T) {
 // techos, y todos pasan de FileLinesLimit (si no, sobran en la lista).
 func TestOversizedFilesList(t *testing.T) {
 	want := map[string]int{
-		"internal/arranque/bridge_contact_test.go":        809,
 		"internal/arranque/huellatest/huellatest.go":      732,
 		"internal/arranque/huellatest/huellatest_test.go": 669,
 		"internal/candados/sinbdviva_openers_test.go":     629,

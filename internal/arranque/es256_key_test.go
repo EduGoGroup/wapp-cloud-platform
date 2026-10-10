@@ -1,4 +1,5 @@
-// Copia de internal/bootstrap/arranque/es256_key_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/es256_key_test.go @ 80807ba (F0 · 05 §6). Desde F8
+// (conmutar(conversacion)) el arranque que este test ejercita no cablea ningún paquete viejo.
 package arranque
 
 import (

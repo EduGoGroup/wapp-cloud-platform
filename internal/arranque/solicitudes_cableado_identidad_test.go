@@ -4,14 +4,13 @@ package arranque
 // solicitudes (F6 · T6.24–T6.25, R6.5.a–c, R6.6.b–c; FX TX.18). Sale de
 // solicitudes_cableado_test.go por tamaño (E-13). Sobre el arranque nuevo REAL (el contenedor de
 // la huella) afirma que cada pieza de solicitudes recibe LAS MISMAS instancias que el contenedor,
-// que la cara HTTP nueva sirve G1–G18 con ellas, que a la cara vieja no le queda nada de
-// solicitudes ni de captación (desde F7 tampoco el centinela de montaje de H1, D-F6-13) y que el
-// plazo de escritura de G7 sale del plazo del generador, que es el suelo del pipeline NUEVO (T-13).
+// que la cara HTTP nueva sirve G1–G18 con ellas, que las rutas de solicitudes y de captación las
+// resuelve la cara nueva en el compuesto real (la vieja murió en F8, conmutar(conversacion)) y que
+// el plazo de escritura de G7 sale del plazo del generador, que es el suelo del pipeline NUEVO
+// (T-13).
 
 import (
 	"go/ast"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"slices"
 	"testing"
@@ -19,7 +18,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/pipeline"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
 )
 
 // TestIdentidad_TheRequestsPiecesShareTheContainerInstances (R6.6.b, reglas.md §3): el Service
@@ -63,24 +62,30 @@ func TestIdentidad_TheRequestsPiecesShareTheContainerInstances(t *testing.T) {
 }
 
 // TestIdentidad_TheNotifierUsesTheOneContactResolver (arquitectura.md §4.1 de F6): el notificador
-// NUEVO recibe el resolver de contactos del núcleo SIN envolver, y es la MISMA instancia en la
-// que delega el contactBridge que sigue recibiendo el motor viejo. Dos resolvers serían dos vías
-// custodiadas de PII; y con otro KeyProvider, otro índice ciego y contactos duplicados.
+// NUEVO recibe el resolver de contactos del núcleo SIN envolver, y es la MISMA instancia que
+// recibe el runtime del Motor de Flujos. Hasta F8 el motor viejo lo recibía detrás de
+// contactBridge y el contenedor guardaba dos campos (contacts, el adaptador, y contactResolver, el
+// del núcleo); con el adaptador muerto en conmutar(conversacion) queda UN campo,
+// c.flowDeps.contacts, y lo que este test afirmaba (que el adaptador delegaba en el mismo resolver
+// que usa el notificador) se afirma directo: los dos consumidores guardan ese puntero. Dos
+// resolvers serían dos vías custodiadas de PII; y con otro KeyProvider, otro índice ciego y
+// contactos duplicados.
 func TestIdentidad_TheNotifierUsesTheOneContactResolver(t *testing.T) {
 	c := contenedorDeHuella(t, "minimo")
 
-	bridge, ok := c.flowDeps.contacts.(*contactBridge)
-	if !ok {
-		t.Fatalf("flowDeps.contacts = %T; se espera *contactBridge", c.flowDeps.contacts)
+	resolver, ok := c.flowDeps.contacts.(*contact.PostgresResolver)
+	if !ok || resolver == nil {
+		t.Fatalf("flowDeps.contacts = %T; se espera el *contact.PostgresResolver del núcleo, sin adaptador (contactBridge murió en F8)",
+			c.flowDeps.contacts)
 	}
-	if c.flowDeps.contactResolver == nil {
-		t.Fatal("la fase 3 no dejó flowDeps.contactResolver")
+	if !sameInstance(field(t, c.intakeNotifier, "contacts"), resolver) {
+		t.Error("el notificador de solicitudes no usa flowDeps.contacts")
 	}
-	if !sameInstance(reflect.ValueOf(bridge).Elem().FieldByName("next"), c.flowDeps.contactResolver) {
-		t.Error("flowDeps.contactResolver no es el resolver en el que delega el contactBridge: habría dos")
+	if !sameInstance(field(t, c.flowRuntime, "contacts"), resolver) {
+		t.Error("el runtime del Motor de Flujos no usa flowDeps.contacts: habría dos resolvers de contactos")
 	}
-	if !sameInstance(field(t, c.intakeNotifier, "contacts"), c.flowDeps.contactResolver) {
-		t.Error("el notificador de solicitudes no usa flowDeps.contactResolver")
+	if n := callsTo(t, internalTreePath+"nucleo/contact", "NewPostgresResolver"); n != 1 {
+		t.Errorf("contact.NewPostgresResolver aparece %d veces en la producción de internal/arranque; se espera 1", n)
 	}
 }
 
@@ -133,7 +138,7 @@ func TestIdentidad_TheNewFaceSharesTheRequestsInstances(t *testing.T) {
 	}
 }
 
-// Las tres rutas de captación (F7) y una de la bandeja (F6): ninguna puede seguir en la cara vieja.
+// Las tres rutas de captación (F7) y una de la bandeja (F6) que se siguen de punta a punta.
 const (
 	reanalyzeRoute  = "POST /api/v1/intakes/{id}/reanalyze" // H1
 	getIntentsRoute = "GET /api/v1/intents"                 // E1
@@ -141,63 +146,30 @@ const (
 	listIntakeRoute = "GET /api/v1/intakes"                 // G1
 )
 
-// TestCableado_TheOldFaceKeepsNothingOfRequestsNorCapture (FX TX.18 y TX.21; muere D-F6-13): de
-// solicitudes y de captación, la cara VIEJA no recibe NADA. Intakes es nil de verdad —ya no el
-// centinela de montaje, que existía solo para que la vieja siguiera registrando H1—, los otros
-// ocho campos de solicitudes son nil, y también Reanalysis, Intents y ConfigPush: con un valor en
-// cualquiera, publicapi volvería a registrar esa ruta detrás de la nueva.
+// TestCableado_TheNewFaceResolvesRequestsAndCapture (FX TX.18 y TX.21; F8 ·
+// conmutar(conversacion)): H1, E1, E2 y la bandeja (G1) las registra la cara nueva del arranque
+// real, y el compuesto del :8103 las RESUELVE en ella, con su mismo patrón.
 //
-// Y lo fija contra el publicapi viejo REAL, que es lo que afirmaba el test del centinela al
-// revés: con las deps del arranque, el mux viejo NO registra H1, ni E1, ni E2, ni la bandeja (G1,
-// que con el centinela sí volvía a registrar, tapada). Esas rutas las sirve la cara nueva del
-// arranque real, con su mismo patrón.
-func TestCableado_TheOldFaceKeepsNothingOfRequestsNorCapture(t *testing.T) {
+// Hasta F8 este test afirmaba lo mismo por el otro lado: que las deps de la cara vieja
+// (depsDeLaAPIPublica) llevaban a nil los doce campos de solicitudes y captación y que el
+// publicapi viejo REAL, montado con ellas, no registraba ninguna de las cuatro. Las dos cosas
+// murieron con la cara vieja —el arranque ya no importa publicapi—, así que queda lo que eso
+// protegía: que cada ruta tiene UN dueño en el compuesto, y es la nueva.
+func TestCableado_TheNewFaceResolvesRequestsAndCapture(t *testing.T) {
 	c := contenedorDeHuella(t, "minimo")
-
-	old := depsDeLaAPIPublica(c)
-	absent := []struct {
-		name string
-		got  any
-	}{
-		{"Intakes", old.Intakes},
-		{"QuoteSuggestions", old.QuoteSuggestions},
-		{"TenantVariables", old.TenantVariables},
-		{"Integrations", old.Integrations},
-		{"CRMSecrets", old.CRMSecrets},
-		{"CRMGate", old.CRMGate},
-		{"CRMReflect", old.CRMReflect},
-		{"CRMNotify", old.CRMNotify},
-		{"EventTelemetry", old.EventTelemetry},
-		{"Reanalysis", old.Reanalysis},
-		{"Intents", old.Intents},
-		{"ConfigPush", old.ConfigPush},
-	}
-	for _, k := range absent {
-		if k.got != nil {
-			t.Errorf("la cara vieja recibe un %s (%T); se espera nil: esa ruta la sirve la nueva", k.name, k.got)
-		}
+	if c.publicCara == nil || c.publicCompuesto == nil {
+		t.Fatal("la fase 8 no guardó la cara nueva y el compuesto del :8103 en el contenedor")
 	}
 
 	served := c.publicCara.Patrones()
 	for _, route := range []string{reanalyzeRoute, getIntentsRoute, putIntentsRoute, listIntakeRoute} {
-		if oldFaceRegisters(t, c, old, route) {
-			t.Errorf("la cara vieja sigue registrando %s: la serviría dos veces, y la vieja con un servicio que no tiene", route)
-		}
 		if !slices.Contains(served, route) {
 			t.Errorf("la cara nueva del arranque real NO registra %s: la ruta habría desaparecido del :8103", route)
 		}
+		if face, pattern := c.publicCompuesto.Resolver(peticionDe(route)); face != "nueva" || pattern != route {
+			t.Errorf("%s resuelve (%q, %q) en el compuesto; se espera (\"nueva\", %q)", route, face, pattern, route)
+		}
 	}
-}
-
-// oldFaceRegisters dice si el publicapi viejo, montado con deps y el middleware del contenedor,
-// registra pattern. No sirve la petición: solo pregunta al mux qué patrón la atendería.
-func oldFaceRegisters(t *testing.T, c *contenedor, deps publicapi.Deps, pattern string) bool {
-	t.Helper()
-	mux := http.NewServeMux()
-	publicapi.Register(mux, deps, c.authMW, c.auditor, c.log)
-	req := peticionDe(pattern)
-	_, got := mux.Handler(httptest.NewRequest(req.Method, req.URL.Path, nil))
-	return got == pattern
 }
 
 // TestCableado_TheQuoteWriteDeadlineIsDerived (FX mapa §4.3, reglas.md T-9; T6.25): el plazo de

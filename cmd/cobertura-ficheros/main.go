@@ -12,7 +12,8 @@
 //
 // -dirs son directorios que entran ENTEROS (recursivos). -bridges son directorios de los que
 // entran SOLO los adaptadores de arranque bridge_<x>.go, hijos directos (D-F1-16, 05 §4.2):
-// así el informe mide internal/arranque/bridge_contact.go sin medir el resto del arranque.
+// así el informe mide un adaptador (el último, internal/arranque/bridge_contact.go, murió en
+// F8 con conmutar(conversacion)) sin medir el resto del arranque.
 //
 // Salida: una línea por fichero evaluado con su porcentaje, una "BAJO fichero: motivo" por
 // cada fichero por debajo de -umbral, y el resumen FICHEROS_EVALUADOS=N y POR_DEBAJO=M.
