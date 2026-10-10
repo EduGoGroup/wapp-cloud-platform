@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package events
 
 import (
@@ -28,6 +26,26 @@ func requireRescuable(t *testing.T, what string, got Rescuable, id, kind string,
 	requireSameEvent(t, what, got.Event, pgEventOf(id, kind, StatusOpen, time.Time{}))
 	if got.Stale != stale || got.ContentState != contentState || got.ContentRef != contentRef {
 		t.Errorf("%s: (vencido=%v, %q, %q), quería (%v, %q, %q)", what, got.Stale, got.ContentState, got.ContentRef, stale, contentState, contentRef)
+	}
+}
+
+// TestEventColumns_QualifiedListIsTheSameList: la lista de columnas cualificada con el alias `e`
+// (la de las consultas con JOIN) es la MISMA que la que espera scanEvent, columna a columna y en
+// el mismo orden. Si divergen no hay error de compilación: hay datos cambiados de sitio.
+func TestEventColumns_QualifiedListIsTheSameList(t *testing.T) {
+	plain := strings.Split(eventColumns, ",")
+	qualified := strings.Split(eventColumnsE, ",")
+	if len(plain) != 12 || len(qualified) != len(plain) {
+		t.Fatalf("las listas tienen %d y %d columnas, quería 12 y 12", len(plain), len(qualified))
+	}
+	for i := range plain {
+		column := strings.TrimSpace(plain[i])
+		if strings.Contains(column, ".") {
+			t.Errorf("la lista sin cualificar lleva un alias en %q", column)
+		}
+		if got := strings.TrimSpace(qualified[i]); got != "e."+column {
+			t.Errorf("columna %d: cualificada %q, quería %q", i, got, "e."+column)
+		}
 	}
 }
 
