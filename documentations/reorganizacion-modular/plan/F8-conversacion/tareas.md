@@ -129,8 +129,8 @@ Para cuando: `engine`, `menu`, `survey`, `media`, `turnoacotado` verdes; `G`, `V
 > | `turnoacotado.MaxLlamadasPorTurno` · `PresupuestoTroceado` · `SueloPorLlamada` | `turnoacotado.MaxCallsPerTurn` · `ChunkingBudget` · `FloorPerCall` |
 >
 > No exportados que un test de cableado lee por reflexión: el campo `turnero` de `Resolver` es ahora `turner`
-> (`internal/arranque/inference_wiring_test.go:187,226`, para T8.32/T8.33). `diseno.md` §engine, `arquitectura.md` §4 y la
-> trampa T-6 de `reglas.md` siguen nombrando los viejos (`WithConsultaResolver`…): se leen con esta tabla.
+> (`internal/arranque/inference_wiring_test.go:187,226`, para T8.32/T8.33). `diseno.md` §2.1, `arquitectura.md` §4 y la
+> trampa T-6 de `reglas.md` llevan ya los nombres nuevos, con ✎.
 
 ## Bloque 3 · `events` y `cart` · 💻 · sesión F8-03 · T8.12, T8.15–T8.17, T8.24, T8.25
 Para cuando: `events` (7) y `cart` (14) verdes; `eventshelpertest` con doble y suite; goldens idénticos; candado de orden sin etiqueta, verde y mutado. (21 ficheros + doble + testdata.)

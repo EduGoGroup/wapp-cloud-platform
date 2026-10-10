@@ -191,7 +191,7 @@ Hoy `internal/bootstrap/arranque/fase7_flujos.go` (`requiere`: `gateway`, `selec
 1. `modules.NewRegistry()` + `menu.New()`, `survey.New()`,
    `cart.New(cart.WithLogger(c.log), cart.WithMatchHook(c.mtx.CartMatch))`, `media.New()` — **4**
    módulos, en ese orden.
-2. `engine.New(reg, WithContentSource(content.NewRouter(content.NewStatic(), content.NewJSON(flowStore))), WithConsultaResolver(turnoacotado), WithConsultaObserver(observaConsultas(log)))`.
+2. `engine.New(reg, WithContentSource(content.NewRouter(content.NewStatic(), content.NewJSON(flowStore))), WithQueryResolver(turnoacotado), WithQueryObserver(observaConsultas(log)))`. ✎ F8-02: aquí decía `WithConsultaResolver`/`WithConsultaObserver`, los nombres del viejo (E-11); `turnoacotado` es `turnoacotado.New(<el selector de llmvia>)`, sin adaptador.
 3. `admin.NewEngineDurableFlowChecker(flowStore, engine)`; `replyLimiter`.
 4. La ventana de captación (`cablearVentanaDeCaptacion`): `intakeahead.New(…)` **nuevo de F7**,
    `gw.OnWarmup`, log de interruptores efectivos (`WAPP_LLM_WARMUP_ENABLED`,

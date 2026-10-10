@@ -130,7 +130,7 @@ Leer: 4 · 23.
 | Fichero | Líneas | Exp. | Qué promete |
 |---|---:|---:|---|
 | `engine.go` | 443 | 12 | Núcleo **puro** (sin BD, sin transporte, sin logger); errores envueltos en `ErrInvalidFlow`: nodo inexistente, «no espera entrada», tipo desconocido, resolver contenido, emitir media, **cadena demasiado larga (¿ciclo?)** (`engine.go:286-431`) |
-| `consulta.go` | 218 | 10 | `ConsultaResolver` (`:49`), `ObservadorConsulta`, desenlaces (`DesenlaceResuelto`…); el observador recibe 3 argumentos de **cardinalidad acotada**, nunca texto del cliente |
+| `consulta.go` | 218 | 10 | `ConsultaResolver` (`:49`), `ObservadorConsulta`, desenlaces (`DesenlaceResuelto`…); el observador recibe 3 argumentos de **cardinalidad acotada**, nunca texto del cliente. ✎ F8-02: en el nuevo, `QueryResolver` (método `ResolveQuery`), `QueryObserver`, `QueryOutcome…`, `WithQueryResolver`/`WithQueryObserver` (E-11; tabla en [`tareas.md`](tareas.md), antes del bloque 3) |
 
 Reglas: re-entry de consultas (Plan 044 · Ola 3.5 · T3.5-2): sin resolutor → desenlace
 «sin_resolutor» y el módulo repromptea. Leer: 9 · 31 (`engine_generic_test`, `engine_media_seam_test`,

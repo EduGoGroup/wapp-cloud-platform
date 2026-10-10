@@ -247,9 +247,9 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     no por fichero: se llaman entre sí y ningún orden parcial pasa el lint `unused`. El `G` se corrió una vez sobre la cabeza
     integrada, no por commit; cada sub-agente corrió `test -race`, vet, lint y candados de su paquete. Los tests de reloj de
     `troceado` usan `testing/synctest` en vez del `time.Sleep` real de 400 ms del viejo.
-20. **(F8-02) Tres documentos de la fase siguen con los nombres viejos del engine** (`diseno.md:133`, `arquitectura.md:194`,
-    `reglas.md` T-6: `WithConsultaResolver`, `ObservadorConsulta`, `Desenlace…`): no se reescriben; la correspondencia está en
-    [`tareas.md`](tareas.md), antes del bloque 3.
+20. **(F8-02) Tres documentos de la fase nombraban el engine con los nombres viejos** (`diseno.md` §2.1, `arquitectura.md` §4,
+    `reglas.md` T-6: `WithConsultaResolver`, `ObservadorConsulta`, `Desenlace…`): corregidos con ✎ al cerrar la sesión; la
+    correspondencia completa está en [`tareas.md`](tareas.md), antes del bloque 3.
 
 ## Orden de lectura
 
