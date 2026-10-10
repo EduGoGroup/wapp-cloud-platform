@@ -27,12 +27,6 @@
 //   - thread_level_one_contrato.go: el texto de las entradas de nivel 1 en el hilo (ver abajo).
 //   - concurrency_contrato.go: las cuatro carreras.
 //
-// 🔴 MIENTRAS events/summary.go y events/menu.go ESTÉN EN ROJO, los dos casos que renderizan un
-// payload de nivel 1 (thread_level_one_contrato.go) llevan la etiqueta `pendiente`: el doble
-// resuelve ese texto con events.Summary.Render, que aún no tiene lógica. Sin la etiqueta, la tabla
-// los recibe vacíos de thread_level_one_pending_contrato.go. El verde de summary.go quita la
-// etiqueta del primero y BORRA el segundo.
-//
 // Para añadir un caso: escribe su función en el fichero de su tema y añade su fila a cases().
 package eventshelpertest
 
@@ -233,8 +227,7 @@ func cases() []contractCase {
 		{"TouchAndTransition_Concurrent_NeitherOverwritesTheOther", caseTouchTransitionConcurrent},
 		{"Append_Concurrent_NumbersWithoutGapsOrDuplicates", caseAppendConcurrent},
 	}
-	// El texto de las entradas de nivel 1 (thread_level_one_contrato.go): vacío mientras
-	// events/summary.go esté en rojo.
+	// El texto de las entradas de nivel 1 (thread_level_one_contrato.go).
 	return slices.Concat(base, levelOneThreadCases())
 }
 

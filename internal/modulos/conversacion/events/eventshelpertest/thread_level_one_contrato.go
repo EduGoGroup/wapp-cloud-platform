@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package eventshelpertest
 
 import (
@@ -9,9 +7,8 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
 )
 
-// El texto de las entradas de NIVEL 1 en el hilo. Lleva la etiqueta `pendiente` mientras
-// events/summary.go esté en rojo: ese texto es events.Summary.Render, y el doble lo llama. El verde
-// de summary.go quita la etiqueta y borra thread_level_one_pending_contrato.go.
+// El texto de las entradas de NIVEL 1 en el hilo: el render del resumen (events.Summary.Render) o
+// nada. Llevó la etiqueta `pendiente` mientras events/summary.go estuvo en rojo.
 
 // levelOneThreadCases son los casos que renderizan un payload de nivel 1.
 func levelOneThreadCases() []contractCase {

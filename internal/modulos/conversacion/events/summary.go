@@ -1,13 +1,15 @@
-// Porta internal/flujos/events/summary.go @ 9d5a4b6
+// Porta internal/flujos/events/summary.go @ 9d5a4b6 (las dos salidas del resumen, Encode y Render,
+// viven en summary_render.go: 05 E-13).
 
 package events
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
+	"slices"
 )
 
 // summary.go arma el RESUMEN DETERMINISTA del evento (Plan 043 · T3.3; ADR-0029
@@ -170,6 +172,14 @@ type Summary struct {
 	Answers []SummaryAnswer `json:"answers,omitempty"`
 }
 
+// summaryVarsKeyCart es la clave de flow_state.vars bajo la que el módulo cart
+// serializa su sub-estado. Es la del otro lado (cart.stateVarKey) y aquí se
+// redeclara por lo dicho arriba; el test la fija conduciendo el módulo real.
+//
+// Es la ÚNICA clave de vars que este archivo conoce, y de ella solo lee el nivel:
+// todo lo demás sale de fuentes durables.
+const summaryVarsKeyCart = "cart"
+
 // IntakeLineReader lee las LÍNEAS YA DECIDIDAS del pedido abierto de una
 // conversación. Es la fuente DURABLE del resumen del carrito y el único puerto
 // impuro de este archivo.
@@ -276,7 +286,30 @@ var (
 //   - "events: leer las líneas del pedido para el resumen: %w";
 //   - "events: leer las respuestas de la encuesta para el resumen: %w".
 func LoadSummary(ctx context.Context, src SummarySources, ev Event, vars map[string]any) (Summary, error) {
-	panic(pendiente.Implementar("events.LoadSummary"))
+	switch ev.Kind {
+	case "cart":
+		if src.Lines == nil {
+			return Summary{}, ErrNoIntakeLineReader
+		}
+		lines, err := src.Lines.OpenIntakeLines(ctx, ev.TenantID, ev.SessionID, ev.ContactID)
+		if err != nil {
+			return Summary{}, fmt.Errorf("events: leer las líneas del pedido para el resumen: %w", err)
+		}
+		return BuildCartSummary(CartState{Level: CartLevelFromVars(vars), Lines: lines}), nil
+	case "survey":
+		if src.Answers == nil {
+			return Summary{}, ErrNoSurveyAnswerReader
+		}
+		answers, err := src.Answers.SurveyAnswers(ctx, ev)
+		if err != nil {
+			return Summary{}, fmt.Errorf("events: leer las respuestas de la encuesta para el resumen: %w", err)
+		}
+		return BuildSurveySummary(normalizeAnswers(answers)), nil
+	case "menu":
+		return BuildMenuSummary(), nil
+	default:
+		return Summary{Kind: ev.Kind}, nil
+	}
 }
 
 // BuildCartSummary arma el resumen del pedido: las líneas decididas —con su
@@ -291,14 +324,20 @@ func LoadSummary(ctx context.Context, src SummarySources, ev Event, vars map[str
 // Copia las líneas: el resumen no comparte memoria con el estado del que salió,
 // así que nadie puede cambiarlo por detrás después de haberlo construido.
 func BuildCartSummary(st CartState) Summary {
-	panic(pendiente.Implementar("events.BuildCartSummary"))
+	if len(st.Lines) == 0 {
+		return Summary{Kind: "cart"}
+	}
+	return Summary{Kind: "cart", Level: st.Level, Lines: slices.Clone(st.Lines)}
 }
 
 // BuildSurveySummary arma el resumen de la encuesta: las preguntas ya
 // respondidas, tal como llegan (LoadSummary las entrega ya normalizadas: una por pregunta y
 // ordenadas por QuestionID).
 func BuildSurveySummary(answers []SummaryAnswer) Summary {
-	panic(pendiente.Implementar("events.BuildSurveySummary"))
+	if len(answers) == 0 {
+		return Summary{Kind: "survey"}
+	}
+	return Summary{Kind: "survey", Answers: slices.Clone(answers)}
 }
 
 // BuildMenuSummary devuelve el resumen del menú, que está VACÍO: LÍMITE v1
@@ -315,9 +354,7 @@ func BuildSurveySummary(answers []SummaryAnswer) Summary {
 // Existe como constructor propio, y no disuelto en el default de LoadSummary,
 // porque el límite tiene que ser visible donde se busca: quien venga a preguntar
 // «¿y el menú?» encuentra aquí la respuesta y su porqué.
-func BuildMenuSummary() Summary {
-	panic(pendiente.Implementar("events.BuildMenuSummary"))
-}
+func BuildMenuSummary() Summary { return Summary{Kind: "menu"} }
 
 // CartLevelFromVars lee de flow_state.vars el NIVEL de la sub-máquina del carrito
 // —lo único que el resumen toma de ahí— y devuelve "" si no lo encuentra.
@@ -333,68 +370,59 @@ func BuildMenuSummary() Summary {
 // Lee vars["cart"] y, dentro, la clave "level" (la forma con la que el módulo cart serializa su
 // sub-estado).
 func CartLevelFromVars(vars map[string]any) string {
-	panic(pendiente.Implementar("events.CartLevelFromVars"))
+	raw, ok := vars[summaryVarsKeyCart]
+	if !ok || raw == nil {
+		return ""
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return ""
+	}
+	var st struct {
+		Level string `json:"level"`
+	}
+	if err := json.Unmarshal(b, &st); err != nil {
+		return ""
+	}
+	return st.Level
+}
+
+// normalizeAnswers deja las respuestas listas para el resumen: UNA por pregunta —la
+// ÚLTIMA— y en orden estable por QuestionID.
+//
+// Las dos mitades son necesarias y por motivos distintos:
+//
+//   - **Una por pregunta**: `survey_results` es APPEND-ONLY (`id BIGSERIAL`, sin
+//     unicidad por pregunta), así que rehacer una respuesta deja DOS filas. Un
+//     resumen que las enseñara ambas le diría al cliente que respondió dos veces lo
+//     que respondió una — la misma doble contabilidad que la marca de E-4 evita en
+//     el historial. Gana la última porque el contrato del puerto entrega en el orden
+//     en que se respondieron: la última es la que el cliente dejó en pie.
+//   - **Orden por pregunta**: es lo que hace el resumen comparable consigo mismo.
+//     Sin él, dos lecturas del mismo estado podrían serializar el payload en otro
+//     orden y la fila persistida dejaría de ser reproducible.
+func normalizeAnswers(in []SummaryAnswer) []SummaryAnswer {
+	if len(in) == 0 {
+		return nil
+	}
+	last := make(map[string]string, len(in))
+	for _, a := range in {
+		last[a.QuestionID] = a.AnswerCode
+	}
+	out := make([]SummaryAnswer, 0, len(last))
+	for q, code := range last {
+		out = append(out, SummaryAnswer{QuestionID: q, AnswerCode: code})
+	}
+	slices.SortFunc(out, func(a, b SummaryAnswer) int {
+		return cmp.Compare(a.QuestionID, b.QuestionID)
+	})
+	return out
 }
 
 // Empty reporta que no hay nada que resumir. Es la pregunta que T3.4 tiene que
 // hacer ANTES de persistir: un resumen vacío no se escribe en el historial (sería
 // una fila que no dice nada) ni se le manda al cliente.
-func (s Summary) Empty() bool {
-	panic(pendiente.Implementar("events.Summary.Empty"))
-}
-
-// Encode serializa el resumen para Store.AppendSummary, que exige
-// json.RawMessage justamente para que por esa puerta no entre prosa (ver el doc
-// del paquete): lo que sale de aquí es estructura, y por eso puede vivir EN CLARO
-// en payload (nivel 1, ADR-0034).
-//
-// La serialización es estable —campos en orden fijo, sin mapas— así que dos
-// resúmenes del mismo estado son el mismo byte.
-//
-// La forma, literal: {"kind":"cart","level":"summary","lines":[{"sku":"CAFE","label":"Café","qty":2,
-// "unit_price":2.5,"customization":"sin azúcar"}]} — `level`, `lines`, `answers` y `customization`
-// se omiten vacíos, y las respuestas van como [{"question_id":"p1","answer_code":"a"}]. El TOTAL NO
-// se serializa: es derivado (INV-13).
-//
-// Texto de error (literal): "events: serializar el resumen: %w".
-func (s Summary) Encode() (json.RawMessage, error) {
-	panic(pendiente.Implementar("events.Summary.Encode"))
-}
-
-// Render arma el texto que LEE EL CLIENTE al reanudar («esto es lo que ya habías
-// decidido»). Un resumen vacío devuelve la cadena vacía, no un encabezado sin
-// nada debajo: así, quien no comprobó Empty tampoco puede mandar un mensaje hueco.
-//
-// Despacha por CONTENIDO y no por Kind a propósito: lo que hay que enseñar son
-// líneas o respuestas, y un tipo nuevo que acumule líneas se renderiza bien sin
-// tocar esta función.
-//
-// Con líneas, literal:
-//
-//	Esto es lo que ya habías decidido en tu pedido:
-//	Café x2  $5.00
-//	   ✏️ sin azúcar
-//	Té x1  $2.00
-//	TOTAL  $7.00
-//	Te quedaste decidiendo si agregar algo más.
-//
-// La primera línea nombra el tipo con KindName(Kind) («pedido», nunca «carrito» ni «cart»). Cada
-// línea es "<Label> x<Qty>  $<Qty × UnitPrice con dos decimales>"; la indicación, si la hay, va en
-// SU sub-línea, "\n   ✏️ <indicación>". INV-13: el TOTAL sale solo de Σ qty × unit_price —la
-// indicación no lo toca— como "TOTAL  $5.00". La última línea, «Te quedaste <frase>.», solo si el
-// nivel tiene traducción: categories → "eligiendo una categoría", articles → "eligiendo un
-// artículo", article → "mirando un artículo", variant → "eligiendo una presentación", quantity →
-// "eligiendo la cantidad", continue → "decidiendo si agregar algo más", summary → "revisando el
-// resumen del pedido", item_note_scope e item_note → "escribiendo una indicación", order_note →
-// "escribiendo una indicación para todo el pedido", buyer_data → "completando tus datos"; un nivel
-// vacío, terminal (closed, cancelled) o desconocido no imprime esa línea. Nunca aparece un
-// identificador (ni el SKU, ni el nivel interno, ni el id del evento).
-//
-// Con respuestas, literal: "Ya habías respondido 1 pregunta de tu encuesta." o "Ya habías
-// respondido 3 preguntas de tu encuesta." (cuántas, no cuáles).
-func (s Summary) Render() string {
-	panic(pendiente.Implementar("events.Summary.Render"))
-}
+func (s Summary) Empty() bool { return len(s.Lines) == 0 && len(s.Answers) == 0 }
 
 // SummaryAppender es lo ÚNICO que PersistSummary necesita del historial: la
 // puerta que escribe un resumen. Interfaz estrecha —la satisface *Store— por el
@@ -451,5 +479,20 @@ type SummaryAppender interface {
 // historial falla; los errores de LoadSummary llegan tal cual. Cada llamada que escribe añade UNA
 // fila: un segundo abandono no pisa la del primero.
 func PersistSummary(ctx context.Context, w SummaryAppender, src SummarySources, ev Event, vars map[string]any) (int, bool, error) {
-	panic(pendiente.Implementar("events.PersistSummary"))
+	s, err := LoadSummary(ctx, src, ev, vars)
+	if err != nil {
+		return 0, false, err
+	}
+	if s.Empty() {
+		return 0, false, nil
+	}
+	body, err := s.Encode()
+	if err != nil {
+		return 0, false, err
+	}
+	seq, err := w.AppendSummary(ctx, ev.ID, body)
+	if err != nil {
+		return 0, false, fmt.Errorf("events: persistir el resumen del evento %s (tipo %s): %w", ev.ID, ev.Kind, err)
+	}
+	return seq, true, nil
 }
