@@ -37,8 +37,8 @@ func TestEnvelope_IsOpenedWithItsThreePieces(t *testing.T) {
 // texto del worker. Es la conducta correcta para el sobre que nunca llegará (hilo sin
 // mensajes, composición fallida). La carrera que la disparaba sin motivo —el job de una
 // VENTANA reclamado entre el cierre y la escritura del sobre— ya no existe en el binario
-// nuevo (F8-06b, D-F8-13: `CloseWithSourceText`); la del job de RE-ANÁLISIS sigue viva,
-// pendiente de T8.40. Este test FIJA la conducta; no la celebra.
+// nuevo (F8-06b, D-F8-13: `CloseWithSourceText`), y la del job de RE-ANÁLISIS tampoco:
+// desde T8.40 nace con su sobre. Este test FIJA la conducta; no la celebra.
 func TestEnvelope_Incomplete_FailsTheJobWithoutRetry(t *testing.T) {
 	cases := map[string]intake.SourceText{
 		"no envelope at all": {},

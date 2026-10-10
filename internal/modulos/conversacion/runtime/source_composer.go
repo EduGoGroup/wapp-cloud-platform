@@ -286,6 +286,11 @@ type ThreadReader interface {
 // SourceTextWriter es lo ÚNICO que el compositor necesita de `intake_jobs`: dejar
 // el sobre. No puede listar, no puede cerrar y no puede abrir ventanas. Lo satisface
 // intake.JobStore.
+//
+// ⚠️ Solo lo usa ComposeAtFlush, que desde T8.40 no tiene llamante de producción en el
+// árbol nuevo (el agregador y el re-análisis usan Compose, que no escribe). Se conserva
+// a propósito, con ComposeAtFlush y PutSourceText (decisión de Jhoan, 2026-10-10); qué
+// se hace con ellos se decide después.
 type SourceTextWriter interface {
 	PutSourceText(ctx context.Context, k intake.WindowKey, env intake.SourceText) (bool, error)
 }
@@ -303,8 +308,9 @@ const DefaultThreadLimit = 200
 
 // SourceTextComposer implementa SourceComposer (aggregator.go): lee el hilo, compone y
 // cifra (Compose). Guardar el sobre ya no es suyo en el cierre de una ventana —lo guarda
-// el agregador, en la misma sentencia que cierra—; sí lo es en ComposeAtFlush
-// (source_composer_flush.go), que hoy solo usa el re-análisis.
+// el agregador, en la misma sentencia que cierra—, ni al abrir un job de re-análisis
+// —nace con él, T8.40—; sí lo es en ComposeAtFlush (source_composer_flush.go), que
+// desde T8.40 no tiene llamante de producción y se conserva a propósito.
 type SourceTextComposer struct {
 	log    logger.Logger
 	thread ThreadReader

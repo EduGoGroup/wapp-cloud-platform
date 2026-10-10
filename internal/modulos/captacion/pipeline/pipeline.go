@@ -50,8 +50,9 @@
 // que una ventana con sobre nunca es visible sin él. Por eso este worker sigue sin defenderse:
 // ya no hace falta.
 //
-// ⚠️ Queda el job de RE-ANÁLISIS, que se abre ya `pending` y recibe el sobre en una segunda
-// sentencia: ahí la carrera sigue viva. Pendiente de T8.40.
+// Y lo mismo el job de RE-ANÁLISIS desde T8.40: quien lo pide compone primero y el job NACE
+// con su sobre en el mismo INSERT (`intake.ReanalysisRequest.SourceText`). No queda ningún
+// productor que deje ver un job `pending` cuyo sobre esté por llegar.
 //
 // # 🔴 LOS FALLOS DE ESTA GOROUTINE SON MUDOS (R-13, D-11)
 //

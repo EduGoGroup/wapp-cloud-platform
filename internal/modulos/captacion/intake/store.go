@@ -214,6 +214,13 @@ type JobStore interface {
 	//
 	// false SIN error significa «no había dónde escribir» (la fila ya tenía sobre, o
 	// la ventana no está en `pending`): es un no-op, no un fallo.
+	//
+	// ⚠️ DESDE T8.40 NO TIENE LLAMANTE DE PRODUCCIÓN EN EL ÁRBOL NUEVO (D-F7-9,
+	// D-F8-13): la ventana se cierra con su sobre (CloseWithSourceText) y el job de
+	// re-análisis nace con el suyo (ReanalysisRequest.SourceText). Su único llamante
+	// es el `ComposeAtFlush` del compositor de `conversacion/runtime`, que tampoco
+	// tiene ya quien lo llame. Los dos SE CONSERVAN A PROPÓSITO, con sus tests
+	// (decisión de Jhoan, 2026-10-10); qué se hace con ellos se decide después.
 	PutSourceText(ctx context.Context, k WindowKey, env SourceText) (bool, error)
 	// CloseWithSourceText cierra la ventana `seen` Y le guarda su sobre en UNA SOLA
 	// SENTENCIA, y solo si la ventana no cambió desde que se leyó. Devuelve true si

@@ -18,10 +18,17 @@ import (
 // 🔴 YA NO LA LLAMA EL AGREGADOR. Desde F8-06b (D-F7-9, D-F8-13) el cierre de una
 // ventana llama a Compose ANTES de cerrar y cierra con el sobre en UNA sentencia
 // (intake.JobStore.CloseWithSourceText): ahí no hay hueco entre «cerrada» y «con sobre».
-// Este método se queda para su ÚNICO llamante, el re-análisis (captacion/reanalisis),
-// que abre un job ya `pending` y le pone el sobre después: en ESE camino cierre y sobre
-// siguen siendo dos sentencias, y se arregla en T8.40. Devolver error no reabre ni corta
-// nada: el llamante lo LOGUEA y el job se queda en `pending` con el sobre vacío.
+// Este método se quedó entonces para su ÚNICO llamante, el re-análisis
+// (captacion/reanalisis), que abría un job ya `pending` y le ponía el sobre después: en
+// ESE camino abrir y sobre eran dos sentencias. Devolver error no reabre ni corta
+// nada: el llamante lo LOGUEABA y el job se quedaba en `pending` con el sobre vacío.
+//
+// 🔴 DESDE T8.40 YA NO TIENE NINGÚN LLAMANTE DE PRODUCCIÓN EN EL ÁRBOL NUEVO. También el
+// job de re-análisis nace con su sobre (D-F7-9, D-F8-13): el re-análisis llama a
+// Compose ANTES de abrir el job y se lo entrega a intake.OpenReanalysis, que lo escribe
+// en el mismo INSERT. ComposeAtFlush —y con él intake.JobStore.PutSourceText, que solo
+// llamaba este método— SE CONSERVAN A PROPÓSITO, con sus tests (decisión de Jhoan, 2026-10-10);
+// qué se hace con ellos se decide después. No es código olvidado.
 //
 // Los pasos, en orden, todos con el ctx recibido:
 //

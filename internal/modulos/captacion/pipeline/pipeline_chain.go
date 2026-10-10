@@ -146,8 +146,8 @@ func (w *Worker) releaseUnpunished(ctx context.Context, job intake.ClaimedJob, r
 //     mensajes, composición fallida). D-F7-9: la carrera de la VENTANA —el job reclamado
 //     entre `CloseWindow` y `PutSourceText`— ya no existe en el binario nuevo (F8-06b,
 //     D-F8-13: el agregador cierra con el sobre en una sentencia, `CloseWithSourceText`).
-//     La del job de RE-ANÁLISIS, que se abre `pending` y recibe el sobre después, sigue
-//     cayendo aquí: pendiente de T8.40;
+//     Tampoco la del job de RE-ANÁLISIS, que desde T8.40 nace con su sobre en el mismo
+//     INSERT. Lo que cae aquí es solo el sobre que de verdad no existe;
 //   - el sobre está entero pero NO DESCIFRA ⇒ la KEK no desenvuelve. Eso SÍ puede ser
 //     transitorio (KMS caído) y se trata como infraestructura.
 //

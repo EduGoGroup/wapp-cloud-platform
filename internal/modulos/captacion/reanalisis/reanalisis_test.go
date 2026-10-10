@@ -6,6 +6,7 @@ package reanalisis_test
 // reanalisis_checks_test.go; el material y el texto pegado, en reanalisis_source_test.go.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -170,8 +171,36 @@ func TestReanalyze_OpensTheJobWithItsWholeContext(t *testing.T) {
 	if row.Reanalysis != wantCtx {
 		t.Errorf("contexto = %+v; se esperaba %+v", row.Reanalysis, wantCtx)
 	}
-	if len(b.composer.keys) != 1 || b.composer.keys[0] != eventKey {
-		t.Errorf("sobres compuestos = %+v; se compone UNA vez y para la MISMA ventana del job", b.composer.keys)
+	if len(b.composer.keys) != 1 || b.composer.keys[0] != eventKey || b.composer.keys[0] != row.Key {
+		t.Errorf("sobres compuestos = %+v; se compone UNA vez y para la MISMA ventana del job (%+v)", b.composer.keys, row.Key)
+	}
+}
+
+// TestReanalyze_TheJobIsBornWithExactlyTheComposedEnvelope es T8.40 (D-F7-9, D-F8-13): el
+// job que queda en la cola lleva, desde que existe, las TRES piezas que devolvió el
+// compositor, byte a byte. Se lee la fila nada más volver Reanalyze: no hay una segunda
+// escritura que lo rellene después, y el worker que lo reclame lo recibe con su literal.
+func TestReanalyze_TheJobIsBornWithExactlyTheComposedEnvelope(t *testing.T) {
+	t.Parallel()
+	want := intake.SourceText{Enc: []byte("enc-de-este-test"), DEK: []byte("dek-de-este-test"), KEKID: "kek-7"}
+	b := newBench(t, func(b *bench) { b.composer.env = want })
+
+	out := b.mustAsk(t, reanalisis.Request{})
+
+	row, ok := b.jobs.View(out.JobID)
+	if !ok {
+		t.Fatalf("el job %s no está en la cola", out.JobID)
+	}
+	if got := row.SourceText; !bytes.Equal(got.Enc, want.Enc) || !bytes.Equal(got.DEK, want.DEK) || got.KEKID != want.KEKID {
+		t.Errorf("sobre del job recién abierto = %+v; se esperaba el del compositor, %+v", got, want)
+	}
+	if row.Status != intake.StatusPending {
+		t.Errorf("estado del job = %q; nace pending y ya con su sobre", row.Status)
+	}
+	job, claimed, err := b.jobs.ClaimNext(context.Background())
+	if err != nil || !claimed || job.ID != out.JobID || !job.SourceText.Complete() {
+		t.Errorf("reclamo inmediato = (job %q, ok %t, err %v, sobre completo %t); el worker tiene que llevárselo con su literal",
+			job.ID, claimed, err, job.SourceText.Complete())
 	}
 }
 
@@ -232,8 +261,9 @@ func TestReanalyze_FullStepSequenceIsTheContract(t *testing.T) {
 		stepIntake, stepLiveJob,
 		// la FUENTE, la última de las lecturas
 		stepSource,
-		// y solo entonces se ESCRIBE: el texto, el job y el sobre
-		stepDedupe, stepWriteThread, stepOpenJob, stepComposeEnvel,
+		// y solo entonces se ESCRIBE: el texto pegado; con él ya en el hilo se compone
+		// el sobre; y el job, el ÚLTIMO, nace con ese sobre (D-F7-9, D-F8-13)
+		stepDedupe, stepWriteThread, stepComposeEnvel, stepOpenJob,
 	)
 	if out.Via != "api" {
 		t.Errorf("vía = %q; se esperaba api", out.Via)
@@ -254,39 +284,59 @@ func TestReanalyze_LocalVia_SequenceSkipsTheViaGate(t *testing.T) {
 	b.requireSteps(t,
 		stepLevelGate, stepVia,
 		stepIntake, stepLiveJob, stepSource,
-		stepOpenJob, stepComposeEnvel,
+		stepComposeEnvel, stepOpenJob,
 	)
 }
 
-// TestReanalyze_ComposerDown_DoesNotFailTheRequest: el job YA existe cuando se compone,
-// así que un fallo del sobre no puede devolver un error —le diría al dueño que no pasó
-// nada mientras la cola tiene trabajo—. Se avisa con lo que hace falta para encontrarlo.
-func TestReanalyze_ComposerDown_DoesNotFailTheRequest(t *testing.T) {
+// TestReanalyze_ComposerDown_FailsTheRequestAndOpensNoJob: el sobre se compone ANTES de
+// abrir el job (D-F7-9, D-F8-13), así que si no se puede componer o cifrar NO se abre
+// nada y la petición lo dice: el error sale envuelto con el evento y deja leer la causa.
+// La fila del texto pegado, que ya se escribió, se queda. Ni el error ni el log llevan
+// contenido del hilo, y el aviso viejo del «job abierto sin literal» ya no existe.
+func TestReanalyze_ComposerDown_FailsTheRequestAndOpensNoJob(t *testing.T) {
 	t.Parallel()
-	b := newBench(t, func(b *bench) { b.composer.err = errInfra })
+	const pasted = "son 30 tequeños crudos"
+	for name, text := range map[string]string{"without pasted text": "", "with pasted text": pasted} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := newBench(t, func(b *bench) { b.composer.err = errInfra })
 
-	out := b.mustAsk(t, reanalisis.Request{})
+			out, err := b.ask(reanalisis.Request{Text: text})
 
-	if len(b.jobs.opened) != 1 || out.JobID != b.jobs.opened[0] {
-		t.Fatalf("job devuelto = %q; abiertos = %v", out.JobID, b.jobs.opened)
-	}
-	logged := b.out.String()
-	for _, want := range []string{
-		"level=ERROR",
-		"reanalisis: el job quedó abierto pero SIN literal; el worker lo matará al reclamarlo",
-		"tenant_id=" + tenantID, "intake_id=" + intakeID, "event_id=" + eventID,
-		"job_id=" + out.JobID, errInfra.Error(),
-	} {
-		if !strings.Contains(logged, want) {
-			t.Errorf("el aviso del sobre no lleva %q; log:\n%s", want, logged)
-		}
+			want := "reanalisis: componer el literal del evento " + eventID + ": " + errInfra.Error()
+			if !errors.Is(err, errInfra) || err.Error() != want {
+				t.Fatalf("error = %v; se esperaba %q envolviendo la causa", err, want)
+			}
+			if out != (reanalisis.Result{}) {
+				t.Errorf("resultado = %+v; con el compositor caído no se publica nada", out)
+			}
+			b.requireNoJob(t)
+			if len(b.composer.keys) != 1 {
+				t.Errorf("composiciones = %d; se esperaba un único intento", len(b.composer.keys))
+			}
+			wantRows := 0
+			if text != "" {
+				wantRows = 1
+			}
+			if len(b.thread.written) != wantRows {
+				t.Errorf("filas escritas en el hilo = %d; se esperaban %d: el texto pegado se queda", len(b.thread.written), wantRows)
+			}
+			logged := b.out.String()
+			for _, banned := range []string{customerText, pasted, "SIN literal", "job abierto a petición del dueño"} {
+				if strings.Contains(err.Error(), banned) || strings.Contains(logged, banned) {
+					t.Errorf("el error o el log llevan %q: ni contenido del hilo ni un job que no se abrió; log:\n%s", banned, logged)
+				}
+			}
+		})
 	}
 }
 
-// TestReanalyze_OpenJobFails_ErrorAsIsAndNoEnvelope: el fallo de la apertura sale tal
-// cual, no se compone ningún sobre, y la fila del texto pegado —que ya se escribió—
-// se queda: es material del hilo y el siguiente re-análisis la leerá.
-func TestReanalyze_OpenJobFails_ErrorAsIsAndNoEnvelope(t *testing.T) {
+// TestReanalyze_OpenJobFails_ErrorAsIsAndNoJob: el fallo de la apertura sale tal cual y
+// no queda ningún job. El sobre SÍ se había compuesto —una vez, antes de abrir: es con
+// el que iba a nacer— y se descarta sin escribirse en ningún sitio; la fila del texto
+// pegado —que ya se escribió— se queda: es material del hilo y el siguiente re-análisis
+// la leerá.
+func TestReanalyze_OpenJobFails_ErrorAsIsAndNoJob(t *testing.T) {
 	t.Parallel()
 	b := newBench(t, func(b *bench) { b.jobs.openErr = errInfra })
 
@@ -295,8 +345,11 @@ func TestReanalyze_OpenJobFails_ErrorAsIsAndNoEnvelope(t *testing.T) {
 	if !isUnwrapped(err, errInfra) {
 		t.Fatalf("error = %v; se esperaba el de la cola tal cual", err)
 	}
-	if len(b.composer.keys) != 0 {
-		t.Errorf("se compuso un sobre sin job: %v", b.composer.keys)
+	if len(b.jobs.opened) != 0 {
+		t.Errorf("jobs abiertos = %v; la apertura falló y no tiene que quedar ninguno", b.jobs.opened)
+	}
+	if len(b.composer.keys) != 1 || b.composer.keys[0] != eventKey {
+		t.Errorf("sobres compuestos = %+v; se compone UNA vez, antes de abrir, para la ventana del evento", b.composer.keys)
 	}
 	if len(b.thread.written) != 1 {
 		t.Errorf("filas pegadas = %d; la del texto ya estaba escrita y se queda", len(b.thread.written))
@@ -350,7 +403,7 @@ func TestPorts_NoneCanReachTheCustomerNorAnOldEnvelope(t *testing.T) {
 		"Intakes":   {reflect.TypeOf((*reanalisis.Intakes)(nil)).Elem(), []string{"ReanalysisTargetOf"}},
 		"Thread":    {reflect.TypeOf((*reanalisis.Thread)(nil)).Elem(), []string{"AppendPastedMessage", "ListPastedByOwner", "ListThread"}},
 		"Jobs":      {reflect.TypeOf((*reanalisis.Jobs)(nil)).Elem(), []string{"LiveJobOfEvent", "OpenReanalysis"}},
-		"Composer":  {reflect.TypeOf((*reanalisis.Composer)(nil)).Elem(), []string{"ComposeAtFlush"}},
+		"Composer":  {reflect.TypeOf((*reanalisis.Composer)(nil)).Elem(), []string{"Compose"}},
 		"Features":  {reflect.TypeOf((*reanalisis.Features)(nil)).Elem(), []string{"Has"}},
 		"LLMConfig": {reflect.TypeOf((*reanalisis.LLMConfig)(nil)).Elem(), []string{"Get"}},
 	}
