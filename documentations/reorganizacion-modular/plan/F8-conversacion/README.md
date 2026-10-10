@@ -632,7 +632,8 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     T8.40 quedan: `(*SourceTextComposer).ComposeAtFlush`, `intake.JobStore.PutSourceText` con sus dos implementaciones, la
     interfaz `runtime.SourceTextWriter` y el campo `SourceTextComposer.jobs` (que `fase5_captacion.go` sigue cableando y los
     tests de cableado siguen afirmando), más sus tests y casos de suite. **Decisión de Jhoan (2026-10-10, al planificar): se
-    dejan y se anota**; deuda **D-35** de `deuda.md`. `CloseWindow` sí conserva llamante. De paso, el hallazgo 1 (literal
+    dejan y se anota**; deuda **D-35** de `deuda.md`. ✎ **Decidido después (Jhoan, 2026-10-10): se borran en F8-07**, en su
+    propio commit. `CloseWindow` sí conserva llamante. De paso, el hallazgo 1 (literal
     perdido o marca cruzada por la subconsulta de `PutSourceText`) queda **sin vía** en el árbol nuevo.
 56. **(F8-06b, caso de proceso) 🟡 Una aserción igual para los dos binarios, sin ramificar; la ficha decía otra cosa.**
     `requireNoJobWithoutLiteral` (`test/procesos/p4_borrador_helpers_test.go`) exige 0 filas `failed` de `intake_jobs` del

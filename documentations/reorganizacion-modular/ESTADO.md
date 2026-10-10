@@ -1794,7 +1794,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Para retomar
 
-0. **Siguiente sesión**: **F8-07** ([`F8-07-cli-cierre`](plan/sesiones/F8-07-cli-cierre.md): el cierre de F8, T8.36–T8.38), sobre `dev` con el PR de F8-06b (rama `reorg/f8-06b-d-f7-9-cierre-y-sobre`) **integrado**; tiene que refutar lo del hallazgo 51 del README de F8 (de él, F8-06b ya midió los procesos contra el binario nuevo: hallazgo 52) y decidir la deuda D-35.
+0. **Siguiente sesión**: **F8-07** ([`F8-07-cli-cierre`](plan/sesiones/F8-07-cli-cierre.md): el cierre de F8, T8.36–T8.38), sobre `dev` con el PR de F8-06b (rama `reorg/f8-06b-d-f7-9-cierre-y-sobre`) **integrado**; tiene que refutar lo del hallazgo 51 del README de F8 (de él, F8-06b ya midió los procesos contra el binario nuevo: hallazgo 52) y **borrar** lo de la deuda D-35 (`PutSourceText`, `ComposeAtFlush`, `SourceTextWriter`, `composer.jobs`, sus casos de suite y las aserciones de cableado), en su propio commit (decidido por Jhoan el 2026-10-10).
 1. Lee [`plan/README.md`](plan/README.md) y, si vas a ejecutar, el fichero de tu sesión en
    [`plan/sesiones/`](plan/sesiones/README.md) (él te dice qué más leer).
 2. La norma: [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md).

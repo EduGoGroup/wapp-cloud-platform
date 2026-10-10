@@ -434,6 +434,8 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   probando. Sin riesgo funcional.
 - **Veredicto**: decidir en F8-07 o tras el relevo de F10 entre **borrar** (la operación, `SourceTextWriter`,
   `composer.jobs`, sus casos de suite y las aserciones de cableado, en su propio commit) o **conservar** con un motivo.
+  ✎ **Decidido por Jhoan (2026-10-10, tras F8-06b): se borra en F8-07**, en su propio commit. No es código viejo que
+  espere a F10: es código nuevo que quedó huérfano, y dejarlo invita a reabrir la carrera de D-F7-9.
 
 ---
 
