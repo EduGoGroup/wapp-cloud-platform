@@ -1,5 +1,11 @@
 # F8-05 · F8 · `runtime` (2): el núcleo · 💻 CLI
 
+> ✎ **2026-10-10 (D-F8-12, Jhoan, tras F8-04)**: esta sesión pone verdes **14**, no 11: los 11 del núcleo **y** `welcome`,
+> `thread` y `send`, que eran de soporte (F8-04b) pero cuelgan de `*Runtime` y sus tests pasan por el arnés
+> (`harness_test.go`), que muere en `runtime.WithClock` mientras el núcleo esté en rojo. Llegan con su etiqueta `pendiente`;
+> sus tests no se han ejecutado nunca contra lógica real (hallazgo 32 del README de F8). Donde la tabla y el prompt de abajo
+> dicen «los 11 del núcleo», léase «los 11 del núcleo y `welcome`, `thread` y `send`».
+
 | | |
 |---|---|
 | Fase · bloque | [F8 · conversacion](../F8-conversacion/README.md) · 5 · `runtime` (2): el núcleo |

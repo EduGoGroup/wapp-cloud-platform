@@ -424,9 +424,9 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
 - **Hallazgos 30–36** en el [README de F8](plan/F8-conversacion/README.md). 🟡 Para Jhoan, sin bloquear (34): el sobre de P2
   sin escape, el id visto antes de escribir, el `time.After` real del reintento, el reloj del `WebhookSink`, el panic diferido
   de `WithEventSink(nil)`, y si las claves `dispatcher_menu*` de `Vars` suben al contrato.
-- **Tiempo (D-R-6)**: ≈ 65 min de pared (09:48–≈10:55): ≈ 21 el soporte y los dobles, ≈ 24 los contratos del núcleo, ≈ 21 sus
+- **Tiempo (D-R-6)**: ≈ 80 min de pared (09:48–≈11:10; ✎ 2026-10-10: aquí decía ≈ 65, 09:48–≈10:55): ≈ 21 el soporte y los dobles, ≈ 24 los contratos del núcleo, ≈ 21 sus
   tests (solapados con lo anterior), ≈ 3 los gates, el resto verificación y cierre. Siete sub-agentes, sin *worktrees*.
-- **Siguiente paso: F8-04b** (el verde de los 12 de soporte, T8.26), cuando el PR #65 esté en `dev`. `main` sin tocar.
+- **Siguiente paso: F8-04b** (el verde de los 12 de soporte, T8.26), cuando el PR #65 esté en `dev` (✎ 2026-10-10: **integrado** por orden expresa de Jhoan, merge `cbebf10c`, sin squash). `main` sin tocar.
 
 **F8-03 · F8, segunda mitad: el verde de `cart`, T8.25 (2026-10-10, 💻, relanzamiento, rama `reorg/f8-03b-cart-verde` desde `origin/dev` @ `8b841c8d`) — F8-03 CERRADA.**
 
@@ -1568,7 +1568,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
-- **F8-04 (los contratos de `runtime`)**: rama `reorg/f8-04-runtime-contratos`, partida de `origin/dev` @ `e0159171`; 4 commits de código (`cf327ca5`, `ee6da0af`, `33e9eca2`, `de6a5411`) y los de cierre; PR #65 a `dev`, **integrar sin squash**. Sin *worktrees*. `origin/main` sin tocar.
+- **F8-04 (los contratos de `runtime`)**: rama `reorg/f8-04-runtime-contratos`, partida de `origin/dev` @ `e0159171`; 4 commits de código (`cf327ca5`, `ee6da0af`, `33e9eca2`, `de6a5411`) y los de cierre; PR #65 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `cbebf10c`, sin squash. Sin *worktrees*. `origin/main` sin tocar.
 - **F8-03, segunda mitad (el verde de `cart`, T8.25)**: rama `reorg/f8-03b-cart-verde`, partida de `origin/dev` @ `8b841c8d`; 5 commits de código (`dd0771ce`, `4045db25`, `dd52dc54`, `5774823d`, `44255a2b`) y el de cierre; PR #63 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash (lo integra Jhoan, sin squash). Sin *worktrees*: el sub-agente trabajó en el checkout. `dev` y `origin/main` sin tocar.
 - **F8-03, primera mitad (`events` verde y `cart` en rojo)**: rama `reorg/f8-03-events-cart`, partida de `origin/dev` @ `9d5a4b6`; 10 commits de código (`8c819b40`, `f909402e`, `6590724e`, `d3c2f89e`, `006e4248`, `6284c04e`, `1667bca9`, `69d99d54`, `6dc8e574`, `790ca522`) y el de cierre; PR #62, **integrado** en `dev` por orden expresa de Jhoan en la conversación, merge `8b841c8d`, sin squash (✎ 2026-10-10: aquí decía «abierto, sin integrar»). El *worktree* del sub-agente, borrado. `dev` y `origin/main` sin tocar.
 - **F8-02 (el motor de F8)**: rama `reorg/f8-02-motor`, partida de `origin/dev` @ `42117b5`; 8 commits de código (`d8fd4ac`, `346cf73`, `b566ae0`, `fc085d5`, `17ca94d`, `8f5f667`, `08b1e64`, `4ce435f`) y el de cierre; PR #61, **integrado** en `dev` por orden expresa de Jhoan en la conversación («mergea a dev»), merge `df340a6`, sin squash. Los tres *worktrees* de los sub-agentes, borrados. `dev` y `origin/main` sin tocar.

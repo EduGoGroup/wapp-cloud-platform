@@ -185,6 +185,7 @@ Para cuando: los 23 contratos de `runtime` en rojo (12 de soporte + 11 de núcle
 Para cuando: los 12 de soporte verdes, mutantes de `keyedmutex.go` y `streak.go` muertos, suites contra Postgres de `self_numbers` y `tenant_resolver` verdes; `pendiente.Implementar` de `runtime` solo en los 11 del núcleo; `G` rc=0. Depende de F8-04 integrada en `dev`. Nivel **complejo**: esquema completo E-2…E-9.
 
 - [ ] **T8.26 · verde(conversacion): runtime — soporte (12)** · 💻 · dep. T8.21
+  - ✎ **2026-10-10 (D-F8-12, Jhoan)**: el verde de T8.26 son **9** de los 12 (`runtime`, `keyedmutex`, `event_sink`, `log_sink`, `summary_sources`, `streak`, `webhook_sink`, `tenant_resolver`, `self_numbers`); `welcome`, `thread` y `send` cuelgan de `*Runtime`, sus tests mueren en `runtime.WithClock` con el núcleo en rojo y **pasan a T8.27**, con su etiqueta `pendiente`.
   - **Hecho cuando**: `go test -race` rc=0 por commit; un test por promesa del contrato; mutantes en `keyedmutex.go` y `streak.go` (estado y concurrencia); la verdad de `self_numbers.go` y `tenant_resolver.go` la da la suite contra Postgres (P4) y F9; `streak.go` con reloj inyectado (T-7); las tres cosas del cierre; `dev` empujado.
   - **Gate**: `G` · **Commit**: `verde(conversacion): <fichero>`
 
@@ -192,6 +193,7 @@ Para cuando: los 12 de soporte verdes, mutantes de `keyedmutex.go` y `streak.go`
 Para cuando: los 11 del núcleo verdes, mutantes muertos, `grep -rn 'pendiente.Implementar' --include='*.go' C/runtime | wc -l` → **0**. Nivel **complejo**, con mutantes.
 
 - [ ] **T8.27 · verde(conversacion): runtime — núcleo (11)** · 💻 · dep. T8.26
+  - ✎ **2026-10-10 (D-F8-12, Jhoan)**: T8.27 lleva además `welcome`, `thread` y `send` (de soporte, pero colgados de `*Runtime`; venían de T8.26): son **14** ficheros, y `pendiente` del runtime = 0 los incluye.
   - **Ficheros**: en el orden `persist_sink`, `event_effects`, `source_composer`, `aggregator`, `runtime_engine`, `resume`, `start`, `exit_menu`, `event_lifecycle`, `events`, `incoming`. Si `events.go` (1.501 l) o `incoming.go` (1.328 l) no caben, se para en un punto limpio (fichero verde y empujado), se cierra con las tres cosas y **se relanza la misma sesión**.
   - **Hecho cuando**: un test por promesa del contrato (RT-1…RT-20, AG-1…AG-8); **mutantes** por fichero sobre lo que guarda estado o concurre (candado por conversación, semáforo, limitador, rachas, `seen` y pistas del agregador): cada mutante mata al menos un test; `streak_invariante_test.go` sin etiqueta y verde con la constante re-medida; mutación local (quitar un `Close`) → rojo; el corpus del sobre de P2 (`source_composer`) lleva casos adversarios.
   - **Gate**: `G` · **Commit**: `verde(conversacion): <fichero>`
