@@ -44,15 +44,21 @@
 //
 // # E-13
 //
-// El viejo mide 987 líneas. El verde PARTE este fichero por tema, solo moviendo
-// declaraciones y con el sufijo del origen (aggregator_<tema>.go: el barrido y sus
-// plazos por un lado, el puente con el motor por otro); cada parte con su test.
-// aggregator_test.go ya nace partido así.
+// El viejo mide 987 líneas. Aquí está partido por tema, solo moviendo declaraciones y
+// con el sufijo del origen; cada parte con su test:
+//
+//   - aggregator.go: los tipos, los puertos, las opciones y el constructor.
+//   - aggregator_observe.go: Observe (lo que corre en línea con el mensaje).
+//   - aggregator_hint.go: OnClassified y las pistas de adelanto.
+//   - aggregator_sweep.go: Sweep, RecoverAtBoot, los plazos y el cierre.
+//   - aggregator_run.go: Run (el tick, el despertador y la parada).
+//   - aggregator_bridge.go: observeForAggregation, el puente con el motor (AG-7).
 
 package runtime
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
@@ -60,13 +66,32 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // IntentIntakeRequest es el ÚNICO nombre de intención que adelanta un flush
 // (D-044.20). Lo define la config del tenant (T1.3) y lo devuelve la clasificación
 // que el Cloud PIDE (T1.6-4); aquí solo se compara. Literal observable.
 const IntentIntakeRequest = "intake_request"
+
+const (
+	// defaultIntentConfidence es el umbral por defecto de `confidence` para que un
+	// `intake_request` adelante el flush (ver WithIntentConfidence: es un default de
+	// PLATAFORMA y no una config por tenant, por D-044.26).
+	defaultIntentConfidence = 0.7
+	// defaultSweepInterval es cada cuánto barre el cierre de ventanas. Sin broker
+	// (ADR-0003): es un ticker de Go, ni cron ni cola externa.
+	//
+	// Fija el GRANO del cierre, no su plazo: una ventana de 45 s se cierra entre los
+	// 45 y los 45+5 s. Y fija también el peor caso del adelanto por intent cuando el
+	// despertador no llega —como mucho un tick—, que es la contrapartida aceptada de
+	// que el adelanto NO se ejecute en línea con el mensaje (D-044.26: en línea solo
+	// cabe UNA sentencia, y esa ya está gastada en abrir/ampliar la ventana).
+	defaultSweepInterval = 5 * time.Second
+	// defaultSweepBatch acota cuántas ventanas mira un barrido. Es un techo de
+	// trabajo por pasada, no un límite de negocio: lo que no entra sale en el
+	// siguiente tick, y las más viejas van primero.
+	defaultSweepBatch = 200
+)
 
 // IntentHint es lo ÚNICO que la política de disparo mira de una clasificación: su
 // nombre y su confianza.
@@ -135,6 +160,19 @@ type SourceComposer interface {
 	ComposeAtFlush(ctx context.Context, key intake.WindowKey) error
 }
 
+// noopSourceComposer es la implementación VACÍA y DOCUMENTADA: el DEFAULT de
+// construcción del agregador (AG-8). No es un olvido ni un stub sin dueño: el
+// compositor real existe (source_composer.go) y producción lo inyecta con
+// WithSourceComposer. Esto es lo que corre cuando nadie lo hace: el sobre se queda
+// a NULL, que es una forma legítima en la 0072.
+//
+// ⚠️ SI ESTO CORRE EN PRODUCCIÓN, EL PIPELINE SE QUEDA SIN TEXTO Y NO HAY ERROR.
+// El fallo sería MUDO: ventanas que cierran, jobs `pending` y un worker recibiendo
+// el sobre vacío. El cable del arranque es la única cosa que lo impide.
+type noopSourceComposer struct{}
+
+func (noopSourceComposer) ComposeAtFlush(context.Context, intake.WindowKey) error { return nil }
+
 // AheadRequester PIDE la clasificación que antes llegaba adjunta al mensaje (T1.6-4,
 // D-044.31: el push murió, hoy es pull). Lo satisface el pool de clasificación
 // adelantada de captación.
@@ -167,9 +205,65 @@ type AheadRequester interface {
 // mapa de ventanas que salvar (hallazgo 1 de F8). Lo que SÍ vive en memoria, y muere
 // con el proceso sin perder ningún job, son las PISTAS de adelanto (ver OnClassified)
 // y la memoria del último mensaje visto por tupla (ver Observe).
-//
-// En el rojo no lleva campos; nacen en el verde.
-type IntakeAggregator struct{}
+type IntakeAggregator struct {
+	log      logger.Logger
+	jobs     intake.JobStore
+	settings AggregationSettings
+	ents     entitlements.Resolver
+	compose  SourceComposer
+	// ahead es quien PIDE la clasificación (T1.6-4). nil ⇒ no se pide nada y la
+	// ventana cierra siempre por su reloj, que es el camino garantizado de T1.7.
+	ahead AheadRequester
+
+	// now es el reloj INYECTABLE, mismo patrón que el del Runtime (WithClock) y por
+	// el mismo motivo: sin él, un test de la ventana tendría que dormir de verdad 45
+	// segundos y el caso «silencio ⇒ flush a los N s» no se podría cubrir.
+	now func() time.Time
+
+	sweepEvery      time.Duration
+	sweepBatch      int
+	intentThreshold float64
+
+	mu sync.Mutex
+	// dueNow son las ventanas que un intent ha ADELANTADO. Es una PISTA en memoria,
+	// no un estado: si el proceso muere con pistas dentro, no se pierde ningún job
+	// —la ventana sigue en `aggregating` en la base y el barrido la cierra por su
+	// reloj—. Que la pista sea perecedera es coherente con T1.7 y no un descuido:
+	// el intent adelanta, no decide. La protege `mu`.
+	dueNow map[intake.WindowKey]struct{}
+	// wake es EL DESPERTADOR DEL BARRIDO (Plan 044 · T1.8-1 criterio (h),
+	// D-044.43): un canal con BUFFER 1 que `hintDueNow` toca y que `Run` escucha junto
+	// al ticker. Vive fuera del candado a propósito — se escribe con un envío NO
+	// BLOQUEANTE, así que no necesita `mu` y no puede bloquear a quien avisa.
+	//
+	// 🔴 POR QUÉ EXISTE: el intent es un EVENTO que YA LLEGÓ, y hasta esa tarea su
+	// efecto esperaba al siguiente tick del barrido — hasta 5 s de espera ciega después
+	// de saber lo que había que saber. Un reloj que SUSTITUYE a un evento es el
+	// antipatrón que esta casa rechaza; el tick de 5 s se queda porque hace la otra
+	// mitad del trabajo, que sí es de reloj: vigilar los DOS plazos (45/120 s), que no
+	// tienen evento que los anuncie.
+	//
+	// 🔴 POR QUÉ NO SE PIERDE NINGÚN DESPERTAR, que es la pregunta que este patrón
+	// siempre invita a hacer. El escritor descarta el aviso si el buffer está lleno; y
+	// que esté lleno significa que hay un aviso PENDIENTE que nadie ha recibido todavía.
+	// Ese aviso se recibirá en un `select` POSTERIOR al descarte, y al recibirlo `Sweep`
+	// hace una pasada COMPLETA: `takeHints` se lleva TODAS las pistas acumuladas y
+	// `ListAggregating` vuelve a mirar la tabla entera. La pista nunca se queda
+	// esperando a un aviso que ya se consumió. Y si aun así se perdiera, la ventana
+	// cierra igual por su reloj: el aviso es un ADELANTO, no la verdad durable.
+	//
+	// nil es una degradación silenciosa (un canal nil nunca está listo en un `select`)
+	// y por eso lo construye SIEMPRE el constructor, nunca una opción.
+	wake chan struct{}
+	// seen recuerda el último `wa_message_id` observado por ventana, para que un
+	// mismo entrante observado dos veces no duplique su referencia. Es una red
+	// SECUNDARIA: la primera es el dedupe PERSISTENTE de ingesta (Plan 028 · T6), que
+	// corta el reenvío del outbox del Edge antes de llegar aquí. La protege `mu`.
+	//
+	// 🔴 NO se borra al cerrar la ventana (AG-5, trampa T-10): ver el final de
+	// aggregator_observe.go.
+	seen map[intake.WindowKey]string
+}
 
 // AggregatorOption configura el agregador al construirlo.
 type AggregatorOption func(*IntakeAggregator)
@@ -178,7 +272,11 @@ type AggregatorOption func(*IntakeAggregator)
 // venció. nil se ignora (se queda time.Now). Los tests lo inyectan SIEMPRE: sin él,
 // «silencio ⇒ flush a los 45 s» solo se podría probar durmiendo 45 segundos.
 func WithAggregatorClock(now func() time.Time) AggregatorOption {
-	panic(pendiente.Implementar("runtime.WithAggregatorClock"))
+	return func(s *IntakeAggregator) {
+		if now != nil {
+			s.now = now
+		}
+	}
 }
 
 // WithSweepInterval fija cada cuánto barre Run. Un valor <= 0 se ignora y queda el
@@ -187,7 +285,11 @@ func WithAggregatorClock(now func() time.Time) AggregatorOption {
 // El intervalo fija el GRANO del cierre, no su plazo: una ventana de 45 s se cierra
 // entre los 45 y los 45+5 s.
 func WithSweepInterval(d time.Duration) AggregatorOption {
-	panic(pendiente.Implementar("runtime.WithSweepInterval"))
+	return func(s *IntakeAggregator) {
+		if d > 0 {
+			s.sweepEvery = d
+		}
+	}
 }
 
 // WithSweepBatch fija cuántas ventanas vivas pide un barrido al almacén. Un valor
@@ -196,7 +298,11 @@ func WithSweepInterval(d time.Duration) AggregatorOption {
 // Es un TECHO DE TRABAJO POR PASADA, no un límite de negocio: lo que no entra sale en
 // la pasada siguiente (las más antiguas van primero) y no se pierde nada.
 func WithSweepBatch(n int) AggregatorOption {
-	panic(pendiente.Implementar("runtime.WithSweepBatch"))
+	return func(s *IntakeAggregator) {
+		if n > 0 {
+			s.sweepBatch = n
+		}
+	}
 }
 
 // WithIntentConfidence fija el umbral de confianza a partir del cual un
@@ -208,7 +314,11 @@ func WithSweepBatch(n int) AggregatorOption {
 // bajo no rompe nada (cierra una ventana antes de tiempo y el cliente puede abrir
 // otra); errar por lo alto tampoco (la ventana cierra igual por silencio).
 func WithIntentConfidence(threshold float64) AggregatorOption {
-	panic(pendiente.Implementar("runtime.WithIntentConfidence"))
+	return func(s *IntakeAggregator) {
+		if threshold > 0 {
+			s.intentThreshold = threshold
+		}
+	}
 }
 
 // WithSourceComposer inyecta el compositor del literal (T1.4). nil se ignora.
@@ -221,7 +331,11 @@ func WithIntentConfidence(threshold float64) AggregatorOption {
 // el cable del arranque es lo único que lo impide (trampa T-4 de la fase: es del
 // candado de cableado).
 func WithSourceComposer(c SourceComposer) AggregatorOption {
-	panic(pendiente.Implementar("runtime.WithSourceComposer"))
+	return func(s *IntakeAggregator) {
+		if c != nil {
+			s.compose = c
+		}
+	}
 }
 
 // WithAheadRequester inyecta quien PIDE la clasificación (T1.6-4). nil se ignora.
@@ -230,7 +344,11 @@ func WithSourceComposer(c SourceComposer) AggregatorOption {
 // cuenta y toda ventana cierra por su reloj — que es una forma legítima y el camino
 // garantizado de T1.7, no una avería.
 func WithAheadRequester(a AheadRequester) AggregatorOption {
-	panic(pendiente.Implementar("runtime.WithAheadRequester"))
+	return func(s *IntakeAggregator) {
+		if a != nil {
+			s.ahead = a
+		}
+	}
 }
 
 // NewIntakeAggregator construye el agregador. Nunca devuelve nil. Las opciones se
@@ -247,242 +365,27 @@ func WithAheadRequester(a AheadRequester) AggregatorOption {
 //     no-op»; su código, :576 y :877, no trata así a settings. Manda el código.)
 func NewIntakeAggregator(log logger.Logger, jobs intake.JobStore, settings AggregationSettings,
 	ents entitlements.Resolver, opts ...AggregatorOption) *IntakeAggregator {
-	panic(pendiente.Implementar("runtime.NewIntakeAggregator"))
-}
-
-// Observe mete UN entrante en su ventana. Es lo ÚNICO de este fichero que corre en
-// línea con el mensaje del cliente.
-//
-// # AG-2 · No devuelve error (INV-10)
-//
-// La firma no tiene valor de error: un fallo de aquí NUNCA tumba el turno del
-// cliente. Cualquier fallo se LOGUEA y Observe vuelve con normalidad, sin panic.
-// Perder una ventana de captación es perder un presupuesto automático; cortar el turno
-// es dejar al cliente sin respuesta.
-//
-// # AG-1 · El presupuesto de I/O (D-044.26), por entrante admitido
-//
-//   - EXACTAMENTE 1 escritura: jobs.OpenOrAppend, que abre la ventana si no existía y
-//     le añade las referencias si ya existía. Lleva la Key, el MessageTS y las
-//     referencias [WaMessageID, MediaRefs...] en ese orden. NUNCA el Text.
-//   - CERO lecturas de `intake_jobs` (ni ListAggregating ni CloseWindow ni
-//     PutSourceText), CERO lecturas de `tenant_settings`, cero cripto y cero red. El
-//     cierre —también el adelantado por intent— lo ejecuta el barrido, nunca Observe.
-//   - COMO MUCHO 1 pregunta al resolver de derechos (que cachea con TTL).
-//
-// El orden de los pasos es parte del contrato:
-//
-//  1. GUARDAS BARATAS, sin preguntarle nada a nadie: receptor nil, agregador sin log,
-//     jobs o ents, WaMessageID "" (un entrante sin identificador no puede aportar una
-//     referencia opaca), o Key incompleta (sin evento vivo no hay ventana: un saludo
-//     suelto, el LIMBO, no abre nada). Vuelve sin escribir y SIN consultar el resolver.
-//  2. EL GATE: ents.Has(ctx, tenant, entitlements.FeatureLLMIntake), UNA vez. Es el
-//     ÚNICO gate de este camino: no se consulta `api_llm` (ADR-0044, D-044.28: la vía
-//     —local o API— no es asunto de la ventana) ni ninguna otra feature. Sin la
-//     feature vuelve en silencio: cero ventanas, cero jobs. Si el resolver FALLA es
-//     fail-closed: no escribe y deja en Warn "agregador: no se pudo resolver la feature
-//     llm_intake; el entrante no entra en ninguna ventana", con "error", "tenant_id" y
-//     "session_id".
-//  3. EL MISMO MENSAJE DOS VECES: si el WaMessageID es el ÚLTIMO que se observó para
-//     esa misma Key, vuelve sin escribir (red SECUNDARIA; la primera es el dedupe
-//     persistente de ingesta). Sin ella, un doble Observe duplicaría la referencia: el
-//     UPSERT concatena a ciegas.
-//  4. LA SENTENCIA: OpenOrAppend. Si falla, deja en Error "agregador: no se pudo
-//     abrir/ampliar la ventana de captación; el turno sigue", con "error",
-//     "tenant_id", "session_id" y "wa_message_id", y vuelve sin pedir nada.
-//  5. EL ADELANTO, lo último: si hay AheadRequester y Text no es "", llama a
-//     Request(Key, Text) UNA vez. Va DESPUÉS de que la ventana exista de verdad. Sin
-//     texto (un mensaje de solo media) no se pide: es un motivo SANO (REQ-38).
-//
-// # AG-5 · La memoria del último mensaje NO se borra al cerrar la ventana
-//
-// La memoria del paso 3 guarda UN id por Key (el último) y sobrevive al cierre de la
-// ventana. Consecuencias que el contrato promete:
-//
-//   - una RE-ENTREGA del mismo wa_message_id DESPUÉS del flush NO reabre ventana ni
-//     escribe nada (trampa T-10: borrarla «por limpieza» reabriría ventanas con
-//     mensajes ya procesados);
-//   - un mensaje DISTINTO sí pasa y abre la ventana SIGUIENTE sobre el mismo evento
-//     (el índice único de la 0072 es PARCIAL a propósito: un cliente puede volver a
-//     pedir);
-//   - vive en el proceso: un agregador NUEVO sobre el mismo almacén no la tiene.
-//
-// ⚠️ Rareza portada (aggregator.go:511-525): el id se anota como visto ANTES de la
-// sentencia, así que si OpenOrAppend falla, la re-entrega inmediata de ESE MISMO id se
-// descarta en el paso 3 y no reintenta la escritura.
-//
-// # PII
-//
-// Ninguna línea de log lleva el Text ni las MediaRefs: solo tenant_id, session_id y
-// wa_message_id.
-func (s *IntakeAggregator) Observe(ctx context.Context, ref IncomingRef) {
-	panic(pendiente.Implementar("runtime.IntakeAggregator.Observe"))
-}
-
-// OnClassified recibe la clasificación que se pidió y aplica la política de disparo
-// (T1.6-4). Es seguro sobre un receptor nil (no hace nada).
-//
-// # AG-3 · El intent solo ADELANTA
-//
-// La política mira el NOMBRE y la CONFIANZA y nada más (IntentHint): adelanta si y
-// solo si intent == IntentIntakeRequest Y confidence >= umbral (0.7, o el de
-// WithIntentConfidence). Por debajo del umbral, o con cualquier otro nombre, NO PASA
-// NADA: ni pista, ni log, ni aviso. Adelantar es anotar una PISTA en memoria para esa
-// Key: el cierre lo ejecuta el PRÓXIMO barrido, que la cierra sin esperar a ningún
-// plazo. La pista no es estado: si el proceso muere con pistas dentro no se pierde
-// ningún job (la ventana cierra por su reloj).
-//
-// No comprueba que la ventana siga viva (costaría un SELECT para no hacer nada). Por
-// eso una respuesta TARDÍA, que llega cuando la ventana ya cerró, es INOCUA: su pista
-// no casa con ninguna ventana viva y el barrido siguiente la tira sin tocar la fila
-// cerrada. ⚠️ ACEPTADO: la pista es por Key, no por job, así que si entre tanto el
-// cliente abrió OTRA ventana sobre el mismo evento, la pista tardía cierra esa ventana
-// nueva antes de tiempo. No pierde mensajes ni duplica jobs.
-//
-// # AG-4 · Anotar bajo candado y DESPUÉS avisar
-//
-// Además de anotar, DESPIERTA al barrido de Run para que cierre YA y no en el
-// siguiente tick (T1.8-1 (h): un reloj no sustituye a un evento que ya llegó). El
-// orden no es intercambiable: primero se anota la pista, protegida, y DESPUÉS se
-// avisa; quien recibe el aviso ve ya la pista. El aviso es NO BLOQUEANTE y de buffer
-// 1: OnClassified vuelve enseguida aunque nadie esté escuchando (Run sin arrancar) y
-// aunque se la llame mil veces seguidas; los avisos de más se descartan sin perder
-// trabajo, porque el barrido que consume el aviso pendiente se lleva TODAS las pistas
-// acumuladas.
-func (s *IntakeAggregator) OnClassified(key intake.WindowKey, intent string, confidence float64) {
-	panic(pendiente.Implementar("runtime.IntakeAggregator.OnClassified"))
-}
-
-// RecoverAtBoot es la RECUPERACIÓN DEL REINICIO (T1.1, AG-6): las ventanas que
-// vencieron mientras no había proceso pasan a `pending`. Es literalmente UN Sweep, y
-// eso es el diseño: el estado de una ventana vive en `intake_jobs`, así que arrancar
-// no es «restaurar» nada, es mirar la tabla. Devuelve cuántas cerró.
-//
-// Si cerró alguna deja en Info "agregador: ventanas vencidas cerradas al arrancar"
-// con la clave "jobs" (el número); si no cerró ninguna no loguea nada.
-func (s *IntakeAggregator) RecoverAtBoot(ctx context.Context) int {
-	panic(pendiente.Implementar("runtime.IntakeAggregator.RecoverAtBoot"))
-}
-
-// Run arranca el barrido periódico y BLOQUEA hasta que ctx se cancele; entonces
-// vuelve. Sin broker (ADR-0003): un ticker de Go, ni cron ni cola externa. Sobre un
-// receptor nil o un agregador sin jobs vuelve en el acto. Lo arranca el arranque del
-// proceso en su propia goroutine (trampa T-4: olvidarlo deja las ventanas abiertas
-// para siempre, en silencio).
-//
-// Hace, en orden: UN RecoverAtBoot al entrar y, después, un Sweep por cada una de dos
-// señales, hasta la cancelación:
-//
-//   - EL TICK, cada intervalo de barrido (5 s, o WithSweepInterval): es quien vigila
-//     los dos plazos de la ventana, que no tienen evento que los anuncie, y quien cubre
-//     un aviso perdido. En producción NADIE llama a Sweep a mano: lo llama este tick.
-//   - EL DESPERTADOR de OnClassified (AG-4): un intent seguro cierra su ventana AHORA,
-//     sin esperar al tick.
-//
-// AG-6: NO hay un timer por ventana. Un timer vivo en memoria es lo que un despliegue
-// se lleva por delante; el plazo se recalcula en cada barrido desde las fechas de la
-// fila. Si el proceso muere con una ventana abierta no se pierde nada: el proceso
-// nuevo arranca, barre y cierra lo que venció.
-//
-// # La parada no es un error (D-F9-10)
-//
-// Contexto cancelado → Run vuelve SIN loguear a ERROR. Con ctx ya cancelado, un fallo
-// del almacén (listar o cerrar) o del compositor NO se registra en ERROR, ni en el
-// RecoverAtBoot inicial ni en un barrido que la cancelación pilló a medias: no es una
-// avería, es el proceso apagándose. (El viejo sí las registraba: «agregador: no se
-// pudieron listar las ventanas vivas».) Con el contexto VIVO, esos mismos fallos SÍ
-// van a ERROR, como dice Sweep.
-func (s *IntakeAggregator) Run(ctx context.Context) {
-	panic(pendiente.Implementar("runtime.IntakeAggregator.Run"))
-}
-
-// Sweep cierra las ventanas a las que les tocó y devuelve cuántas cerró ESTA llamada.
-// Corre FUERA del camino del entrante, que es lo que le permite leer `intake_jobs` y
-// `tenant_settings` sin violar D-044.26. Sobre un receptor nil, o sin jobs o sin log,
-// devuelve 0 sin tocar nada.
-//
-// # AG-3 · La ventana de silencio es el camino PRINCIPAL y el único garantizado
-//
-// Una pasada pide al almacén hasta `batch` ventanas vivas (ListAggregating, UNA vez),
-// lee el reloj UNA vez y cierra cada ventana que cumpla CUALQUIERA de tres
-// condiciones (ventana HÍBRIDA, T1.8-1, D-044.43):
-//
-//  1. EL ADELANTO: hay una pista de OnClassified para su Key. Es un atajo.
-//  2. EL SILENCIO: now >= LastActivity + aggregation_window (45 s por defecto). Se
-//     mide desde el ÚLTIMO mensaje: una ráfaga tecleada despacio (t=0, 30, 60) es UNA
-//     ventana que cierra a los 105 s, no dos jobs.
-//  3. EL TECHO: now >= CreatedAt + aggregation_max (120 s por defecto). Es la red que
-//     impide que el silencio no venza nunca: una conversación que gotea cada 40 s
-//     cierra a los 120 s. El peor caso a primer borrador es este techo + el pipeline.
-//
-// Sin ningún intent —que es un caso normal, no una avería— la ventana cierra igual por
-// 2 o por 3. El job resultante es INDISTINGUIBLE por los tres caminos: no lleva marca
-// de por qué se disparó (T1.7 (d)).
-//
-// Las dos anclas (LastActivity y CreatedAt) son del reloj del ALMACÉN, nunca el
-// MessageTS del cliente: restar dos relojes distintos cerraría ventanas antes de
-// tiempo o nunca, sin error.
-//
-// # Los plazos salen de la config del tenant, tal cual
-//
-// Se leen con settings.GetTenantSettings, UNA vez por tenant y por pasada (aunque el
-// tenant tenga N ventanas), y solo si hace falta (una ventana con pista no necesita
-// plazos). No se cachean entre pasadas: un cambio de config se ve en la siguiente.
-//
-//   - 🔴 El 0 de CUALQUIERA de los dos es un override explícito y se respeta, no se
-//     sustituye por el default: aggregation_window <= 0 es «flush inmediato» (cierra en
-//     el primer barrido que la vea) y aggregation_max <= 0 es «vencido siempre» —NO
-//     «sin techo», que no existe a propósito—.
-//   - Si la lectura falla, o no hay settings, valen los defaults de plataforma
-//     (store.DefaultAggregationWindow y store.DefaultAggregationMax) y NO «no cerrar»:
-//     una config ilegible no puede dejar ventanas abiertas para siempre. El fallo deja
-//     en Warn "agregador: no se pudieron leer los plazos de la ventana
-//     (aggregation_window_seconds/aggregation_max_seconds); se usan los defaults de
-//     plataforma", con "error" y "tenant_id".
-//
-// # AG-6 · Cierre idempotente, sin estado en memoria
-//
-// Quien cierra es jobs.CloseWindow, cuyo guard de estado hace que dos barridos
-// solapados —o dos procesos— no puedan producir dos jobs. Si CloseWindow contesta
-// false sin error (otro llegó antes), la ventana NO se cuenta, NO se compone y no es
-// un error. Un segundo Sweep sin que nada cambie devuelve 0 y no toca ninguna fila.
-//
-// # Las pistas
-//
-// Cada pasada se lleva TODAS las pistas acumuladas y las consume, casen o no con una
-// ventana de la pasada: la de una ventana ya cerrada se tira; la de una ventana que el
-// `batch` dejó fuera se pierde y esa ventana cierra por su reloj. Si listar falla, las
-// pistas NO se consumen.
-//
-// # El compositor (T1.4, AG-8)
-//
-// Tras CADA cierre que hizo esta llamada, y solo entonces, llama UNA vez a
-// ComposeAtFlush(ctx, Key). Su fallo NO revierte el cierre: la ventana cuenta como
-// cerrada y el job queda `pending` con el sobre vacío.
-//
-// ⚠️ DEUDA CONOCIDA, D-F7-9 (hallazgo 17 de F7). Lo que el viejo promete HOY sobre
-// ese orden es exactamente esto y nada más: PRIMERO la transición `aggregating →
-// pending` (aggregator.go:892), DESPUÉS la composición y la escritura del sobre
-// (aggregator.go:906 → source_composer.go:347-377), en sentencias separadas y SIN
-// atomicidad; el fallo de la segunda no deshace la primera. NO promete que el job sea
-// invisible para el worker hasta tener sobre: en ese hueco el worker puede reclamar un
-// job `pending` sin `source_text`. Este contrato NO arregla ni promete otra cosa: que
-// cierre y sobre sean un solo acto, o que el sobre preceda a la visibilidad, lo decide
-// el verde (F8-05), en su propio commit.
-//
-// # Logs
-//
-//   - listar falla: Error "agregador: no se pudieron listar las ventanas vivas", con
-//     "error"; devuelve 0.
-//   - cerrar falla: Error "agregador: no se pudo cerrar la ventana de captación", con
-//     "error", "tenant_id", "session_id" y "job_id"; esa ventana no cuenta y la pasada
-//     sigue con las demás.
-//   - el compositor falla: Error "agregador: la ventana se cerró pero el literal no se
-//     pudo componer (T1.4)", con "error", "tenant_id" y "job_id".
-//   - cada ventana cerrada: Debug "agregador: ventana cerrada", con "tenant_id",
-//     "session_id" y "job_id".
-//
-// Los tres Error callan si ctx ya está cancelado (D-F9-10, ver Run).
-func (s *IntakeAggregator) Sweep(ctx context.Context) int {
-	panic(pendiente.Implementar("runtime.IntakeAggregator.Sweep"))
+	s := &IntakeAggregator{
+		log:             log,
+		jobs:            jobs,
+		settings:        settings,
+		ents:            ents,
+		compose:         noopSourceComposer{},
+		now:             time.Now,
+		sweepEvery:      defaultSweepInterval,
+		sweepBatch:      defaultSweepBatch,
+		intentThreshold: defaultIntentConfidence,
+		dueNow:          make(map[intake.WindowKey]struct{}),
+		seen:            make(map[intake.WindowKey]string),
+		// BUFFER 1, ni 0 ni N. Con 0 el envío no bloqueante fallaría siempre que el
+		// barrido no estuviera parado justo en el `select` —o sea, casi siempre— y el
+		// despertador no despertaría nada. Con N se apilarían N avisos para hacer N
+		// barridos completos que verían lo mismo: un aviso pendiente ya significa «hay
+		// trabajo sin mirar», y más de uno no significa más.
+		wake: make(chan struct{}, 1),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
