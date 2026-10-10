@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package admin_test
 
 // handlers_test.go — POST /admin/flows visto desde fuera: código, Content-Type y cuerpo

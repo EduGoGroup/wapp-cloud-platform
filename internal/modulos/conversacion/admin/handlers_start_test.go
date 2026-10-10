@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package admin_test
 
 // handlers_start_test.go — POST /admin/flows/start: qué identidad de contacto llega al
