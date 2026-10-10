@@ -29,8 +29,8 @@ var (
 	_ func(*intake.MemoryStore, context.Context, intake.Append) error = (*intake.MemoryStore).OpenOrAppend
 )
 
-// La quinta operación y su gancho de fallo (D-F7-9, D-F8-13): existen con su firma. Su conducta
-// está en close_with_source_text_test.go, en rojo hasta el verde.
+// La quinta operación y su gancho de fallo (D-F7-9, D-F8-13). Sus tests propios están en
+// close_with_source_text_test.go, y las promesas del puerto, en la suite de la cola.
 var _ func(*intake.MemoryStore, error) = (*intake.MemoryStore).FailCloseWithSourceTextWith
 
 var _ func(*intake.MemoryStore, context.Context, intake.OpenJob, intake.SourceText) (bool, error) = (*intake.MemoryStore).CloseWithSourceText
@@ -77,8 +77,7 @@ func TestMemoryStore_ContratoQueue(t *testing.T) {
 }
 
 // newMemoryQueueMontaje monta el gemelo para UN caso de la suite de la cola: un store nuevo con
-// su reloj y sus dos tenants. Es una función con nombre porque la usan dos tests del paquete:
-// el de arriba y, mientras esté en rojo, el de close_with_source_text_test.go.
+// su reloj y sus dos tenants.
 func newMemoryQueueMontaje(*testing.T) intakehelpertest.QueueMontaje {
 	clock := newMemoryClock()
 	store := intake.NewMemoryStore(clock.Now)

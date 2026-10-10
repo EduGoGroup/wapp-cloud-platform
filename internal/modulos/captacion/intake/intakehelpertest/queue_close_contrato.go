@@ -13,49 +13,12 @@ import (
 
 // Los casos de la QUINTA operación de la cola, intake.JobStore.CloseWithSourceText: el cierre de
 // la ventana y su sobre en una sola sentencia, solo si la ventana no cambió desde que se leyó
-// (D-F7-9, D-F8-13).
-//
-// 🔧 EN ROJO VIVEN APARTE. Mientras las dos implementaciones tengan el cuerpo pendiente, estos
-// casos harían panic dentro de ContratoQueue, que corre sin etiqueta. Por eso tienen su tabla
-// (queueCloseCases) y su entrada (ContratoQueueClose). En el VERDE las filas de la tabla se mudan
-// a queueCases, y la tabla y la entrada de este fichero DESAPARECEN: la suite de la cola vuelve a
-// ser una.
+// (D-F7-9, D-F8-13). Sus filas están en queueCases (contrato.go), con las del resto de la cola.
 
 // incompleteWindowOnCloseWithText es el texto con el que CloseWithSourceText rechaza una clave de
 // ventana incompleta o un id vacío. Observable y LITERAL: el mismo en intake.Postgres y en
 // intake.MemoryStore, como los tres de queue_key_contrato.go.
 const incompleteWindowOnCloseWithText = "intake: ventana incompleta al cerrar con el literal"
-
-// ContratoQueueClose ejecuta las promesas de intake.JobStore.CloseWithSourceText contra la
-// implementación que devuelve nuevo, con un Montaje limpio por caso: es ContratoQueue para la
-// quinta operación, con sus mismas reglas (la marca de estado es la fila entera; no salta nada).
-// Provisional: existe solo mientras la operación está en rojo (ver la cabecera del fichero).
-func ContratoQueueClose(t *testing.T, nuevo func(t *testing.T) QueueMontaje) {
-	t.Helper()
-	if nuevo == nil {
-		t.Fatal("intakehelpertest.ContratoQueueClose: nuevo es nil; hace falta una función que devuelva un QueueMontaje")
-	}
-	for _, c := range queueCloseCases() {
-		t.Run(c.name, func(t *testing.T) {
-			m := nuevo(t)
-			validateQueueMontaje(t, m)
-			c.run(t, m)
-		})
-	}
-}
-
-// queueCloseCases es la tabla de ContratoQueueClose: las filas que en el verde pasan a queueCases.
-func queueCloseCases() []contractCase[QueueMontaje] {
-	return []contractCase[QueueMontaje]{
-		{"CloseWithSourceText_UnchangedLiveWindow_ClosesAndWritesTheThreeOnce", caseCloseWithTextOnce},
-		{"CloseWithSourceText_MessageArrivedAfterTheRead_FalseAndUntouchedUntilReread", caseCloseWithTextStaleRead},
-		{"CloseWithSourceText_EmptyEnvelope_ClosesWithTheThreeNull", caseCloseWithTextEmptyEnvelope},
-		{"CloseWithSourceText_HalfEnvelope_ErrorAndNothingWritten", caseCloseWithTextHalfEnvelope},
-		{"CloseWithSourceText_IncompleteKeyOrEmptyID_ErrorBeforeTheEnvelopeAndNothingWritten", caseCloseWithTextIncompleteWindow},
-		{"CloseWithSourceText_AlreadyClosedOrUnknownID_FalseAndNothingTouched", caseCloseWithTextNotLive},
-		{"CloseWithSourceText_OlderPendingOfTheSameKey_IsNotTouched", caseCloseWithTextLeavesOlderPending},
-	}
-}
 
 // seenOf devuelve la ventana viva de la clave TAL COMO LA VE EL BARRIDO: el OpenJob que da
 // ListAggregating, con su id y sus dos anclas. Es lo que se le pasa a CloseWithSourceText.

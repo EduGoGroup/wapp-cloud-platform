@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intake_test
 
 import (
@@ -9,21 +7,12 @@ import (
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake/intakehelpertest"
 )
 
-// ROJO de la quinta operación de la cola, intake.JobStore.CloseWithSourceText (D-F7-9, D-F8-13),
-// contra el gemelo en memoria. El adaptador Postgres tiene el suyo en postgres_close_test.go.
-//
-// 🔧 Este fichero es PROVISIONAL. En el verde, los casos de ContratoQueueClose se mudan a la
-// tabla de ContratoQueue (y los corre TestMemoryStore_ContratoQueue, sin etiqueta), y los tests
-// propios del gemelo de aquí abajo pasan a memory_test.go, que es el test de memory.go.
-
-// TestMemoryStore_ContratoQueueClose corre las promesas de CloseWithSourceText contra el gemelo,
-// con el mismo Montaje que la suite de la cola: sin BD y sin reloj real.
-func TestMemoryStore_ContratoQueueClose(t *testing.T) {
-	intakehelpertest.ContratoQueueClose(t, newMemoryQueueMontaje)
-}
+// Los tests propios del gemelo para la quinta operación de la cola,
+// intake.JobStore.CloseWithSourceText (D-F7-9, D-F8-13): su contador, su gancho de fallo y el
+// orden de sus rechazos. Van aparte de memory_test.go por tamaño (E-13). Las promesas del puerto
+// las corre TestMemoryStore_ContratoQueue, con el resto de la suite de la cola.
 
 // liveWindow abre una ventana en un store nuevo y la devuelve como la ve el barrido, con el reloj
 // ya adelantado: lo que se escriba después lleva un instante posterior al de la lectura.

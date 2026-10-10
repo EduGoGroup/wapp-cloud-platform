@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Job es una fila de `intake_jobs` tal como la guarda el store en memoria. Lleva
@@ -71,7 +69,7 @@ type Counters struct {
 }
 
 // MemoryStore implementa JobStore en memoria, con la MISMA semántica que la
-// implementación Postgres en las CINCO cosas que muerden:
+// implementación Postgres en las SEIS cosas que muerden:
 //
 //  1. como mucho UNA ventana viva por tupla (el índice único PARCIAL de la 0072);
 //  2. `MessageTS` se fija SOLO al abrir, nunca al ampliar, y `UpdatedAt` se mueve en
@@ -81,14 +79,17 @@ type Counters struct {
 //  3. `CloseWindow` es idempotente por el guard de estado;
 //  4. `PutSourceText` escribe en la ÚLTIMA ventana `pending` de la tupla y solo si
 //     su sobre estaba vacío (T1.4 — la subconsulta y el guard de putSourceTextSQL);
-//  5. una clave de ventana incompleta (WindowKey.Valid) se RECHAZA en las tres escrituras, con
-//     el mismo texto que Postgres y sin tocar ninguna fila.
+//  5. una clave de ventana incompleta (WindowKey.Valid) se RECHAZA en las cuatro escrituras, con
+//     el mismo texto que Postgres y sin tocar ninguna fila;
+//  6. `CloseWithSourceText` cierra y escribe el sobre de UNA vez, por id, y solo si la fila
+//     sigue `aggregating` con el `UpdatedAt` que se leyó (D-F7-9, D-F8-13 — las tres guardas
+//     de closeWithSourceTextSQL).
 //
 // ✎ DIVERGENCIA CON EL VIEJO, a propósito (hallazgo 7 de F7): el gemelo viejo no validaba la
 // clave y abría la ventana, de modo que un test en memoria daba por buena una llamada que en
 // producción es un error.
 //
-// Si alguna de las cinco divergiera, los tests dejarían de probar lo que creen que
+// Si alguna de las seis divergiera, los tests dejarían de probar lo que creen que
 // prueban — que es exactamente el riesgo de todo doble en memoria.
 type MemoryStore struct {
 	mu   sync.Mutex
@@ -344,8 +345,39 @@ func (m *MemoryStore) PutSourceText(_ context.Context, k WindowKey, env SourceTe
 // rechazos de PutSourceText: la clave y el id, el fallo de la base (aquí, el inyectado
 // con FailCloseWithSourceTextWith) y el sobre a medias (errIncompleteEnvelope). La
 // llamada cuenta siempre en Counters.CloseWithSourceText.
-func (m *MemoryStore) CloseWithSourceText(_ context.Context, _ OpenJob, _ SourceText) (bool, error) {
-	panic(pendiente.Implementar("intake.MemoryStore.CloseWithSourceText"))
+func (m *MemoryStore) CloseWithSourceText(_ context.Context, seen OpenJob, env SourceText) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cnt.CloseWithSourceText++
+	if seen.ID == "" || !seen.Key.Valid() {
+		return false, fmt.Errorf("intake: ventana incompleta al cerrar con el literal")
+	}
+	if m.failCloseWithText != nil {
+		return false, m.failCloseWithText
+	}
+	if !env.Complete() && !env.Empty() {
+		return false, errIncompleteEnvelope
+	}
+	for _, j := range m.jobs {
+		if j.ID != seen.ID {
+			continue
+		}
+		// LAS DOS GUARDAS DEL UPDATE: `status = 'aggregating'` (idempotente, como
+		// CloseWindow) y `updated_at = $2` (solo se cierra lo que se leyó: un mensaje
+		// que entró después movió la marca y el sobre ya no representa la ventana).
+		if j.Status != StatusAggregating || !j.UpdatedAt.Equal(seen.LastActivity) {
+			return false, nil
+		}
+		j.Status = StatusPending
+		// El sobre vacío entero deja las tres columnas a NULL: aquí, el valor cero.
+		j.SourceText = SourceText{}
+		if env.Complete() {
+			j.SourceText = env
+		}
+		j.UpdatedAt = m.now()
+		return true, nil
+	}
+	return false, nil // el id no existe: no-op, como una fila ya cerrada.
 }
 
 // ListAggregating implementa JobStore.

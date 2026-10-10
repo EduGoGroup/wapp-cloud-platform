@@ -4,7 +4,7 @@
 // Tres suites, una por puerta de la tabla:
 //
 //   - ContratoQueue sobre intake.JobStore (la COLA: abrir o ampliar la ventana, cerrarla,
-//     listar las vivas, escribir el sobre del literal). En la spec de F7 se llamaba
+//     listar las vivas, escribir el sobre del literal, y cerrarla con su sobre de una vez). En la spec de F7 se llamaba
 //     `ContratoCola`.
 //   - ContratoMachine sobre intake.PipelineStore (la MÁQUINA: los dos reclamos y las cinco
 //     transiciones). En la spec de F7, `ContratoMaquina`.
@@ -29,8 +29,7 @@
 //   - fixtures_contrato.go: las siembras, la marca de estado (la fila ENTERA) y sus aserciones.
 //   - queue_contrato.go, queue_put_contrato.go y queue_key_contrato.go (la clave de ventana
 //     incompleta): los casos de la cola.
-//   - queue_close_contrato.go: los de su quinta operación, CloseWithSourceText. Mientras está en
-//     rojo tienen entrada propia, ContratoQueueClose; en el verde pasan a la tabla de la cola.
+//   - queue_close_contrato.go: los de su quinta operación, CloseWithSourceText.
 //   - machine_contrato.go y machine_transitions_contrato.go: los de la máquina.
 //   - reanalysis_contrato.go: los del segundo productor.
 //
@@ -287,6 +286,14 @@ func queueCases() []contractCase[QueueMontaje] {
 		{"PutSourceText_IncompleteEnvelope_ErrorAndNothingWritten", casePutIncompleteEnvelope},
 		// La clave de ventana incompleta (queue_key_contrato.go).
 		{"PutSourceText_IncompleteKey_ErrorBeforeTheEnvelopeAndNothingWritten", casePutIncompleteKey},
+		// CloseWithSourceText (queue_close_contrato.go).
+		{"CloseWithSourceText_UnchangedLiveWindow_ClosesAndWritesTheThreeOnce", caseCloseWithTextOnce},
+		{"CloseWithSourceText_MessageArrivedAfterTheRead_FalseAndUntouchedUntilReread", caseCloseWithTextStaleRead},
+		{"CloseWithSourceText_EmptyEnvelope_ClosesWithTheThreeNull", caseCloseWithTextEmptyEnvelope},
+		{"CloseWithSourceText_HalfEnvelope_ErrorAndNothingWritten", caseCloseWithTextHalfEnvelope},
+		{"CloseWithSourceText_IncompleteKeyOrEmptyID_ErrorBeforeTheEnvelopeAndNothingWritten", caseCloseWithTextIncompleteWindow},
+		{"CloseWithSourceText_AlreadyClosedOrUnknownID_FalseAndNothingTouched", caseCloseWithTextNotLive},
+		{"CloseWithSourceText_OlderPendingOfTheSameKey_IsNotTouched", caseCloseWithTextLeavesOlderPending},
 	}
 }
 

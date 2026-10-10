@@ -7,9 +7,10 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 )
 
-// Los textos con los que las tres escrituras de la cola rechazan una clave de ventana incompleta.
-// Son observables y LITERALES: los mismos en intake.Postgres y en intake.MemoryStore (hallazgo 7
-// de F7), cada escritura con el suyo.
+// Los textos con los que las escrituras de la cola rechazan una clave de ventana incompleta. Son
+// observables y LITERALES: los mismos en intake.Postgres y en intake.MemoryStore (hallazgo 7 de
+// F7), cada escritura con el suyo. El de la cuarta, CloseWithSourceText, está con sus casos en
+// queue_close_contrato.go.
 const (
 	incompleteKeyOnOpen  = "intake: clave de ventana incompleta (tenant/session/contact/event)"
 	incompleteKeyOnClose = "intake: clave de ventana incompleta al cerrar"
