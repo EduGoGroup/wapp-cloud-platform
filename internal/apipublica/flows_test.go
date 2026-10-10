@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // flows_test.go — cubre el contrato de flows.go (FlowsStore, FlowsDeps, MountFlows): el montaje y
@@ -216,6 +214,18 @@ func flowsWantAudit(t *testing.T, what string, h *apipublicahelpertest.Harness, 
 	}
 }
 
+// flowsWantPlainError exige el cuerpo de error de los handlers de conversacion/admin (I1 e
+// I11–I13): texto plano, el mensaje y un salto de línea, no el {"error":…} del resto de la cara.
+func flowsWantPlainError(t *testing.T, what string, rec *httptest.ResponseRecorder, msg string) {
+	t.Helper()
+	if got := rec.Body.String(); got != msg+"\n" {
+		t.Errorf("%s: cuerpo %q, quiero el texto plano %q", what, got, msg+"\n")
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Errorf("%s: Content-Type %q, quiero text/plain", what, got)
+	}
+}
+
 // flowsFullDeps son las deps con todo cableado para el camino feliz de las siete rutas.
 func flowsFullDeps() apipublica.FlowsDeps {
 	return apipublica.FlowsDeps{
@@ -388,7 +398,7 @@ func TestMountFlows_CreateIsTheAdminHandler(t *testing.T) {
 			flows := &flowsStoreSpy{version: 1, insertErr: tc.insertErr}
 			h, rec := flowsDo(t, apipublica.FlowsDeps{Flows: flows}, flowsPermCreate, http.MethodPost, flowsTarget, tc.body)
 			wantCode(t, tc.name, rec, tc.code)
-			wantErrorBody(t, tc.name, rec, tc.msg)
+			flowsWantPlainError(t, tc.name, rec, tc.msg)
 			if flows.inserts != tc.inserts {
 				t.Errorf("%s: el store recibió %d altas, quiero %d", tc.name, flows.inserts, tc.inserts)
 			}
@@ -399,10 +409,8 @@ func TestMountFlows_CreateIsTheAdminHandler(t *testing.T) {
 	_, rec = flowsDo(t, apipublica.FlowsDeps{Flows: &flowsStoreSpy{}}, flowsPermCreate, http.MethodPost, flowsTarget,
 		`{"definition":{"flow_id":"x","version":1,"initial":"no-existe","nodes":{}}}`)
 	wantCode(t, "definición inválida", rec, http.StatusBadRequest)
-	var invalid map[string]string
-	wantJSON(t, "definición inválida", rec, &invalid)
-	if !strings.HasPrefix(invalid["error"], "definición de flujo inválida: ") {
-		t.Errorf("definición inválida: error %q, quiero el prefijo \"definición de flujo inválida: \"", invalid["error"])
+	if got := rec.Body.String(); !strings.HasPrefix(got, "definición de flujo inválida: ") {
+		t.Errorf("definición inválida: cuerpo %q, quiero el prefijo \"definición de flujo inválida: \"", got)
 	}
 }
 

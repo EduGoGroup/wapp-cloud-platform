@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // flows_start_test.go — cubre de MountFlows la ruta I4, POST /api/v1/flows/{id}/start: la

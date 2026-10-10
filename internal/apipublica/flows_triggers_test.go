@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // flows_triggers_test.go — cubre de MountFlows las rutas I11–I13, el CRUD de reglas de disparo:
@@ -91,7 +89,7 @@ func TestMountFlows_TriggerCreate(t *testing.T) {
 	rules = &flowsTriggersSpy{}
 	h, rec = flowsTriggers(t, rules, nil, flowsPermTriggerCreate, http.MethodPost, flowsTargetTrigger, `{no es json`)
 	wantCode(t, "cuerpo ilegible", rec, http.StatusBadRequest)
-	wantErrorBody(t, "cuerpo ilegible", rec, "cuerpo JSON inválido")
+	flowsWantPlainError(t, "cuerpo ilegible", rec, "cuerpo JSON inválido")
 	if len(rules.inserted) != 0 {
 		t.Errorf("cuerpo ilegible: el store recibió %d reglas, quiero 0", len(rules.inserted))
 	}
@@ -173,7 +171,7 @@ func TestMountFlows_TriggerDelete(t *testing.T) {
 	rules = &flowsTriggersSpy{deleteErr: trigger.ErrTriggerNotFound}
 	h, rec = flowsTriggers(t, rules, nil, flowsPermTriggerDelete, http.MethodDelete, flowsTargetRule, "")
 	wantCode(t, "regla ajena o inexistente", rec, http.StatusNotFound)
-	wantErrorBody(t, "regla ajena o inexistente", rec, flowsMsgRuleNotFound)
+	flowsWantPlainError(t, "regla ajena o inexistente", rec, flowsMsgRuleNotFound)
 	flowsWantAudit(t, "regla ajena o inexistente", h, flowsPermTriggerDelete, flowsTriggerResource, "failure", http.StatusNotFound)
 }
 

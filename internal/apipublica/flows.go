@@ -19,18 +19,24 @@
 // I5–I10 (media y contenido de tenant) e I14–I19 (catálogo y eventos de conversación) viven en
 // media.go, tenantcontent.go, catalog*.go y conversationevent*.go.
 //
-// En el rojo solo existen el puerto, FlowsDeps y MountFlows; los handlers de I2–I4, sus cuerpos
-// y la tabla de errores de arranque nacen con el verde (05 E-4, P6).
+// En el rojo solo existían el puerto, FlowsDeps y MountFlows; los handlers de I2–I4, sus cuerpos
+// y la tabla de errores de arranque nacieron con el verde (05 E-4, P6).
 
 package apipublica
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/session"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // FlowsStore (FlowStore en la cara vieja) agrupa las operaciones sobre definiciones de flujo que
@@ -97,10 +103,15 @@ type FlowsDeps struct {
 //
 // I1 · PUBLICAR UNA DEFINICIÓN. El handler es admin.DefinitionHandler(d.Flows, d.Modules) tal
 // cual, y su contrato manda. Lo que se ve desde aquí: cuerpo {"definition": <flujo>}; 201
-// {"flow_id","version"} con la versión que ASIGNÓ el store; 400 {"error":"cuerpo JSON inválido"},
-// 400 {"error":"definition es requerida"}, 400 con "definición de flujo inválida: …" y 500
-// {"error":"no se pudo persistir la definición"}. 🔴 Los tipos de d.Modules se leen UNA vez, AL
-// MONTAR, no en cada petición (un módulo registrado después no se ve; se porta como está).
+// {"flow_id","version"} con la versión que ASIGNÓ el store; 400 "cuerpo JSON inválido", 400
+// "definition es requerida", 400 con "definición de flujo inválida: …" y 500 "no se pudo
+// persistir la definición". 🔴 Los tipos de d.Modules se leen UNA vez, AL MONTAR, no en cada
+// petición (un módulo registrado después no se ve; se porta como está).
+//
+// 🔴 LOS ERRORES DE LOS HANDLERS DE admin (I1, I11–I13) SON TEXTO PLANO, no el {"error":…} del
+// resto de la cara: salen por http.Error, así que el cuerpo es el texto seguido de un salto de
+// línea, con Content-Type text/plain. Rareza portada: es lo que ya servía la cara vieja. El 401
+// y el 403 de la cadena sí son JSON, también en esas cuatro rutas.
 //
 // I2 · LISTAR. d.Flows.ListDefinitions(tenant del token), UNA vez y con el contexto de la
 // petición:
@@ -154,8 +165,8 @@ type FlowsDeps struct {
 //     lo arranque escribiendo su palabra clave; no reintentes esta llamada, seguirá devolviendo
 //     409";
 //  3. session.ErrSessionOffline de internal/modulos/edge/session ⇒ 502 {"error":"sesión offline:
-//     no hay stream vivo para el Edge"}. 🔴 Se decide por IDENTIDAD del centinela (mapa §4.4,
-//     trampa T-9 de reglas.md): es la MISMA variable que httpapi.ErrSessionOffline de
+//     no hay stream vivo para el Edge"}. 🔴 Se decide por IDENTIDAD del centinela (F8
+//     `reglas.md` T-8, mapa §4.4): es la MISMA variable que httpapi.ErrSessionOffline de
 //     internal/platform, así que un error que envuelva cualquiera de los dos nombres casa. Gana
 //     al stream caído: offline significa «no salió»;
 //  4. un error con `StreamCaido() bool` que devuelva true (errors.As, duck-typing, sin importar
@@ -173,13 +184,13 @@ type FlowsDeps struct {
 // admin.ListTriggersHandler y admin.DeleteTriggerHandler, los tres construidos con (d.Triggers,
 // d.TriggersDurableFlow) tal cual, y su contrato manda. Lo que se ve desde aquí:
 //
-//   - I11: 201 con la regla creada; 400 {"error":"cuerpo JSON inválido"} y los 400 de
-//     validación; 422 si la regla (keyword o fallback) apunta a un flujo durable y el tenant no
-//     tiene ninguna event_start habilitada; 500 {"error":"no se pudo crear la regla de disparo"};
+//   - I11: 201 con la regla creada; 400 "cuerpo JSON inválido" y los 400 de validación; 422 si
+//     la regla (keyword o fallback) apunta a un flujo durable y el tenant no tiene ninguna
+//     event_start habilitada; 500 "no se pudo crear la regla de disparo";
 //   - I12: 200 con el arreglo de reglas del tenant (`[]` si no hay), con las marcas derivadas
 //     `shadowed_by_event_list` y `flow_needs_event`;
-//   - I13: 204 sin cuerpo; 404 {"error":"regla de disparo no encontrada"} si el {id} no existe o
-//     es de otro tenant; 422 si es la última event_start habilitada y dejaría sin respuesta una
+//   - I13: 204 sin cuerpo; 404 "regla de disparo no encontrada" si el {id} no existe o es de
+//     otro tenant; 422 si es la última event_start habilitada y dejaría sin respuesta una
 //     regla hacia un flujo durable.
 //
 // Defensa que los tokens de sharedjwt no alcanzan (RequirePermission corta antes): una identidad
@@ -191,5 +202,267 @@ type FlowsDeps struct {
 // MountFlows, también con d vacío (I1–I4 se montan siempre). d.Flows y d.Starter NO se comprueban
 // al montar, igual que en la cara vieja: el arranque los cablea siempre.
 func MountFlows(c *Cara, k Common, d FlowsDeps) {
-	panic(pendiente.Implementar("apipublica.MountFlows"))
+	mustHaveMW(k, "MountFlows")
+
+	// Publicar definición de flujo (escritura auditada). Reusa TAL CUAL el handler
+	// de /admin/flows: ya toma el tenant del token y valida el esquema.
+	c.Handle("POST /api/v1/flows", protect(k, "flows.create", "flow",
+		admin.DefinitionHandler(d.Flows, d.Modules)))
+
+	// Listar / leer definiciones (lecturas, sin auditoría).
+	c.Handle("GET /api/v1/flows", protectRead(k, "flows.read", flowsListHandler(d.Flows)))
+	c.Handle("GET /api/v1/flows/{id}", protectRead(k, "flows.read", flowsGetHandler(d.Flows)))
+
+	// Arrancar una conversación de un flujo (escritura auditada). flow_id va en la
+	// ruta (design.md §8); el resto (session_id, contacto) en el cuerpo. Reusa el
+	// motor de flujos (Starter) que también sirve /admin/flows/start.
+	c.Handle("POST /api/v1/flows/{id}/start", protect(k, "flows.start", "flow",
+		flowsStartHandler(d.Starter)))
+
+	// CRUD de reglas de disparo (Plan 019 · T5): keyword/fallback/escape por-tenant
+	// que alimentan al ConfigResolver del Motor. Escrituras auditadas
+	// (triggers.create/delete); lectura sin auditoría (triggers.read). Todo acotado
+	// al tenant del token (INV-8); reusa los MISMOS handlers que /admin/triggers.
+	if d.Triggers != nil {
+		c.Handle("POST /api/v1/triggers", protect(k, "triggers.create", "trigger",
+			admin.CreateTriggerHandler(d.Triggers, d.TriggersDurableFlow)))
+		c.Handle("GET /api/v1/triggers", protectRead(k, "triggers.read",
+			admin.ListTriggersHandler(d.Triggers, d.TriggersDurableFlow)))
+		c.Handle("DELETE /api/v1/triggers/{id}", protect(k, "triggers.delete", "trigger",
+			admin.DeleteTriggerHandler(d.Triggers, d.TriggersDurableFlow)))
+	}
+}
+
+// flowsSummaryDTO (flowSummaryDTO en la cara vieja) es una fila del listado GET /api/v1/flows.
+type flowsSummaryDTO struct {
+	FlowID    string `json:"flow_id"`
+	Version   int    `json:"version"`
+	CreatedAt string `json:"created_at,omitempty"`
+}
+
+// flowsListHandler (listFlowsHandler en la cara vieja) devuelve el handler de GET /api/v1/flows:
+// lista los flujos del tenant del token (INV-8), cada uno con su última versión. 200 con el
+// arreglo (vacío si no hay flujos); 401 sin identidad; 500 ante fallo del store.
+func flowsListHandler(flows FlowsStore) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		summaries, err := flows.ListDefinitions(r.Context(), id.TenantID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudieron listar los flujos")
+			return
+		}
+		out := make([]flowsSummaryDTO, 0, len(summaries))
+		for _, s := range summaries {
+			// formatInstant ya da "" para el instante cero (que `omitempty` quita) y RFC3339 en
+			// UTC para el resto: lo mismo que hacía la cara vieja a mano.
+			out = append(out, flowsSummaryDTO{FlowID: s.FlowID, Version: s.Version, CreatedAt: formatInstant(s.CreatedAt)})
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
+}
+
+// flowsGetHandler (getFlowHandler en la cara vieja) devuelve el handler de GET
+// /api/v1/flows/{id}: la definición vigente (última versión) del flujo {id} para el tenant del
+// token (INV-8). 200 con la definición; 404 si el tenant no tiene ese flujo (o es de otro
+// tenant: el store filtra por tenant, así que un flow_id ajeno da 404); 401 sin identidad; 500
+// en otro fallo.
+func flowsGetHandler(flows FlowsStore) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		flowID := r.PathValue("id")
+		if flowID == "" {
+			writeError(w, http.StatusBadRequest, "flow id requerido en la ruta")
+			return
+		}
+		flow, err := flows.LatestDefinition(r.Context(), id.TenantID, flowID)
+		if err != nil {
+			if errors.Is(err, store.ErrDefinitionNotFound) {
+				writeError(w, http.StatusNotFound, "flujo no encontrado")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "no se pudo leer el flujo")
+			return
+		}
+		writeJSON(w, http.StatusOK, flow)
+	})
+}
+
+// flowsContactRefBody (contactRefBody en la cara vieja) es la identidad flexible del contacto en
+// el cuerpo (Plan 010).
+type flowsContactRefBody struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
+// flowsStartRequest (startFlowRequest en la cara vieja) es el cuerpo JSON de POST
+// /api/v1/flows/{id}/start. flow_id va en la RUTA (no en el cuerpo). La identidad del contacto
+// se aporta como contact_ref {kind,value} o, por compat, un `contact` plano interpretado como
+// phone_e164. El tenant_id NO viaja aquí (INV-8): sale del token.
+type flowsStartRequest struct {
+	SessionID  string               `json:"session_id"`
+	ContactRef *flowsContactRefBody `json:"contact_ref"`
+	Contact    string               `json:"contact"` // alias compat = phone_e164
+}
+
+// ref deriva la contact.Ref validada del cuerpo (prioriza contact_ref; si falta usa `contact`
+// como phone_e164). ok=false si no se aportó ninguna identidad.
+func (req flowsStartRequest) ref() (r contact.Ref, ok bool, err error) {
+	switch {
+	case req.ContactRef != nil && req.ContactRef.Value != "":
+		ref, rerr := contact.NewRef(req.ContactRef.Kind, req.ContactRef.Value)
+		return ref, true, rerr
+	case req.Contact != "":
+		ref, rerr := contact.NewRef(contact.KindPhoneE164, req.Contact)
+		return ref, true, rerr
+	default:
+		return contact.Ref{}, false, nil
+	}
+}
+
+// flowsStartResponse (startResponse en la cara vieja) refleja el Ack del envío del menú inicial
+// (mismo contrato que el arranque admin).
+type flowsStartResponse struct {
+	AckedCommandID string `json:"acked_command_id"`
+	OK             bool   `json:"ok"`
+	Error          string `json:"error,omitempty"`
+}
+
+// flowsStartHandler (startFlowHandler en la cara vieja) devuelve el handler de POST
+// /api/v1/flows/{id}/start: abre una conversación del flujo {id} para el contacto indicado y
+// envía el menú inicial. Reusa el motor de flujos (Starter, el mismo de /admin/flows/start);
+// toma el tenant del token (INV-8) y el flow_id de la ruta. Respuestas:
+//
+//   - 200 con {acked_command_id, ok, error} al recibir el Ack.
+//   - 409 si ya hay una conversación viva para la clave (ErrConversationExists), o
+//     si el flujo tiene contenido durable y no trae evento padre
+//     (ErrDurableFlowNeedsEvent, Plan 054 · T2.5) — dos 409 con texto distinto.
+//   - 502 si la sesión está offline; 504 si expira el ack; 500 en otro fallo.
+//   - 401 sin identidad; 400 si falta flow_id/session_id/contacto o el JSON es inválido.
+func flowsStartHandler(starter admin.Starter) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		flowID := r.PathValue("id")
+		if flowID == "" {
+			writeError(w, http.StatusBadRequest, "flow id requerido en la ruta")
+			return
+		}
+
+		var req flowsStartRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "cuerpo JSON inválido")
+			return
+		}
+		if req.SessionID == "" {
+			writeError(w, http.StatusBadRequest, "session_id es requerido")
+			return
+		}
+		ref, ok, err := req.ref()
+		if !ok {
+			writeError(w, http.StatusBadRequest, "se requiere contact_ref {kind,value} o contact (alias phone_e164)")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "contact_ref inválida: "+err.Error())
+			return
+		}
+
+		ack, err := starter.Start(r.Context(), id.TenantID, flowID, req.SessionID, ref)
+		if err != nil {
+			flowsWriteStartError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, flowsStartResponse{
+			AckedCommandID: ack.GetAckedCommandId(),
+			OK:             ack.GetOk(),
+			Error:          ack.GetError(),
+		})
+	})
+}
+
+// flowsMsgStreamClosedStart (msgStreamCaidoStart en la cara vieja) es el cuerpo del 504 «se
+// cayó» al ARRANCAR una conversación. No es el texto de messages.go y no debe serlo: allí se
+// pierde el rastro de un mensaje suelto, aquí queda una conversación viva a medio saludar, y lo
+// que el llamante tiene que hacer es distinto.
+//
+// Las tres afirmaciones están verificadas contra el runtime, no supuestas:
+//
+//  1. «YA quedó abierta» —no «pudo haber arrancado»—: rt.store.Save del estado
+//     inicial ocurre ANTES del envío (runtime/start.go, orden Save-antes-de-SendText),
+//     así que cuando el ack se pierde el flow_state ya está persistido. Decir «pudo»
+//     mandaría a comprobar algo que es seguro.
+//  2. «no se sabe si el cliente llegó a recibirlo»: el comando viajó al Edge y pudo
+//     salir a WhatsApp. Por eso esto es un 504 y no el 502 que pedía el enunciado de
+//     T2.4 —el 502 de este repo significa «no salió»— ni el 500 al que caía antes.
+//  3. «devolverá 409»: reintentar NO duplica el arranque. rt.store.Exists ya da true
+//     y restartableOnStart no encuentra ResumePolicy para ningún nodo alcanzable por
+//     esta vía (la única registrada es la del carrito, y un flujo durable ni siquiera
+//     llega aquí: lo corta antes ErrDurableFlowNeedsEvent), así que sale
+//     ErrConversationExists. Avisar de un doble arranque sería asustar con algo que
+//     el código impide; lo útil es decir que el reintento no sirve de nada.
+//
+// streamClosedFrom no se redefine aquí: vive en messages.go, mismo paquete.
+const flowsMsgStreamClosedStart = "el stream del Edge se cerró antes del ack: la conversación YA quedó abierta y el " +
+	"comando de su primer mensaje viajó al Edge, así que no se sabe si el cliente llegó a recibirlo. " +
+	"NO reintentes este arranque —devolverá 409—: comprueba la conversación y, si el primer mensaje " +
+	"no salió, continúala sobre la que ya existe"
+
+// flowsWriteStartError (writeStartError en la cara vieja) traduce el error de Start a un código
+// HTTP: conversación existente -> 409, flujo con contenido durable sin evento -> 409 (texto
+// DISTINTO del anterior, Plan 054 · T2.5), sesión offline -> 502, stream caído esperando el Ack
+// -> 504, timeout/cancelación -> 504, resto -> 500 (mismo criterio que conversacion/admin).
+//
+// Que el error de ENVÍO llegue hasta aquí no es teoría: el arranque termina en
+// rt.send (runtime/start.go), que envuelve con %w el error del Gateway. Los casos de
+// ErrSessionOffline y DeadlineExceeded que ya había son la prueba de que ese error
+// cruza; el del stream caído cruza por el mismo sitio.
+func flowsWriteStartError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, runtime.ErrConversationExists):
+		writeError(w, http.StatusConflict, "ya existe una conversación viva para la clave")
+	case errors.Is(err, runtime.ErrDurableFlowNeedsEvent):
+		// MD-054.3 (design.md §6, confirmado por grep contra errorBody/writeError):
+		// la cara NO tiene campo `code` estructurado en su JSON de error — solo
+		// {"error": "<texto>"}. No se inventa esa superficie aquí (instrucción
+		// explícita del plan); el TEXTO es la única forma de distinguir este 409 del
+		// de ErrConversationExists, y le dice al operador qué hacer, no solo que
+		// falló (el cliente de WhatsApp NUNCA ve este rechazo: T2.4 lo degrada a la
+		// oferta del despachador antes de llegar aquí).
+		//
+		// Retirada de capacidad, dicha clara (Plan 054 · F2b, D-B — decisión de
+		// Jhoan 2026-08-12, tras review): verificado que NINGÚN endpoint de /admin
+		// ni de /api/v1 para un evento — las tres puertas del Plan 043 son de
+		// WhatsApp. El texto viejo aconsejaba «arráncalo desde una conversación que
+		// ya tenga un evento activo», y eso NO se puede hacer por API. Ya no se
+		// ofrece esa vía: la única accionable es configurar la regla que SÍ pare el
+		// evento desde la conversación.
+		writeError(w, http.StatusConflict, "el flujo tiene contenido durable (cart/survey): su evento nace en la conversación, no por "+
+			"esta API. Configura una regla event_start para este flujo (POST /api/v1/triggers) para que el "+
+			"cliente lo arranque escribiendo su palabra clave; no reintentes esta llamada, seguirá devolviendo 409")
+	case errors.Is(err, session.ErrSessionOffline):
+		// Identidad del centinela (F8 `reglas.md` T-8, mapa §4.4): session.ErrSessionOffline
+		// del módulo edge ES httpapi.ErrSessionOffline, así que casa el que envuelva el gateway.
+		writeError(w, http.StatusBadGateway, "sesión offline: no hay stream vivo para el Edge")
+	case streamClosedFrom(err):
+		// Plan 050 · Ola 2 · T2.4. Antes de esto el stream caído caía al default y
+		// salía un 500 «no se pudo iniciar la conversación»: código equivocado (no
+		// falló el servidor), causa oculta, y encima incoherente con el 504 que el
+		// MISMO fallo devuelve por /api/v1/messages en el mismo despliegue.
+		writeError(w, http.StatusGatewayTimeout, flowsMsgStreamClosedStart)
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		writeError(w, http.StatusGatewayTimeout, "timeout esperando el ack del Edge")
+	default:
+		writeError(w, http.StatusInternalServerError, "no se pudo iniciar la conversación")
+	}
 }
