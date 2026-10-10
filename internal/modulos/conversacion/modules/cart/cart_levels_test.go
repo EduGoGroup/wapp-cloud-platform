@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package cart_test
 
 import (
@@ -207,10 +205,14 @@ func TestLevels_Quantity(t *testing.T) {
 		}
 		mustScreen(t, outs, invalidQty+coffeeQuantity)
 	}
-	for in, want := range map[string]int{"1": 1, "12": 12, "007": 7, "+4": 4, " 3 ": 3} {
-		st, _, _ := drive(t, m, vars, in)
-		if st.Level != cart.LevelContinue || len(st.Lines) != 1 || st.Lines[0].Qty != want {
-			t.Errorf("%q: estado = %+v, quiero una línea de %d", in, st, want)
+	valid := []struct {
+		in   string
+		want int
+	}{{"1", 1}, {"12", 12}, {"007", 7}, {"+4", 4}, {" 3 ", 3}}
+	for _, tc := range valid {
+		st, _, _ := drive(t, m, vars, tc.in)
+		if st.Level != cart.LevelContinue || len(st.Lines) != 1 || st.Lines[0].Qty != tc.want {
+			t.Errorf("%q: estado = %+v, quiero una línea de %d", tc.in, st, tc.want)
 		}
 	}
 }

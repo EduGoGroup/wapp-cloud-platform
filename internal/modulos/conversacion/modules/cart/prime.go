@@ -19,9 +19,20 @@
 package cart
 
 import (
+	"strconv"
+	"strings"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+)
+
+// paramProduct y paramQuantity son las claves de intent_params que el carrito
+// interpreta (el resto se ignora). El clasificador las extrae del mensaje; el
+// vocabulario lo fija la config de intents del tenant (wapp-shared/intents).
+const (
+	paramProduct  = "producto"
+	paramQuantity = "cantidad"
 )
 
 // Prime pre-carga el carrito a partir de los intent_params sembrados en Vars bajo
@@ -86,5 +97,239 @@ import (
 // Si el Module tiene logger, avisa UNA vez por cada campo del catálogo v2 que el
 // parseo tolerante descartó, igual que Render (ver WithLogger).
 func (m Module) Prime(_ model.Node, content model.Content, vars map[string]any) (modules.Result, bool) {
-	panic(pendiente.Implementar("cart.Module.Prime"))
+	params := readIntentParams(vars)
+	if params == nil {
+		return modules.Result{}, false // sin intent_params ⇒ Render normal (no-regresión)
+	}
+	cat, err := catalogo.ParseCatalog(content)
+	if err != nil {
+		return modules.Result{}, false // catálogo no disponible ⇒ Render normal (catalogUnavailable)
+	}
+	m.warnCatalog(cat)
+
+	// A partir de aquí SIEMPRE consumimos los params (una sola vez): sea con pre-add o
+	// con arranque normal, no deben persistir en Vars ni reaplicarse en el próximo Step.
+	out := modules.CloneVars(vars)
+	delete(out, modules.VarIntentParams)
+	delete(out, modules.VarIntentName)
+
+	product := strings.TrimSpace(params[paramProduct])
+	category, article, ok := matchArticle(cat, product)
+	if product == "" || !ok {
+		// Sin producto o sin match único/claro (o ambiguo): flujo normal desde L1. El
+		// cart_started lo emitirá el primer Step (Started queda false), como en el
+		// arranque normal ⇒ no-regresión de telemetría.
+		return modules.Result{
+			Vars:    out,
+			Outputs: []string{screenCategories(cat, cartState{Level: LevelCategories}, m.pageSize)},
+		}, true
+	}
+	variant, hasVariant := matchVariant(article, product)
+	if article.HasVariants() && !hasVariant {
+		// El artículo está claro pero la presentación no ("quiero una torta de
+		// chocolate", con dos tamaños a precios distintos). Se PIDE la variante en
+		// vez de suponerla: pre-agregar al precio de referencia sería inventar el
+		// precio, que es exactamente lo que el contrato v2 prohíbe. Tampoco se
+		// tira a la basura lo que el cliente ya dijo: el flujo entra por el
+		// artículo que sí acertó, no por la lista de categorías.
+		return primeAskVariant(out, category, article), true
+	}
+
+	// Match claro: pre-agrega la línea y salta a la confirmación de ítem (LevelContinue,
+	// el MISMO estado al que lleva stepQuantity tras un add). cantidad ausente/inválida
+	// ⇒ 1. Emite cart_started (arranque) + item_added (el runtime ASEGURA la solicitud
+	// "open" con este efecto, design.md §3.4): mismo contrato que el add manual.
+	line := newLine(article, variant, hasVariant, parseQty(params[paramQuantity]))
+	return primeAdd(out, category, article, line), true
+}
+
+// primeAskVariant deja la conversación en el nivel de variante del artículo que
+// casó, SIN línea ni efectos: el cart_started lo emitirá el primer Step (igual que
+// en el arranque normal), así que la telemetría no cambia.
+func primeAskVariant(out map[string]any, category catalogo.Category, a catalogo.Article) modules.Result {
+	storeState(out, cartState{Level: LevelVariant, CatCode: category.Code, SKU: a.SKU})
+	return modules.Result{Vars: out, Outputs: []string{screenVariants(a)}}
+}
+
+// primeAdd deja la conversación con la línea ya agregada y en la confirmación de
+// ítem, declarando los mismos efectos que el add manual.
+func primeAdd(out map[string]any, category catalogo.Category, a catalogo.Article, line cartLine) modules.Result {
+	storeState(out, cartState{
+		Level:   LevelContinue,
+		CatCode: category.Code,
+		SKU:     a.SKU,
+		Started: true,
+		Lines:   []cartLine{line},
+	})
+	return modules.Result{
+		Vars:    out,
+		Outputs: []string{primeAddedScreen(line, category)},
+		Effects: []modules.Effect{
+			event(EffectCartStarted, map[string]any{}),
+			withLineSnapshot(event(EffectItemAdded, map[string]any{
+				"sku":        line.SKU,
+				"label":      line.Label,
+				"qty":        line.Qty,
+				"unit_price": line.UnitPrice,
+			}), []cartLine{line}),
+		},
+	}
+}
+
+// primeAddedScreen antecede a la pantalla de confirmación de ítem (screenContinue, el
+// estado LevelContinue) con una línea que nombra lo pre-agregado, para que el cliente
+// vea QUÉ se agregó a partir de su intención (no solo "Añadido al pedido ✅"). Con
+// variante nombra la variante y su precio, que es lo que se va a cobrar.
+func primeAddedScreen(line cartLine, category catalogo.Category) string {
+	head := "Agregué " + strconv.Itoa(line.Qty) + " × " + line.Label + " (" + money(line.UnitPrice) + " c/u) a tu pedido."
+	return head + "\n\n" + screenContinue(category)
+}
+
+// parseQty interpreta la cantidad de intent_params: entero >= 1 o, ausente/inválida,
+// 1 (design.md §4.c). El clasificador puede omitirla o extraer basura; el código
+// nunca falla por eso.
+func parseQty(s string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
+}
+
+// readIntentParams lee Vars[VarIntentParams] tolerando el tipo nativo (map[string]
+// string, recién sembrado por el runtime) y el round-trip JSONB (map[string]any con
+// valores string). Ausente/nil/forma inesperada ⇒ nil (⇒ Prime devuelve handled=false).
+func readIntentParams(vars map[string]any) map[string]string {
+	raw, ok := vars[modules.VarIntentParams]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch m := raw.(type) {
+	case map[string]string:
+		if len(m) == 0 {
+			return nil
+		}
+		return m
+	case map[string]any:
+		out := make(map[string]string, len(m))
+		for k, v := range m {
+			if s, ok := v.(string); ok {
+				out[k] = s
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// --- matching difuso producto↔catálogo (porte de miniWapp, ADR-0004) -------------
+
+// normalize canoniza un texto para el matching difuso: minúsculas + strip de
+// diacríticos comunes del español (porte de miniWapp `normalizar`). Basta el
+// reemplazo directo para el vocabulario de catálogo (no requiere NFD).
+func normalize(s string) string {
+	s = strings.ToLower(s)
+	repl := strings.NewReplacer("á", "a", "é", "e", "í", "i", "ó", "o", "ú", "u", "ñ", "n")
+	return repl.Replace(s)
+}
+
+// commonPrefix tolera plurales y errores leves de tipeo comparando prefijos de 4+
+// letras (porte de miniWapp `prefijoComun`): con palabras < 4 letras exige igualdad.
+func commonPrefix(a, b string) bool {
+	if len(a) < 4 || len(b) < 4 {
+		return a == b
+	}
+	n := min(len(a), len(b), 5)
+	return a[:n] == b[:n]
+}
+
+// matchArticle hace matching difuso del texto del cliente contra TODO el catálogo
+// (porte de miniWapp `buscarArticulo`): gana el artículo con más palabras en común
+// ("pizzas de peperoni" → "Pizza pepperoni"). Devuelve ok=false si NADA casa (mejor
+// score 0) o si hay EMPATE en el mejor score (ambiguo): el llamante cae al flujo
+// normal, nunca inventa. También devuelve la categoría del artículo ganador (para
+// fijar CatCode y renderizar la confirmación de la categoría en foco).
+func matchArticle(cat catalogo.Catalog, query string) (catalogo.Category, catalogo.Article, bool) {
+	qWords := strings.Fields(normalize(query))
+	if len(qWords) == 0 {
+		return catalogo.Category{}, catalogo.Article{}, false
+	}
+	var (
+		bestCat     catalogo.Category
+		bestArticle catalogo.Article
+		bestScore   int
+		tie         bool
+	)
+	for ci := range cat.Categories {
+		c := cat.Categories[ci]
+		for ii := range c.Items {
+			it := c.Items[ii]
+			score := scoreLabel(qWords, it.Label)
+			switch {
+			case score > bestScore:
+				bestCat, bestArticle, bestScore, tie = c, it, score, false
+			case score == bestScore && score > 0:
+				tie = true
+			}
+		}
+	}
+	if bestScore == 0 || tie {
+		return catalogo.Category{}, catalogo.Article{}, false
+	}
+	return bestCat, bestArticle, true
+}
+
+// matchVariant elige la variante del artículo que casa con lo que dijo el cliente
+// (Plan 041 · T2.3). Se hace en DOS PASADAS —primero el artículo contra su label,
+// después la variante contra la SUYA— y no en una sola contra la etiqueta
+// compuesta, por una razón concreta: "torta de chocolate" puntúa igual en todas
+// las variantes (todas heredan las palabras del artículo) y una pasada única
+// declararía ganadora a la primera por orden de lista, es decir, elegiría el
+// tamaño por el cliente. Aquí, si las variantes empatan o ninguna casa, ok=false y
+// el llamante PREGUNTA.
+func matchVariant(a catalogo.Article, query string) (catalogo.Variant, bool) {
+	if !a.HasVariants() {
+		return catalogo.Variant{}, false
+	}
+	qWords := strings.Fields(normalize(query))
+	if len(qWords) == 0 {
+		return catalogo.Variant{}, false
+	}
+	var (
+		best      catalogo.Variant
+		bestScore int
+		tie       bool
+	)
+	for _, v := range a.Variants {
+		score := scoreLabel(qWords, v.Label)
+		switch {
+		case score > bestScore:
+			best, bestScore, tie = v, score, false
+		case score == bestScore && score > 0:
+			tie = true
+		}
+	}
+	if bestScore == 0 || tie {
+		return catalogo.Variant{}, false
+	}
+	return best, true
+}
+
+// scoreLabel cuenta cuántas palabras de la consulta casan (por prefijo común) con
+// las de una etiqueta del catálogo.
+func scoreLabel(qWords []string, label string) int {
+	nWords := strings.Fields(normalize(label))
+	score := 0
+	for _, qw := range qWords {
+		for _, nw := range nWords {
+			if commonPrefix(qw, nw) {
+				score++
+			}
+		}
+	}
+	return score
 }

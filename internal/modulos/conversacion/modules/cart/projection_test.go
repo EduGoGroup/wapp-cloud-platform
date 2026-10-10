@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package cart_test
 
 import (
@@ -217,24 +215,27 @@ func line(sku string, qty int, price float64) map[string]any {
 // telemetría y cualquier otro nombre, no.
 func TestProjector_Handles(t *testing.T) {
 	p := newRig().p
-	cases := map[string]bool{
-		cart.EffectItemAdded:         true,
-		cart.EffectNoteAdded:         true,
-		cart.EffectCartClosed:        true,
-		cart.EffectCartCancelled:     true,
-		cart.EffectCartExpired:       true,
-		cart.EffectBuyerDataCaptured: true,
-		cart.EffectCartStarted:       false,
-		cart.EffectCategorySelected:  false,
-		cart.EffectItemViewed:        false,
-		"survey_answer":              false,
-		"Item_Added":                 false,
-		" item_added":                false,
-		"":                           false,
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{cart.EffectItemAdded, true},
+		{cart.EffectNoteAdded, true},
+		{cart.EffectCartClosed, true},
+		{cart.EffectCartCancelled, true},
+		{cart.EffectCartExpired, true},
+		{cart.EffectBuyerDataCaptured, true},
+		{cart.EffectCartStarted, false},
+		{cart.EffectCategorySelected, false},
+		{cart.EffectItemViewed, false},
+		{"survey_answer", false},
+		{"Item_Added", false},
+		{" item_added", false},
+		{"", false},
 	}
-	for name, want := range cases {
-		if got := p.Handles(name); got != want {
-			t.Errorf("Handles(%q) = %v, quiero %v", name, got, want)
+	for _, tc := range cases {
+		if got := p.Handles(tc.name); got != tc.want {
+			t.Errorf("Handles(%q) = %v, quiero %v", tc.name, got, tc.want)
 		}
 	}
 }

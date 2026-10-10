@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package cart_test
 
 import (
@@ -21,10 +19,13 @@ import (
 
 // closedEffect es el efecto de cierre tal como lo emite la sub-máquina (camino en
 // proceso), con el total de sus líneas.
-func closedEffect(lines ...map[string]any) modules.Effect {
+func closedEffect(t *testing.T, lines ...map[string]any) modules.Effect {
+	t.Helper()
 	total := 0.0
 	for _, l := range lines {
-		total += float64(l["qty"].(int)) * l["unit_price"].(float64)
+		qty := mustBe[int](t, l["qty"], "qty de la línea")
+		price := mustBe[float64](t, l["unit_price"], "unit_price de la línea")
+		total += float64(qty) * price
 	}
 	return modules.Effect{Kind: kindPersist, Name: cart.EffectCartClosed,
 		Payload: map[string]any{"items": lines, "total": total}}
@@ -34,7 +35,7 @@ func closedEffect(lines ...map[string]any) modules.Effect {
 // total, el evento de la meta y la nota vacía.
 func TestProjector_CartClosed_CreatesACoherentClosedIntake(t *testing.T) {
 	r := newRig()
-	r.project(t, meta(), closedEffect(line("EMPA", 2, 2500)))
+	r.project(t, meta(), closedEffect(t, line("EMPA", 2, 2500)))
 	got := r.onlyIntake(t)
 	if got.Status != "closed" || got.Total != 5000 || got.TenantID != tenantID || got.ContactID != contactID ||
 		got.SessionID != sessionID || got.EventID != eventID || got.CustomerNote != "" {
@@ -56,7 +57,7 @@ func TestProjector_CartClosed_ClosesTheOpenIntake(t *testing.T) {
 	r.project(t, meta(), snapshotEffect(cart.EffectItemAdded, line("EMPA", 1, 2500)))
 	open := r.onlyIntake(t)
 
-	r.project(t, meta(), closedEffect(line("EMPA", 1, 2500), line("JUGO", 2, 1000)))
+	r.project(t, meta(), closedEffect(t, line("EMPA", 1, 2500), line("JUGO", 2, 1000)))
 	closed := r.onlyIntake(t)
 	if closed.ID != open.ID || closed.Status != "closed" || closed.Total != 4500 {
 		t.Errorf("solicitud = %+v, quiero la abierta (%s) cerrada con total 4500", closed, open.ID)
@@ -85,8 +86,8 @@ func TestProjector_CartClosed_Notes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRig()
-			eff := closedEffect(line("EMPA", 2, 2500))
-			eff.Payload["items"].([]map[string]any)[0]["customization"] = "sin ají"
+			eff := closedEffect(t, line("EMPA", 2, 2500))
+			itemsOf(t, eff.Payload)[0]["customization"] = "sin ají"
 			if tc.set {
 				eff.Payload["customer_note"] = tc.note
 			}
@@ -125,8 +126,8 @@ func TestProjector_CartClosed_ReadsAJSONRoundTrippedPayload(t *testing.T) {
 // foto de lo que se cerró (sin la indicación de la línea).
 func TestProjector_CartClosed_WritesTheCartRevision(t *testing.T) {
 	r := newRig()
-	eff := closedEffect(line("EMPA", 2, 2500))
-	eff.Payload["items"].([]map[string]any)[0]["customization"] = "sin ají"
+	eff := closedEffect(t, line("EMPA", 2, 2500))
+	itemsOf(t, eff.Payload)[0]["customization"] = "sin ají"
 	r.project(t, meta(), eff)
 
 	revs := r.revisions.Revisions(r.onlyIntake(t).ID)
@@ -150,7 +151,7 @@ func TestProjector_CartClosed_WritesTheCartRevision(t *testing.T) {
 // de la solicitud, el número REAL de la revisión y el estado legado, sin normalizar.
 func TestProjector_CartClosed_AnnotatesTheEffect(t *testing.T) {
 	r := newRig()
-	eff := closedEffect(line("EMPA", 2, 2500))
+	eff := closedEffect(t, line("EMPA", 2, 2500))
 	payload := eff.Payload
 	r.project(t, meta(), eff)
 	id := r.onlyIntake(t).ID
@@ -163,7 +164,7 @@ func TestProjector_CartClosed_AnnotatesTheEffect(t *testing.T) {
 	if payload["lifecycle_status"] != "closed" {
 		t.Errorf("lifecycle_status = %#v, quiero la clave legada \"closed\"", payload["lifecycle_status"])
 	}
-	if payload["total"] != 5000.0 || len(payload["items"].([]map[string]any)) != 1 {
+	if payload["total"] != 5000.0 || len(itemsOf(t, payload)) != 1 {
 		t.Errorf("el payload original cambió: %v", payload)
 	}
 }
@@ -181,7 +182,7 @@ func TestProjector_CartClosed_AnnotatesTheSecondRevisionWhenThePipelineWroteFirs
 		t.Fatalf("sembrar la revisión del pipeline: %v", err)
 	}
 
-	eff := closedEffect(line("EMPA", 2, 2500))
+	eff := closedEffect(t, line("EMPA", 2, 2500))
 	r.project(t, meta(), eff)
 	revs := r.revisions.Revisions(open)
 	if len(revs) != 2 || revs[1].Kind != intakes.RevisionKindCart || revs[1].RevisionNo != 2 {
@@ -196,7 +197,7 @@ func TestProjector_CartClosed_AnnotatesTheSecondRevisionWhenThePipelineWroteFirs
 // la política del carrito: solo si el tenant tiene zonas.
 func TestProjector_CartClosed_AsksForTheShippingLine(t *testing.T) {
 	r := newRig()
-	r.project(t, meta(), closedEffect(line("EMPA", 2, 2500)))
+	r.project(t, meta(), closedEffect(t, line("EMPA", 2, 2500)))
 	id := r.onlyIntake(t).ID
 	if r.shipping.calls != 1 || r.shipping.tenantID != tenantID || r.shipping.intakeID != id || r.shipping.policy != intakes.ShippingOnlyIfZones {
 		t.Errorf("envío = %+v, quiero UNA petición sobre (%s, %s) con ShippingOnlyIfZones", r.shipping, tenantID, id)
@@ -210,7 +211,7 @@ func TestProjector_CartClosed_Failures(t *testing.T) {
 	t.Run("close fails: nothing else is written", func(t *testing.T) {
 		r := newRig()
 		r.repo.fail["CloseIntake"] = boom
-		eff := closedEffect(line("EMPA", 2, 2500))
+		eff := closedEffect(t, line("EMPA", 2, 2500))
 		if err := r.p.Project(context.Background(), meta(), eff); !errors.Is(err, boom) {
 			t.Fatalf("Project = %v, quiero el error del cierre", err)
 		}
@@ -225,7 +226,7 @@ func TestProjector_CartClosed_Failures(t *testing.T) {
 		broken := &brokenRevisions{}
 		shipping := &shippingSpy{}
 		p := cart.NewProjector(repo, broken, shipping, &buyerSpy{})
-		eff := closedEffect(line("EMPA", 2, 2500))
+		eff := closedEffect(t, line("EMPA", 2, 2500))
 		err := p.Project(context.Background(), meta(), eff)
 		if !errors.Is(err, errBrokenRevision) {
 			t.Fatalf("Project = %v, quiero el error de la revisión", err)
@@ -246,7 +247,7 @@ func TestProjector_CartClosed_Failures(t *testing.T) {
 	t.Run("shipping fails: close and revision survive", func(t *testing.T) {
 		r := newRig()
 		r.shipping.err = boom
-		eff := closedEffect(line("EMPA", 2, 2500))
+		eff := closedEffect(t, line("EMPA", 2, 2500))
 		err := r.p.Project(context.Background(), meta(), eff)
 		if !errors.Is(err, boom) {
 			t.Fatalf("Project = %v, quiero el error del envío", err)
@@ -278,7 +279,7 @@ func TestProjector_SecondOrderAfterConfirmingHasItsOwnIntake(t *testing.T) {
 	r := newRig()
 	first := meta()
 	r.project(t, first, snapshotEffect(cart.EffectItemAdded, line("EMPA", 2, 2500)))
-	r.project(t, first, closedEffect(line("EMPA", 2, 2500)))
+	r.project(t, first, closedEffect(t, line("EMPA", 2, 2500)))
 	closed := r.onlyIntake(t)
 
 	second := meta()

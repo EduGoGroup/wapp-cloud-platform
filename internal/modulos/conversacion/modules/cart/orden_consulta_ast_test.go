@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package cart_test
 
 // orden_consulta_ast_test.go — EL ORDEN DENTRO DE Module.Step ES UN INVARIANTE, y se

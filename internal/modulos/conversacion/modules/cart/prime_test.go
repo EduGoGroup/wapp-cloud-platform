@@ -1,9 +1,8 @@
-//go:build pendiente
-
 package cart_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
@@ -221,58 +220,84 @@ func TestPrime_ReadsParamsAfterJSONBRoundTrip(t *testing.T) {
 // Catálogo v2: la variante nombrada se pre-agrega con SU precio; el artículo claro sin
 // variante clara se PREGUNTA; el combo es una línea.
 func TestPrime_VariantsAndCombo(t *testing.T) {
-	content := contentOf(v2Vars(t))
+	content := contentOf(t, v2Vars(t))
+	t.Run("clear variant", func(t *testing.T) { primeClearVariant(t, content) })
+	t.Run("clear article, unclear variant asks", func(t *testing.T) { primeUnclearVariantAsks(t, content) })
+	t.Run("combo by name", func(t *testing.T) { primeComboByName(t, content) })
+	t.Run("article without variants as always", func(t *testing.T) { primeArticleWithoutVariants(t, content) })
+}
+
+// Los cuerpos de los subtests de TestPrime_VariantsAndCombo, uno por promesa del
+// contrato. No llevan t.Helper(): un fallo debe señalar la línea de la aserción.
+
+// primeClearVariant: la variante nombrada se pre-agrega con SU precio.
+func primeClearVariant(t *testing.T, content model.Content) {
 	const continueTortas = "Añadido al pedido ✅\n1) Agregar más de Tortas\n2) Finalizar pedido\n" +
 		"3) ✏️ Indicación para este artículo\n9) Cancelar pedido\n0) ← Volver"
+	res, handled := cart.New().Prime(model.Node{}, content,
+		intentVars(map[string]string{"producto": "torta de chocolate de 25-30 porciones", "cantidad": "1"}))
+	if !handled {
+		t.Fatal("handled = false, quiero true")
+	}
+	want := cartLine{SKU: "TORTA-CHOC#V2", Label: "Torta de chocolate — 25-30 porciones", Qty: 1, UnitPrice: 32000}
+	st := stateOf(t, res.Vars)
+	if st.Level != cart.LevelContinue || st.CatCode != "01" || st.SKU != "TORTA-CHOC" || len(st.Lines) != 1 || st.Lines[0] != want {
+		t.Errorf("estado = %+v, quiero continue con la línea %+v", st, want)
+	}
+	mustScreen(t, res.Outputs,
+		"Agregué 1 × Torta de chocolate — 25-30 porciones ($32000.00 c/u) a tu pedido.\n\n"+continueTortas)
+}
 
-	t.Run("clear variant", func(t *testing.T) {
-		res, handled := cart.New().Prime(model.Node{}, content,
-			intentVars(map[string]string{"producto": "torta de chocolate de 25-30 porciones", "cantidad": "1"}))
+// primeUnclearVariantAsks: artículo claro sin variante clara ⇒ se PREGUNTA, sin línea
+// ni efectos.
+func primeUnclearVariantAsks(t *testing.T, content model.Content) {
+	for _, producto := range []string{"una torta de chocolate", "torta de chocolate de porciones"} {
+		in := intentVars(map[string]string{"producto": producto, "cantidad": "2"})
+		res, handled := cart.New().Prime(model.Node{}, content, in)
 		if !handled {
 			t.Fatal("handled = false, quiero true")
 		}
-		want := cartLine{SKU: "TORTA-CHOC#V2", Label: "Torta de chocolate — 25-30 porciones", Qty: 1, UnitPrice: 32000}
-		st := stateOf(t, res.Vars)
-		if st.Level != cart.LevelContinue || st.CatCode != "01" || st.SKU != "TORTA-CHOC" || len(st.Lines) != 1 || st.Lines[0] != want {
-			t.Errorf("estado = %+v, quiero continue con la línea %+v", st, want)
+		assertConsumed(t, in, res)
+		want := cartState{Level: cart.LevelVariant, CatCode: "01", SKU: "TORTA-CHOC"}
+		if st := stateOf(t, res.Vars); !reflect.DeepEqual(st, want) {
+			t.Errorf("%q: estado = %+v, quiero %+v (sin línea y sin started)", producto, st, want)
 		}
-		mustScreen(t, res.Outputs,
-			"Agregué 1 × Torta de chocolate — 25-30 porciones ($32000.00 c/u) a tu pedido.\n\n"+continueTortas)
-	})
+		mustScreen(t, res.Outputs, variantsScreen)
+		if len(res.Effects) != 0 {
+			t.Errorf("%q: efectos = %v, quiero ninguno", producto, effectNames(res.Effects))
+		}
+	}
+}
 
-	t.Run("clear article, unclear variant asks", func(t *testing.T) {
-		for _, producto := range []string{"una torta de chocolate", "torta de chocolate de porciones"} {
-			in := intentVars(map[string]string{"producto": producto, "cantidad": "2"})
-			res, handled := cart.New().Prime(model.Node{}, content, in)
-			if !handled {
-				t.Fatal("handled = false, quiero true")
-			}
-			assertConsumed(t, in, res)
-			want := cartState{Level: cart.LevelVariant, CatCode: "01", SKU: "TORTA-CHOC"}
-			if st := stateOf(t, res.Vars); !reflect.DeepEqual(st, want) {
-				t.Errorf("%q: estado = %+v, quiero %+v (sin línea y sin started)", producto, st, want)
-			}
-			mustScreen(t, res.Outputs, variantsScreen)
-			if len(res.Effects) != 0 {
-				t.Errorf("%q: efectos = %v, quiero ninguno", producto, effectNames(res.Effects))
-			}
-		}
-	})
+// primeComboByName: el combo es una sola línea.
+func primeComboByName(t *testing.T, content model.Content) {
+	res, handled := cart.New().Prime(model.Node{}, content, intentVars(map[string]string{"producto": "combo hamburguesa"}))
+	st := stateOf(t, res.Vars)
+	want := []cartLine{{SKU: "COMBO-1", Label: "Combo hamburguesa", Qty: 1, UnitPrice: 9500}}
+	if !handled || !reflect.DeepEqual(st.Lines, want) {
+		t.Errorf("handled = %v, líneas = %+v; quiero %+v", handled, st.Lines, want)
+	}
+}
 
-	t.Run("combo by name", func(t *testing.T) {
-		res, handled := cart.New().Prime(model.Node{}, content, intentVars(map[string]string{"producto": "combo hamburguesa"}))
-		st := stateOf(t, res.Vars)
-		want := []cartLine{{SKU: "COMBO-1", Label: "Combo hamburguesa", Qty: 1, UnitPrice: 9500}}
-		if !handled || !reflect.DeepEqual(st.Lines, want) {
-			t.Errorf("handled = %v, líneas = %+v; quiero %+v", handled, st.Lines, want)
-		}
-	})
+// primeArticleWithoutVariants: el artículo sin variantes entra como siempre.
+func primeArticleWithoutVariants(t *testing.T, content model.Content) {
+	res, handled := cart.New().Prime(model.Node{}, content, intentVars(map[string]string{"producto": "café"}))
+	st := stateOf(t, res.Vars)
+	if !handled || st.CatCode != "02" || len(st.Lines) != 1 || st.Lines[0].SKU != "CAFE" {
+		t.Errorf("handled = %v, estado = %+v; quiero el Café de Bebidas", handled, st)
+	}
+}
 
-	t.Run("article without variants as always", func(t *testing.T) {
-		res, handled := cart.New().Prime(model.Node{}, content, intentVars(map[string]string{"producto": "café"}))
-		st := stateOf(t, res.Vars)
-		if !handled || st.CatCode != "02" || len(st.Lines) != 1 || st.Lines[0].SKU != "CAFE" {
-			t.Errorf("handled = %v, estado = %+v; quiero el Café de Bebidas", handled, st)
-		}
-	})
+// WithLogger: Prime, el otro camino de entrada al nodo, también avisa de los campos
+// descartados (viene de cart_test.go: usa su logCapture y su brokenCatalog).
+func TestWithLogger_PrimeWarnsAboutDiscardedFields(t *testing.T) {
+	capture := &logCapture{}
+	m := cart.New(cart.WithLogger(capture))
+	vars := map[string]any{modules.VarIntentParams: map[string]string{"producto": "alfajor"}}
+	if _, handled := m.Prime(model.Node{}, model.Content{Raw: rawFromJSON(t, brokenCatalog)}, vars); !handled {
+		t.Fatal("handled = false, quiero true: el alfajor casa")
+	}
+	if len(capture.warns) != 1 || !strings.Contains(capture.warns[0], "tags") {
+		t.Errorf("avisos = %q, quiero uno sobre tags", capture.warns)
+	}
 }

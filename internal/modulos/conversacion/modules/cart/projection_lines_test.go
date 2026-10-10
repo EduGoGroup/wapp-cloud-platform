@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package cart_test
 
 import (
@@ -63,7 +61,7 @@ func TestProjector_ItemAdded_ReusesTheOpenIntake(t *testing.T) {
 func TestProjector_OpenLines_MirrorTheSnapshot(t *testing.T) {
 	r := newRig()
 	two := snapshotEffect(cart.EffectItemAdded, line("PAN", 2, 2.5), line("PAN", 1, 2.5))
-	two.Payload["items"].([]map[string]any)[1]["customization"] = "bien cocido"
+	itemsOf(t, two.Payload)[1]["customization"] = "bien cocido"
 	want := []cartLine{
 		{SKU: "PAN", Label: "Etiqueta de PAN", Qty: 2, UnitPrice: 2.5},
 		{SKU: "PAN", Label: "Etiqueta de PAN", Qty: 1, UnitPrice: 2.5, Customization: "bien cocido"},
@@ -250,7 +248,7 @@ func TestProjector_ItemAdded_RedeliveredAfterCloseRewritesTheClosedIntakeLines(t
 	r := newRig()
 	added := snapshotEffect(cart.EffectItemAdded, line("PAN", 1, 2))
 	r.project(t, meta(), added)
-	r.project(t, meta(), closedEffect(line("PAN", 1, 2), line("QUESO", 1, 3)))
+	r.project(t, meta(), closedEffect(t, line("PAN", 1, 2), line("QUESO", 1, 3)))
 	closed := r.onlyIntake(t)
 	r.project(t, meta(), added) // reentrega
 	if got := r.onlyIntake(t); got.ID != closed.ID || got.Status != "closed" {

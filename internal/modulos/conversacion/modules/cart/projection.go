@@ -24,7 +24,15 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+)
+
+// Estados del ciclo de vida de una solicitud (public.intakes). Viven aquí porque la
+// proyección del carrito es su dueña (design.md §3.4).
+const (
+	intakeStatusOpen      = "open"
+	intakeStatusClosed    = "closed"
+	intakeStatusCancelled = "cancelled"
+	intakeStatusExpired   = "expired"
 )
 
 // ProjectionStore es lo que el proyector del carrito necesita del almacén para
@@ -89,7 +97,12 @@ type BuyerDataWriter interface {
 // Ola 3 · T8, cierra H10). Es un adaptador IMPURO; el Module (Render/Step) sigue
 // puro. Sin reloj a propósito (T4.7): el único uso que tenía era fechar expires_at,
 // y nada vence por tiempo (D-041.16).
-type Projector struct{}
+type Projector struct {
+	store     ProjectionStore
+	revisions RevisionWriter
+	shipping  ShippingEnsurer
+	buyer     BuyerDataWriter
+}
 
 // NewProjector construye el proyector del carrito sobre el almacén de solicitudes,
 // el escritor de revisiones, el garante de la línea de envío y el escritor de datos
@@ -103,7 +116,7 @@ type Projector struct{}
 // faltan, que rompa en compilación. No los valida: con uno nil, Project revienta al
 // usarlo.
 func NewProjector(s ProjectionStore, revisions RevisionWriter, shipping ShippingEnsurer, buyer BuyerDataWriter) *Projector {
-	panic(pendiente.Implementar("cart.NewProjector"))
+	return &Projector{store: s, revisions: revisions, shipping: shipping, buyer: buyer}
 }
 
 // Handles reconoce los efectos que el carrito PROYECTA a tablas tipadas, por nombre
@@ -120,7 +133,13 @@ func NewProjector(s ProjectionStore, revisions RevisionWriter, shipping Shipping
 // (D-041.20)—; si no se proyectara, intake_items se quedaría con el conjunto
 // anterior hasta el cierre.
 func (Projector) Handles(name string) bool {
-	panic(pendiente.Implementar("cart.Projector.Handles"))
+	switch name {
+	case EffectItemAdded, EffectNoteAdded, EffectCartClosed, EffectCartCancelled,
+		EffectCartExpired, EffectBuyerDataCaptured:
+		return true
+	default:
+		return false
+	}
 }
 
 // Project materializa el efecto del carrito según eff.Name (no mira eff.Kind). El
@@ -229,5 +248,21 @@ func (Projector) Handles(name string) bool {
 // ningún mensaje de error: lo único que puede aparecer es la clave del campo, que es
 // configuración del tenant.
 func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff modules.Effect) error {
-	panic(pendiente.Implementar("cart.Projector.Project"))
+	switch eff.Name {
+	case EffectItemAdded, EffectNoteAdded:
+		return p.projectOpenLines(ctx, meta, eff)
+	case EffectCartClosed:
+		return p.closeIntake(ctx, meta, eff)
+	case EffectCartCancelled:
+		return p.transitionOpenIntake(ctx, meta, intakeStatusCancelled)
+	case EffectBuyerDataCaptured:
+		return p.putBuyerField(ctx, meta, eff)
+	case EffectCartExpired:
+		// Rama sin productor vivo (T4.7): solo la alcanza el REPLAY de un
+		// flow_event histórico. Se queda para que ese replay no reviente ni
+		// deje la fila a medias; ningún camino de hoy la sintetiza.
+		return p.transitionOpenIntake(ctx, meta, intakeStatusExpired)
+	default:
+		return nil
+	}
 }

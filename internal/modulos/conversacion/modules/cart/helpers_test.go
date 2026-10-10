@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package cart_test
 
 import (
@@ -144,8 +142,9 @@ func v2Vars(t *testing.T) map[string]any {
 
 // contentOf devuelve, como contenido resuelto (lo que reciben Render y Prime), el
 // catálogo sembrado en unas Vars.
-func contentOf(vars map[string]any) model.Content {
-	raw, _ := vars[modules.VarContentRaw].(map[string]any)
+func contentOf(t *testing.T, vars map[string]any) model.Content {
+	t.Helper()
+	raw := mustBe[map[string]any](t, vars[modules.VarContentRaw], "el catálogo sembrado en Vars")
 	return model.Content{Raw: raw}
 }
 
@@ -258,4 +257,22 @@ func jsonOf(t *testing.T, v any) string {
 		t.Fatalf("valor no serializable: %v", err)
 	}
 	return string(b)
+}
+
+// mustBe devuelve v como T, o corta el test diciendo qué tipo se esperaba y cuál
+// llegó. Es la aserción de tipo de los tests: nunca descarta el `ok`.
+func mustBe[T any](t *testing.T, v any, what string) T {
+	t.Helper()
+	got, ok := v.(T)
+	if !ok {
+		t.Fatalf("%s es %T, quiero %T", what, v, got)
+	}
+	return got
+}
+
+// itemsOf devuelve las líneas («items») del payload de un efecto del carrito, tal
+// como las emite la sub-máquina en proceso: un []map[string]any.
+func itemsOf(t *testing.T, payload map[string]any) []map[string]any {
+	t.Helper()
+	return mustBe[[]map[string]any](t, payload["items"], `payload["items"]`)
 }

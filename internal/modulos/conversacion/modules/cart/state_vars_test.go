@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package cart_test
 
 import (
@@ -29,7 +27,7 @@ func TestState_IsStoredAsAPlainMapWithOnlyUsedKeys(t *testing.T) {
 
 	// Con una línea: números como float64 (round-trip JSON) y sin customization.
 	vars = walk(t, m, vars, "1", "2", "2")
-	raw, _ = vars[stateVarKey].(map[string]any)
+	raw = mustBe[map[string]any](t, vars[stateVarKey], "el estado del carrito")
 	want = map[string]any{
 		"level": "continue", "cat_code": "1", "sku": "CAFE", "started": true,
 		"lines": []any{map[string]any{"sku": "CAFE", "label": "Café", "qty": float64(2), "unit_price": 2.5}},
@@ -129,13 +127,14 @@ func TestState_OldStateLoadsWithoutTheNewKeys(t *testing.T) {
 	  "lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5}]}`)
 	_, outs, vars := drive(t, cart.New(), vars, "zzz") // reprompt: re-pinta el resumen
 	mustNotContain(t, outs, "✏️ Para todo el pedido", "\n   ✏️ ")
-	raw, _ := vars[stateVarKey].(map[string]any)
+	raw := mustBe[map[string]any](t, vars[stateVarKey], "el estado del carrito")
 	for _, key := range []string{"note", "note_split", "variant_code", "buyer_idx", "reprompts", "reprompts_event_id", "page"} {
 		if _, present := raw[key]; present {
 			t.Errorf("el estado ganó la clave %q sin usarla: %v", key, raw)
 		}
 	}
-	if line, _ := raw["lines"].([]any)[0].(map[string]any); line["customization"] != nil {
+	lines := mustBe[[]any](t, raw["lines"], "las líneas del estado")
+	if line := mustBe[map[string]any](t, lines[0], "la primera línea del estado"); line["customization"] != nil {
 		t.Errorf("la línea ganó customization sin indicación: %v", line)
 	}
 }

@@ -13,7 +13,7 @@
 
 ## Antes de pegar el prompt (Jhoan)
 
-- [ ] La sesión anterior (F8-03) está integrada y empujada en `dev`.
+- [ ] La sesión anterior (F8-03) está integrada y empujada en `dev`, **con sus dos mitades**: la primera ya lo está (PR #62, merge `8b841c8d`); la segunda (T8.25, el verde de `cart`), PR #63 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash desde `reorg/f8-03b-cart-verde`.
 - [ ] Decisiones rellenas en [`../DECISIONES.md`](../DECISIONES.md): D-F8-4 (regla «`events` sin clasificador»), D-F8-5 (lista blanca).
 - [ ] `go1.26.5` y `golangci-lint v2.12.2` disponibles (`make toolchain`).
 - [ ] Arrancar: `cd /Volumes/Projects/source/wApp/cloud/wapp-cloud-platform && claude`.
@@ -33,6 +33,14 @@ Tu encargo (y solo este):
 - Te paras cuando: los 23 contratos de `runtime` están en rojo y `runtimehelpertest` en verde; el candado de rachas está escrito; la lista blanca de `conversacion` está completa; los 12 de soporte están verdes con `go test -race` rc=0; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión.
 - Decisiones: D-F8-4 (regla «`events` sin clasificador»), D-F8-5 (lista blanca) en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, contrato-tdd, validar-antes-de-cerrar.
+
+- Base: F8-03 integrada en `dev` con sus dos mitades (la primera, PR #62, merge `8b841c8d`; la segunda, PR #63, integrado el 2026-10-10: compruébalo con `git log origin/dev` y, si no está, PARA y dilo). Trabaja en TU rama partida de `origin/dev`, nunca en `dev` (regla 6 del `CLAUDE.md`).
+
+Lo que F8-03 te deja dicho (léelo antes de empezar): hallazgos 21–28 del README de F8.
+- 🔴 Hallazgo 28: el lint del repo solo compila con la etiqueta `integracion` y NO mira los tests que llevan `//go:build pendiente`; sus avisos aparecen de golpe al pasar a verde (17 en `cart`). Córrelo sin etiqueta sobre los tests ANTES del verde. Y los avisos se ARREGLAN, no se silencian: ningún `//nolint` nuevo, ni en producción ni en tests (decisión de Jhoan, 2026-10-10; deuda D-31). Si uno no se puede arreglar sin cambiar lo que se prueba, PARA y dilo. Díselo así a cada sub-agente.
+- Hallazgo 25: `cart/projection.go` dice del dispatcher cosas que no se afirmaron en su contrato («loguea sin abortar», y que ya no es cierto desde D-054.4): se comprueba al portar `runtime`.
+- Hallazgos 26 y 27: un bloque con dos complejos no cabe en una sesión (para en un punto limpio y se relanza); ficheros cuyos tests comparten una constante van verdes en el mismo commit, y se dice.
+- `pendiente.Implementar` en producción de `conversacion` es 0 al empezar; el `grep` da 4, las del texto del candado `cart/orden_consulta_ast_test.go`.
 
 No hay rama web que integrar ni traspaso que cerrar: creas TU rama desde `dev` (`git checkout -b <rama> dev`) y trabajas en ella, nunca sobre `dev` (regla 6 del `CLAUDE.md`).
 Orden: primero los contratos de los 23 (T8.18–T8.21), después el verde de los 12 de soporte (T8.26): `send.go`, `thread.go` y `welcome.go` cuelgan de `*Runtime`.

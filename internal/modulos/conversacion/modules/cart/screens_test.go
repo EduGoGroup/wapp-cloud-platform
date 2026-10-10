@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package cart_test
 
 import (
@@ -58,7 +56,7 @@ func TestScreens_TotalsAreQtyTimesUnitPrice(t *testing.T) {
 func TestScreens_MoreCode(t *testing.T) {
 	m := cart.New(cart.WithPageSize(1))
 	// Categorías «A» y «B»: ningún código numérico ⇒ «1) Más ▾».
-	mustScreen(t, m.Render(model.Node{}, contentOf(oddVars(t))), "🛒 Elige una categoría:\nA) Alfa\n1) Más ▾")
+	mustScreen(t, m.Render(model.Node{}, contentOf(t, oddVars(t))), "🛒 Elige una categoría:\nA) Alfa\n1) Más ▾")
 	st, outs, vars := drive(t, m, oddVars(t), "1")
 	if st.Page != 1 {
 		t.Fatalf("estado = %+v, quiero la página 1", st)

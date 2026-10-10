@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package cart_test
 
 import (
@@ -167,19 +165,6 @@ func TestWithLogger_StepDoesNotRepeatWarnings(t *testing.T) {
 	}
 	if len(capture.warns) != 0 {
 		t.Errorf("avisos = %q, quiero ninguno desde Step", capture.warns)
-	}
-}
-
-// Prime, el otro camino de entrada al nodo, también avisa.
-func TestWithLogger_PrimeWarnsAboutDiscardedFields(t *testing.T) {
-	capture := &logCapture{}
-	m := cart.New(cart.WithLogger(capture))
-	vars := map[string]any{modules.VarIntentParams: map[string]string{"producto": "alfajor"}}
-	if _, handled := m.Prime(model.Node{}, model.Content{Raw: rawFromJSON(t, brokenCatalog)}, vars); !handled {
-		t.Fatal("handled = false, quiero true: el alfajor casa")
-	}
-	if len(capture.warns) != 1 || !strings.Contains(capture.warns[0], "tags") {
-		t.Errorf("avisos = %q, quiero uno sobre tags", capture.warns)
 	}
 }
 

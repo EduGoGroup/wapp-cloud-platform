@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package cart_test
 
 import (
@@ -92,7 +90,7 @@ func TestPriceListOf_VariantsButNotTheBareSKU(t *testing.T) {
 func TestPriceListOf_MatchesTheSKUTheCartWrites(t *testing.T) {
 	m := cart.New()
 	vars := v2Vars(t)
-	parsed, err := catalogo.ParseCatalog(contentOf(vars))
+	parsed, err := catalogo.ParseCatalog(contentOf(t, vars))
 	if err != nil {
 		t.Fatalf("catálogo v2 de prueba ilegible: %v", err)
 	}

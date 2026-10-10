@@ -4,10 +4,10 @@ package cart
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // ResumeStore es lo que la política de reanudación del carrito necesita LEER del
@@ -25,12 +25,14 @@ type ResumeStore interface {
 // ResumePolicy implementa modules.ResumePolicy para el carrito (Plan 027 · Ola 3 ·
 // T8, cierra H9): auto-reinicio tras nivel terminal + siembra de la config del
 // tenant. Es un adaptador IMPURO (lee la BD); el Module (Render/Step) sigue PURO.
-type ResumePolicy struct{}
+type ResumePolicy struct {
+	store ResumeStore
+}
 
 // NewResumePolicy construye la política sobre el almacén dado. No lo valida: con
 // uno nil, Seed revienta al sembrar.
 func NewResumePolicy(s ResumeStore) *ResumePolicy {
-	panic(pendiente.Implementar("cart.NewResumePolicy"))
+	return &ResumePolicy{store: s}
 }
 
 // Restart decide el reinicio del carrito: SOLO si la sub-máquina quedó en nivel
@@ -49,7 +51,7 @@ func NewResumePolicy(s ResumeStore) *ResumePolicy {
 // nunca un reloj. La firma conserva los dos huecos porque el puerto es genérico
 // (otra política sí podría usarlos), no porque el carrito los llene.
 func (p *ResumePolicy) Restart(_ context.Context, _, _ string, vars map[string]any) (bool, string, []modules.Effect, error) {
-	panic(pendiente.Implementar("cart.ResumePolicy.Restart"))
+	return isTerminal(vars), "", nil, nil
 }
 
 // Seed inyecta en Vars la config del tenant que el módulo PURO necesita y no puede
@@ -67,5 +69,19 @@ func (p *ResumePolicy) Restart(_ context.Context, _, _ string, vars map[string]a
 // nunca respuestas: Vars acaba en public.flow_state, JSONB en claro, y lo que el
 // cliente conteste no pasa por ahí (ver buyer.go).
 func (p *ResumePolicy) Seed(ctx context.Context, tenantID string, vars map[string]any) error {
-	panic(pendiente.Implementar("cart.ResumePolicy.Seed"))
+	settings, err := p.store.GetTenantSettings(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("cart: config de tenant (page_size, buyer_fields): %w", err)
+	}
+	vars[VarPageSize] = settings.PageSize
+	vars[VarBuyerFields] = settings.BuyerFields
+	return nil
+}
+
+// isTerminal dice si la sub-máquina del carrito quedó en un nivel terminal (pedido
+// confirmado o cancelado). Reusa loadState (misma FORMA que el módulo), sin literales
+// duplicados en el runtime.
+func isTerminal(vars map[string]any) bool {
+	lvl := loadState(vars).Level
+	return lvl == LevelClosed || lvl == LevelCancelled
 }
