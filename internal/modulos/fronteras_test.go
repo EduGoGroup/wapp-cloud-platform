@@ -1,6 +1,8 @@
 package modulos
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/candados"
@@ -27,13 +29,17 @@ var reglas = candados.Reglas{
 	//
 	// El índice del catálogo (D-F5-2, F5): la arista PROHIBIDA `conversacion/** →
 	// catalogo/indice` —el índice no entra en el turno conversacional, INV-02/T1.5; era el
-	// candado AST internal/intake/catalogo/frontera_test.go— vive en esta regla 1, sin ampliar el
-	// motor (decisión de Jhoan, 2026-10-07): Capas["conversacion"] no incluye "catalogo", y el
-	// motor solo distingue MÓDULOS, así que hoy nada de conversacion (producción ni tests) puede
-	// importar nada de catalogo. La arista permitida `catalogo → conversacion/model` es
-	// Capas["catalogo"]. ⚠️ F8: cuando el carrito nuevo necesite catalogo.ParseCatalog y añada
-	// "catalogo" a Capas["conversacion"], esta regla dejará de cubrir al índice y hará falta una
-	// prohibición por SUBPAQUETE (catalogo/indice), que el motor hoy no sabe expresar.
+	// candado AST internal/intake/catalogo/frontera_test.go— vivió en esta regla 1 mientras
+	// Capas["conversacion"] no incluía "catalogo" (decisión de Jhoan, 2026-10-07): el motor solo
+	// distingue MÓDULOS, así que nada de conversacion podía importar nada de catalogo. Desde F8-03
+	// (decisión de Jhoan, 2026-10-09, «Capas + test propio») el carrito nuevo importa el paquete
+	// RAÍZ de catalogo (ParseCatalog y los tipos del árbol), "catalogo" está en
+	// Capas["conversacion"] y esta regla ya NO cubre al índice: la prohibición por SUBPAQUETE, que
+	// el motor no sabe expresar y que no se amplía para esto, la vigila
+	// TestConversacionDoesNotImportCatalogIndex, más abajo. La arista permitida
+	// `catalogo → conversacion/model` es Capas["catalogo"]: los dos módulos se importan entre sí,
+	// pero no los mismos paquetes (catalogo no importa conversacion/modules/cart), así que no hay
+	// ciclo de compilación.
 	Capas: map[string][]string{
 		"acceso":      {},
 		"edge":        {"acceso"},       // gateway/grpc → iam/domain
@@ -50,6 +56,7 @@ var reglas = candados.Reglas{
 		"conversacion": {
 			"acceso",      // flujos/events → entitlements
 			"captacion",   // flujos/runtime → intake
+			"catalogo",    // modules/cart → catalogo (ParseCatalog; Catalog, Category, Article, Variant). NUNCA catalogo/indice
 			"edge",        // flujos/admin → gateway/fleet
 			"inferencia",  // turnoacotado → llmvia
 			"solicitudes", // flujos/modules/cart → intakes
@@ -170,4 +177,46 @@ func TestFronteras(t *testing.T) {
 		t.Errorf("fronteras: %s", v)
 	}
 	t.Logf("recorridos=%d", len(fuentes))
+}
+
+// conversationDir y catalogIndexPkg delimitan la arista prohibida por SUBPAQUETE: nada bajo el
+// primero puede importar el segundo ni un subpaquete suyo.
+const (
+	conversationDir = "internal/modulos/conversacion/"
+	catalogIndexPkg = moduloGo + "/internal/modulos/catalogo/indice"
+)
+
+// TestConversacionDoesNotImportCatalogIndex: ningún fichero de internal/modulos/conversacion
+// —producción o test, con la etiqueta de compilación que lleve— importa
+// internal/modulos/catalogo/indice ni un subpaquete suyo. El índice del catálogo no entra en el
+// turno conversacional (INV-02/T1.5, D-F5-2): el carrito lee el catálogo por el paquete raíz y
+// nada más. Es la prohibición que la regla 1 de TestFronteras dejó de cubrir al entrar
+// "catalogo" en Capas["conversacion"] (F8-03); recorre las mismas fuentes que ese test.
+//
+// Exige haber visto al menos un fichero de conversacion: con la raíz o el prefijo equivocados
+// no puede pasar en verde.
+func TestConversacionDoesNotImportCatalogIndex(t *testing.T) {
+	fuentes := recorrerAlcance(t, dirsFronteras)
+	seen := 0
+	for _, f := range fuentes {
+		if !strings.HasPrefix(f.Ruta, conversationDir) {
+			continue
+		}
+		seen++
+		for _, imp := range f.Archivo.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				t.Errorf("%s: import ilegible %s: %v", f.Ruta, imp.Path.Value, err)
+				continue
+			}
+			if path == catalogIndexPkg || strings.HasPrefix(path, catalogIndexPkg+"/") {
+				t.Errorf("%s importa %s: conversacion no puede importar el índice del catálogo (catalogo/indice); "+
+					"el carrito usa solo el paquete raíz internal/modulos/catalogo", f.Ruta, path)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatalf("el recorrido (%d ficheros) no vio ningún fichero bajo %s: el candado no mira nada", len(fuentes), conversationDir)
+	}
+	t.Logf("ficheros de conversacion=%d", seen)
 }
