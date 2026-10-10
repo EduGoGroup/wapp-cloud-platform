@@ -35,15 +35,23 @@
 //   - NO escribe el aviso de degradación al dueño: lo escribe el decorador del selector de
 //     vía, que ve TODAS las vías y no solo el pipeline.
 //
-// # 🔴 LA CARRERA DEL SOBRE SE PORTA TAL CUAL (D-F7-9; el arreglo es de F8)
+// # EL JOB SIN SOBRE MUERE, Y LA CARRERA DE LA VENTANA YA NO EXISTE (D-F7-9, D-F8-13)
 //
-// El agregador cierra la ventana (el job ya es `pending` y reclamable) y DESPUÉS compone y
-// escribe el sobre del literal. Si un tic o un flanco a READY cae en ese hueco, el worker
-// reclama un job cuyo sobre AÚN no se escribió: lo trata igual que el sobre que nunca
-// llegará —`failed`, sin reintento, con el texto «el compositor del flush no llegó a
-// escribir el sobre»—. Este worker NO se defiende de eso, a propósito: hoy «sobre aún no
-// escrito» y «sobre que nunca llegará» son indistinguibles en la fila. La causa (que
-// cierre y sobre no son un solo acto) la arregla F8, con el agregador.
+// Un job reclamado sin sobre acaba `failed`, sin reintento, con el texto «el compositor del
+// flush no llegó a escribir el sobre». Esa conducta NO cambia y es la correcta para el sobre
+// que NUNCA llegará: el hilo sin mensajes y la composición fallida cierran la ventana con el
+// sobre a NULL a propósito.
+//
+// Lo que cambió es la CAUSA que hacía de esto una carrera. En el viejo, el agregador cierra
+// la ventana (el job ya es `pending` y reclamable) y DESPUÉS compone y escribe el sobre: un
+// tic o un flanco a READY en ese hueco reclamaba un job cuyo sobre AÚN no estaba, y «aún no
+// escrito» y «nunca llegará» son indistinguibles en la fila. En el binario nuevo el agregador
+// compone ANTES y cierra con el sobre en UNA sentencia (F8-06b: `CloseWithSourceText`), así
+// que una ventana con sobre nunca es visible sin él. Por eso este worker sigue sin defenderse:
+// ya no hace falta.
+//
+// ⚠️ Queda el job de RE-ANÁLISIS, que se abre ya `pending` y recibe el sobre en una segunda
+// sentencia: ahí la carrera sigue viva. Pendiente de T8.40.
 //
 // # 🔴 LOS FALLOS DE ESTA GOROUTINE SON MUDOS (R-13, D-11)
 //

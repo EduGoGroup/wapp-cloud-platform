@@ -229,9 +229,11 @@ func (w *Worker) Drain(ctx context.Context) int {
 // `pending` con castigo, `failed`, o nada (ya lo terminó otro).
 //
 //  1. **El sobre.** Incompleto ⇒ `failed` sin reintento, CauseInvalidJob, con el texto
-//     «(el compositor del flush no llegó a escribir el sobre)» (D-F7-9: se porta tal cual;
-//     ver la cabecera del paquete). Entero pero no descifra ⇒ tropiezo de CauseInfra
-//     («descifrar el literal del job: …»; puede ser un KMS caído). Descifra a cadena vacía
+//     «(el compositor del flush no llegó a escribir el sobre)» (D-F7-9: la conducta se
+//     conserva; la carrera de la ventana que la disparaba está arreglada en F8-06b y la del
+//     re-análisis, pendiente de T8.40 — ver la cabecera del paquete). Entero pero no
+//     descifra ⇒ tropiezo de CauseInfra («descifrar el literal del job: …»; puede ser un KMS
+//     caído). Descifra a cadena vacía
 //     ⇒ `failed` sin reintento («(el sobre descifró a cadena vacía)»). En los tres casos
 //     NO se llama a ninguna etapa: un prompt sin texto del cliente tira 22–32 s de la
 //     plaza única para nada.
