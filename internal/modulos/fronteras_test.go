@@ -220,3 +220,52 @@ func TestConversacionDoesNotImportCatalogIndex(t *testing.T) {
 	}
 	t.Logf("ficheros de conversacion=%d", seen)
 }
+
+// eventsDir es el paquete del evento conversacional; classifierMarks, los trozos de ruta que
+// delatan una dependencia del clasificador (los siete del candado viejo, sin tocar).
+const eventsDir = "internal/modulos/conversacion/events/"
+
+var classifierMarks = []string{"intent", "llm", "ollama", "openai", "anthropic", "clasific", "classif"}
+
+// TestEventsDoesNotDependOnTheClassifier: ningún fichero de PRODUCCIÓN del paquete
+// internal/modulos/conversacion/events importa una ruta que contenga uno de classifierMarks
+// (REQ-21, T3.3: el resumen determinista y el menú del evento son el camino SIN LLM). Era
+// TestPaqueteEventsNoDependeDelClasificador (internal/flujos/events/summary_test.go:784), un
+// test de imports dentro del paquete; D-F8-4 lo trae aquí porque es una regla de frontera
+// (conversacion/events no importa inferencia/** ni captacion/intentcfg) y no una conducta del
+// resumen. Como el viejo, mira solo producción y solo el directorio del paquete, no sus
+// subpaquetes: eventshelpertest es soporte de tests.
+//
+// Por qué imports y no un doble que haga t.Fatal: el resumen no tiene costura por la que
+// inyectar un clasificador; lo que hay que impedir es que alguien la abra, y eso se ve aquí.
+//
+// Exige haber visto al menos un fichero: con la raíz o el prefijo equivocados no pasa en verde.
+func TestEventsDoesNotDependOnTheClassifier(t *testing.T) {
+	fuentes := recorrerAlcance(t, dirsFronteras)
+	seen := 0
+	for _, f := range fuentes {
+		rest, ok := strings.CutPrefix(f.Ruta, eventsDir)
+		if !ok || strings.Contains(rest, "/") || strings.HasSuffix(rest, "_test.go") {
+			continue
+		}
+		seen++
+		for _, imp := range f.Archivo.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				t.Errorf("%s: import ilegible %s: %v", f.Ruta, imp.Path.Value, err)
+				continue
+			}
+			lower := strings.ToLower(path)
+			for _, mark := range classifierMarks {
+				if strings.Contains(lower, mark) {
+					t.Errorf("%s importa %s (contiene %q): el evento conversacional no puede depender del clasificador (REQ-21)",
+						f.Ruta, path, mark)
+				}
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatalf("el recorrido (%d ficheros) no vio ningún fichero de producción en %s: el candado no mira nada", len(fuentes), eventsDir)
+	}
+	t.Logf("ficheros de producción de events=%d", seen)
+}

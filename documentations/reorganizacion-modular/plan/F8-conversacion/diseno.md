@@ -231,11 +231,11 @@ sobre todo `cart_test`, `consulta_test`, `preresolutor_test`, `projection_*`, `c
 | `keyedmutex.go` | 55 | 0 | Single-flight por `store.Key` con refcount; borra la entrada al llegar a 0 |
 | `event_sink.go` | 130 | 6 | `EffectContext`, `EventSink`, `SinkPhase`, `PhasedSink`; el fan-out se ordena por fase |
 | `log_sink.go` | 39 | 3 | Sink por defecto |
-| `tenant_resolver.go` | 106 | 4 | `PostgresTenantResolver`: tenant **y** perfil en **una** consulta; perfil vacío/desconocido = activo |
+| `tenant_resolver.go` | 106 | 4 | `PostgresTenantResolver`: tenant **y** perfil en **una** consulta; perfil vacío/desconocido = activo (✎ F8-04: esa es la regla del **consumidor**, el runtime; el adaptador, con un perfil fuera de dominio en la base, cae a **pasiva**) |
 | `self_numbers.go` | 165 | 4 | `PostgresSelfNumbers`: predicado por **índice ciego** (Plan 046 · T4.1) con el **mismo** `KeyProvider` que escribe `fleet_sessions` |
 | `summary_sources.go` | 116 | 2 | `NewSummarySources(store)`, `SummaryStore :13` |
 | `streak.go` | 354 | 0 | Rachas (Plan 049 · Opción A): observa, **nunca** decide |
-| `welcome.go` | 328 | 2 | Bienvenida única (Plan 044 · T1.8-2), `WelcomeStore :107` |
+| `welcome.go` | 328 | 2 | Bienvenida única (Plan 044 · T1.8-2), `WelcomeStore :107`, `WithWelcomeStore :120` (✎ F8-04) |
 | `thread.go` | 270 | 0 | Hilo del evento (productor `message`), gate `llm_intake` |
 | `send.go` | 247 | 0 | Envío texto/media; presigner nil → error controlado |
 | `webhook_sink.go` | 184 | 6 | `NewWebhookSink(log, EffectCartClosed, store, gate)`: **solo encola** (INV-02), `PhaseNotify`, lee `intake_id` del payload |
@@ -243,8 +243,8 @@ sobre todo `cart_test`, `consulta_test`, `preresolutor_test`, `projection_*`, `c
 | `event_effects.go` | 160 | 10 | Efectos `event_started`, `event_switched`, `event_deactivated`, `event_inactivity_expired`, `event_closed`, `event_cancelled`, `event_escaped` (`:26-40`), `kind = "event"` (`:78`) |
 | `source_composer.go` | 400 | 11 | `NewSourceTextComposer(log, events, jobs, cipher)`, `DefaultThreadLimit`, `ThreadReader :270`, `SourceTextWriter :277`; cabeceras del sobre (§5); O5: un solo volumen |
 | `aggregator.go` | 987 | 20 | `IntakeAggregator` (ver reglas) |
-| `runtime_engine.go` | 590 | 28 | `Runtime`, `New`, **22** `With*`, `FlowStore :45`, `DepositReminder :272`, `ReplyLimiter :281`, `MaxAutoreplyStreak :585` |
-| `resume.go` | 354 | 1 | Políticas de reanudación (H9); reintento acotado D-054.4 (`time.After :351`, `postgres.IsPermanentFailure :319`) |
+| `runtime_engine.go` | 590 | 28 | `Runtime`, `New`, **22** `With*` (✎ F8-04: **21** aquí y `WithWelcomeStore` en `welcome.go`; `WithConsultaResolver` es del engine), `FlowStore :45`, `DepositReminder :272`, `ReplyLimiter :281`, `MaxAutoreplyStreak :585` |
+| `resume.go` | 354 | 1 | (✎ F8-04: el exportado es `ErrTurnCutBySinkFailure`) Políticas de reanudación (H9); reintento acotado D-054.4 (`time.After :351`, `postgres.IsPermanentFailure :319`) |
 | `start.go` | 408 | 3 | `Start(ctx, tenant, flow, session, ref)` (API); `ErrConversationExists`, `ErrDurableFlowNeedsEvent` |
 | `exit_menu.go` | 136 | 0 | Menú de salida |
 | `event_lifecycle.go` | 437 | 3 | `GetEventForTenant`, `CancelEventForTenant`, `ErrNoEventPlane` |
@@ -304,7 +304,7 @@ Leer (E-8): los 75 · 381. Los imprescindibles por regla: `aggregator_test` (1.9
 
 | Candado viejo | Regla | Dónde queda | ¿BD? |
 |---|---|---|---|
-| `runtime/streak_invariante_test.go` (AST, 185 l) | Todo `rt.store.Delete` va seguido, en el mismo bloque y a ≤ 3 sentencias, de `rt.autoreplyStreaks.Close`; exactamente **6** `Delete` (si cambia, alguien lo mira) | `C/runtime/streak_invariante_test.go` — excepción AST permitida; **re-medir** la constante sobre el código nuevo | No |
+| `runtime/streak_invariante_test.go` (AST, 185 l; ✎ F8-04: en el nuevo, `TestStreak_EveryDeleteClosesTheEpisode`, que recorre todos los `.go` de producción del paquete) | Todo `rt.store.Delete` va seguido, en el mismo bloque y a ≤ 3 sentencias, de `rt.autoreplyStreaks.Close`; exactamente **6** `Delete` (si cambia, alguien lo mira) | `C/runtime/streak_invariante_test.go` — excepción AST permitida; **re-medir** la constante sobre el código nuevo | No |
 | `modules/cart/orden_consulta_ast_test.go` (AST, 168 l) | En `Module.Step`: `preresolveOConsulta` → `return` con la petición → `st.Started = true` → `advance(`, **una** de cada | `C/modules/cart/orden_consulta_ast_test.go` | No |
 | `events/summary_test.go:784` (imports) | `events` no importa rutas con `intent`, `llm`, `ollama`, `openai`, `anthropic`, `clasific`, `classif` (REQ-21) | `internal/modulos/fronteras_test.go` (D-F8-4) | No |
 | `events/summary_test.go:580` (conducta) | INV-13 | `C/events/summary_test.go` | No |

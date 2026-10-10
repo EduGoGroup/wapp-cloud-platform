@@ -5,7 +5,7 @@
 > F3 cerradas y en `dev`; F4 y F5 cerradas el 2026-10-07 (F45-03); F6 cerrada el 2026-10-08 (F6-06) y F7 el
 > 2026-10-09 (F7-05), las dos por PR a `dev`; `FaseActual = 7`, `Conmutados` = `acceso`, `edge` y `catalogo`;
 > F9-A y F9-B hechos, F9-D pendiente; **F8 en curso** (F8-01 y F8-02 hechas el 2026-10-09: las hojas y el motor de
-> `conversacion` en verde, sin conmutar; F8-03 hecha el 2026-10-10, en dos mitades: `events` y `cart` en verde; quedan F8-04, F8-04b y F8-05 … F8-07; F8-04 se partió en dos el 2026-10-10, D-F8-11); F10 sin empezar. **Recalibrado el 2026-10-03** tras la parada
+> `conversacion` en verde, sin conmutar; F8-03 hecha el 2026-10-10, en dos mitades: `events` y `cart` en verde; F8-04 hecha el 2026-10-10: los 23 contratos de `runtime` en rojo; quedan F8-04b y F8-05 … F8-07; F8-04 se partió en dos el 2026-10-10, D-F8-11); F10 sin empezar. **Recalibrado el 2026-10-03** tras la parada
 > de F1 ([`DECISIONES.md`](DECISIONES.md) §3; `05` E-12, §4.2, E-9, E-4). Escrito el 2026-09-28. Es el plan **ejecutable** que pedía
 > [`../ESTADO.md`](../ESTADO.md): convierte las fases F0–F10 de
 > [`05-metodo-contratos-y-tdd.md`](../05-metodo-contratos-y-tdd.md) §6 en *specs* con sus historias
@@ -13,7 +13,7 @@
 > (eran 81: las 66 pendientes se reagruparon en 41 de tamaño medio, 45–90 min).
 > La norma de fondo sigue siendo `05`: si el plan choca con ella, manda `05` y el plan se corrige.
 >
-> **Siguiente paso** (al 2026-10-10, con F8-01, F8-02 y F8-03 hechas): [`sesiones/F8-04`](sesiones/F8-04-cli-runtime-1.md), `runtime` (1a): **solo** los contratos de los 23 (T8.18–T8.21); le sigue [`sesiones/F8-04b`](sesiones/F8-04b-cli-runtime-1-soporte.md), el verde de los 12 de soporte (T8.26). ✎ 2026-10-10 (D-F8-11, Jhoan): F8-04 se parte en dos sesiones antes de lanzarla. `events` y `cart` ya están verdes; la segunda mitad de F8-03 (T8.25) va por PR a `dev` desde `reorg/f8-03b-cart-verde`.
+> **Siguiente paso** (al 2026-10-10, con F8-01, F8-02, F8-03 y F8-04 hechas): [`sesiones/F8-04b`](sesiones/F8-04b-cli-runtime-1-soporte.md), el verde de los 12 de soporte de `runtime` (T8.26), con el PR #65 de F8-04 (`reorg/f8-04-runtime-contratos`: los contratos de los 23, T8.18–T8.21) integrado en `dev`. ✎ 2026-10-10 (D-F8-11, Jhoan): F8-04 se parte en dos sesiones antes de lanzarla. `events` y `cart` ya están verdes; la segunda mitad de F8-03 (T8.25) va por PR a `dev` desde `reorg/f8-03b-cart-verde`.
 > Después, la tabla de [`sesiones/README.md`](sesiones/README.md), en orden: es ella la que dice cuál toca.
 
 ## Cómo está escrito (a lo *spec-driven*, estilo Kiro)
@@ -50,7 +50,7 @@ sesión te manda al protocolo, y el protocolo te dice qué leer: el marco, la *s
 
 Sesiones: 🌐 web · 🌐❓ web si queda saldo de la promoción, si no local · 💻 solo local (Docker, UAT, `main`).
 Al 2026-10-10 están hechas las sesiones de F0, F9-A/B, F1 (con F1-06), F2, F3, F4+F5 (F45-01, F45-02 y F45-03),
-F6 y F7, y F8-01, F8-02 y F8-03 de F8; la siguiente es F8-04 y, tras ella, F8-04b. Qué sesión está hecha lo dice la tabla de
+F6 y F7, y F8-01, F8-02, F8-03 y F8-04 de F8; la siguiente es F8-04b. Qué sesión está hecha lo dice la tabla de
 [`sesiones/README.md`](sesiones/README.md), no esta línea.
 
 Cifras de ficheros de producción medidas por cada *spec* sobre `dev` @ `1b18932` (con `ls`/`wc`/`go

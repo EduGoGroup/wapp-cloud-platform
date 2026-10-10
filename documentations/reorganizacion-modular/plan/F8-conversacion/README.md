@@ -333,6 +333,70 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     con mutantes. F8-05 pasa a depender de F8-04b. Las tareas no cambian de texto ni de número. Como F8-04 queda toda de rojo,
     el lint del hallazgo 28 se le pasa a los tests etiquetados antes de cerrarla, con `--build-tags pendiente` (la etiqueta se
     suma a la `integracion` del `.golangci.yml`; el comando, en la ficha).
+30. **(F8-04, `runtime`, rojo) Lo que el diseño contaba mal, medido al escribir los 23 contratos.** Las `With*` del runtime son
+    22, pero **21** viven en `runtime_engine.go` y la 22.ª, `WithWelcomeStore`, en `welcome.go`; `WithConsultaResolver` nunca fue
+    del runtime: es del engine (ya `engine.WithQueryResolver`, F8-02), y T-6 queda escrita en el comentario de `New`. `resume.go`
+    exporta **1** símbolo (`ErrTurnCutBySinkFailure`), no 0; `event_effects.go` son 7 efectos y 3 motivos de escape;
+    `source_composer.go` exporta además `Composed`, `ComposeSourceText` y `WithThreadLimit`. La fila de `tenant_resolver.go`
+    («perfil vacío/desconocido = activo») es la regla del **consumidor**: el adaptador, con un perfil fuera de dominio en la
+    base, cae a **pasiva**, y la suite lo fija. [`diseno.md`](diseno.md) §4 corregido con ✎. Renombres por E-11:
+    `ErrSelfNumbersSinKeyProvider` → `ErrSelfNumbersNoKeyProvider` (texto intacto) y el candado
+    `TestRacha_TodoDeleteCierraElEpisodio` → `TestStreak_EveryDeleteClosesTheEpisode`; los demás exportados ya estaban en inglés.
+31. **(F8-04, método) Cinco ficheros sin exportados y un ciclo de imports: cómo quedó el rojo.** `keyedmutex.go` y `streak.go`
+    no tienen nada exportado ni se ven por la API pública sin el `Runtime`: su contrato es el comentario-promesa (KM-1…KM-6,
+    ST-1…ST-29) y su `_test.go` es la lista de tests que trae el verde (F8-04b, con mutantes). `exit_menu.go`, `thread.go` y
+    `send.go`, igual de vacíos, sí tienen tests: por `HandleIncoming` y `Start`. Los tests que montan un `Runtime` van en
+    **`package runtime_test`** sobre un arnés común (`harness_test.go`, `harness_doubles_test.go`), porque `runtimehelpertest`
+    importa `runtime` y un test interno que usara sus dobles cerraría un ciclo; el candado de exportados lo acepta. Dos tests
+    nacen **sin** etiqueta (`runtime_test.go`, `event_effects_test.go`): sus ficheros son solo datos. Y el reparto de commits se
+    desvía del de `tareas.md`: `welcome`, `thread` y `send` entran en el commit del núcleo (T8.19), no en el de soporte, porque
+    su contrato cuelga de `*Runtime`.
+32. **(F8-04, método) 🟡 Un rojo no se puede ejecutar: qué quedó validado contra el viejo y qué no.** Validados contra la lógica
+    vieja como oráculo temporal, sin commitear: los 6 ficheros de soporte con exportados; las dos suites contra Postgres (33 PASS
+    con testcontainers y 5 mutantes del SQL muertos); `persist_sink`, `source_composer` y `aggregator` (68 de 69 tests; fallan
+    solo los 4 subcasos de D-F9-10, que es la divergencia buscada); y el candado de rachas (verde con 6 sobre una copia del viejo,
+    rojo al quitarle un `Close`). **No ejecutados nunca contra lógica real**: los ≈ 260 tests que pasan por el arnés
+    (`runtime_engine`, `start`, `resume`, `exit_menu`, `send`, `incoming`, `welcome`, `thread`, `events`, `event_lifecycle`);
+    mueren en `runtime.WithClock` al montar. Compilan, pasan el lint con la etiqueta y están repasados a mano contra el viejo,
+    nada más: F8-05 tiene que contar con corregir tests, no solo portar lógica. Al arnés le falta, y cada sub-agente lo resolvió
+    en sus ficheros con un segundo `Runtime`: inyectar fallos en el almacén y en el de eventos, un `Ack` con `ok=false`, encender
+    una feature antes del primer entrante y leer el cuerpo del hilo. Trampa: en cuanto se enciende una feature, el despachador
+    real filtra `cart` por `cart_basic`; hay que encender las dos.
+33. **(F8-04, `runtime`) El hallazgo 25, comprobado: las dos frases de `cart/projection.go` están caducadas.** El fan-out no
+    «loguea sin abortar»: todo fallo de un sink se loguea a ERROR («runtime: sink de efecto falló»); si el efecto es de un módulo
+    durable **y** el error lleva `ErrMaterializationFailed`, un error permanente de Postgres corta de inmediato y cualquier otro
+    se reintenta 2 veces más con 25 ms; agotado, se corta el turno (`flujos/runtime/resume.go:268-339`, `persist_sink.go:164,188`):
+    sin Save, sin hilo, sin ventana, y el cliente recibe el aviso de avería. Como el carrito es durable, un fallo de su
+    proyección corta el turno. Escrito en el contrato de `resume.go` (FO-1…FO-7) y en RT-10. Más comentarios del viejo que no
+    casan con su código, corregidos en el contrato nuevo: `event_lifecycle.go:380,387` (el fan-out va **antes** del Save);
+    `runtime_engine.go:195,452` (los motivos de corte son cuatro, no tres); `incoming.go:85-92` (sin estado no «ignora»: consulta
+    los disparos); `aggregator.go:457-460` (con `settings` nil `Observe` funciona; con `log` nil es no-op); `streak.go:107`;
+    `tenant_resolver.go:18,34`; `persist_sink.go:125-131` (solo se llama al **primer** proyector que acepta el efecto).
+34. **(F8-04, `runtime`) 🟡 Rarezas del viejo portadas tal cual al contrato, cada una con su test; candidatas a decisión de
+    Jhoan, ninguna bloquea.** (a) El sobre de P2 **no se escapa**: un cliente que teclea las cuatro cabeceras las deja dentro del
+    bloque de mensajes y puede simular un bloque de contexto (`source_composer.go:208-261`; fijado en el corpus adversario).
+    (b) El agregador anota el id como visto **antes** de `OpenOrAppend`: si la sentencia falla, la re-entrega del mismo mensaje se
+    descarta (`aggregator.go:511-525`). (c) El reintento del sink durable usa `time.After(25 ms)` **real**, no el reloj
+    inyectado: nueve tests esperan 25–50 ms de verdad (`resume.go:351`); y repite el `Handle` entero, así que puede duplicar la
+    fila de `flow_events` (`:304-315`). (d) `WebhookSink` no tiene por dónde inyectar reloj (`webhook_sink.go:66`). (e)
+    `WithEventSink(nil)` y `WithResumePolicy(tipo, nil)` son un panic diferido; RT-12 no los exceptúa y no llevan test. (f) El
+    resolver de tenant no filtra por `state`: una sesión `loggedout` resuelve y pesa en el perfil. (g) `Start` no cobra token del
+    limitador pero sí cuenta en la racha (`start.go:321-331`). (h) Las claves `dispatcher_menu` y `dispatcher_menu_event_id` de
+    `Vars` son estado persistido que el binario nuevo tiene que leer: hoy las fijan los tests de `events`, no el contrato.
+    (i) Con dos proyectores para el mismo efecto gana el primero, en silencio.
+35. **(F8-04, D-F9-10 y D-F7-9) Lo prometido y lo dejado al verde.** D-F9-10 está en el contrato del agregador con su caso:
+    con el contexto cancelado, listar, cerrar y componer no loguean a ERROR (en `Sweep`, y por tanto en `RecoverAtBoot` y `Run`).
+    No se prometió callar el WARN de los plazos, ni cortar el barrido a medias, ni un INFO de apagado. D-F7-9 **no** se arregla ni
+    se promete aquí: el contrato anota la deuda en `Sweep` y en `ComposeAtFlush` y ningún test fija el orden cierre/sobre, para
+    no bloquear el arreglo de F8-05; solo `ComposeAtFlush_DoesNotOverwrite/window_not_pending` cambiará si el verde invierte el
+    orden. Los tests de `OnIncoming` y del semáforo usan `testing/synctest` con `<-time.After` dentro de la burbuja (no es el
+    reloj del arnés: el plazo del entrante es un `context.WithTimeout`); ningún `time.Sleep`.
+36. **(F8-04, método) Partida, cupo en un bloque: ≈ 65 min de pared.** Siete sub-agentes en tres olas dentro del mismo
+    paquete y el mismo checkout, sin *worktrees*: soporte y dobles (≈ 17 min, en paralelo), contratos del `Runtime` y
+    agregador (≈ 23), tests del `Runtime` y candado (≈ 21). Lo que lo hizo posible: escribir primero la producción de los 10
+    ficheros que cuelgan de `*Runtime` y un arnés común, y repartir después sus tests por fichero con prefijos propios. Lo que
+    costó: cada ola veía fallos de compilación y de lint de las otras mientras escribían, y un sub-agente ensució `go.sum` con
+    `-mod=mod` (revertido). El paquete nace con 23 ficheros de producción, 52 de test y 391 `func Test`.
 
 ## Orden de lectura
 
@@ -351,7 +415,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-01 | inventario E-12 y hojas | medio · `store` complejo · `content` simple | T8.1–T8.8, T8.22 | inventario **aprobado por Jhoan** (antes no se escribe código); `model`·`trigger`·`content`·`store`·`modules` verdes; suites `Contrato` en memoria y en Postgres |
 | F8-02 ✅ | motor | medio · `menu`/`media`/`survey` simple | T8.9–T8.11, T8.14, T8.23 | `engine`·`menu`·`survey`·`media`·`turnoacotado` verdes (2026-10-09, rama `reorg/f8-02-motor`, `d8fd4ac` … `4ce435f`, PR #61 en `dev`, merge `df340a6`) |
 | F8-03 ✅ | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (11) y `cart` (20) verdes; goldens idénticos; candado de orden verde y mutado (en dos mitades: 2026-10-09, rama `reorg/f8-03-events-cart`, `8c819b40` … `790ca522`, PR #62 en `dev`, merge `8b841c8d`; 2026-10-10, rama `reorg/f8-03b-cart-verde`, `dd0771ce` … `44255a2b`, PR #63 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash) |
-| F8-04 | `runtime` (1a): los contratos de los 23 | complejo | T8.18–T8.21 | 23 contratos en rojo, `runtimehelpertest` verde, candado de rachas escrito, lista blanca de `conversacion` completa; ningún verde de `runtime` (✎ 2026-10-10, D-F8-11: antes llevaba también T8.26) |
+| F8-04 ✅ | `runtime` (1a): los contratos de los 23 | complejo | T8.18–T8.21 | 23 contratos en rojo, `runtimehelpertest` verde, candado de rachas escrito, lista blanca de `conversacion` completa; ningún verde de `runtime` (✎ 2026-10-10, D-F8-11: antes llevaba también T8.26) (2026-10-10, rama `reorg/f8-04-runtime-contratos`, `cf327ca5` … `de6a5411`, PR #65 a `dev`) |
 | F8-04b | `runtime` (1b): el verde del soporte | complejo | T8.26 | los 12 de soporte verdes, mutantes de `keyedmutex` y `streak` muertos, `pendiente` del runtime solo en los 11 del núcleo |
 | F8-05 | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo verdes, mutantes muertos, `pendiente` del runtime = 0 |
 | F8-06 | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo |
