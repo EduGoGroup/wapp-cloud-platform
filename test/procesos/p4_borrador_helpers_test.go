@@ -342,3 +342,22 @@ func (sc *draftScene) beatReadiness(t *testing.T, r cloudlinkv1.InferenceReadine
 	}
 	sc.Edge.esperarLeases(t, before+1, edgeTopeFila)
 }
+
+// requireNoJobWithoutLiteral exige que NINGÚN job de la empresa haya muerto por falta de literal: cero
+// filas `failed` de intake_jobs cuyo error diga «no trae literal que analizar». Es la huella de D-F7-9:
+// el worker reclamó el job de una ventana ya cerrada (`pending`) cuyo sobre todavía no se había
+// escrito. Ningún paso de P4 produce esa fila a propósito: toda ventana del proceso tiene mensajes de
+// texto del cliente, así que todo job que cierra tiene su sobre.
+//
+// La aserción vale para los dos binarios y no distingue entre ellos. El nuevo la garantiza: cierra la
+// ventana y guarda el sobre en una sola sentencia (F8-06b). El viejo conserva la carrera hasta su
+// borrado en F10 y puede ponerse rojo aquí de forma intermitente, igual que ya lo hacía por la línea
+// ERROR de su log (hallazgo 14 de F8).
+func requireNoJobWithoutLiteral(t *testing.T, sc *draftScene) {
+	t.Helper()
+	const query = `SELECT count(*) FROM public.intake_jobs
+		WHERE tenant_id = $1 AND status = 'failed' AND error LIKE '%no trae literal que analizar%'`
+	if n := consultaEntero(t, sc.DB, query, sc.Tenant); n != 0 {
+		t.Errorf("intake_jobs tiene %d jobs `failed` por «no trae literal que analizar», quería 0: es D-F7-9, el worker reclamó una ventana cerrada antes de que tuviera su sobre", n)
+	}
+}
