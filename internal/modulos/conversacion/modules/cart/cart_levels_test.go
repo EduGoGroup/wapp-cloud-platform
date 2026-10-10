@@ -207,7 +207,7 @@ func TestLevels_Quantity(t *testing.T) {
 		}
 		mustScreen(t, outs, invalidQty+coffeeQuantity)
 	}
-	for in, want := range map[string]int{"1": 1, "12": 12, "007": 7, "+4": 4, " 3 ": 3} {
+	for in, want := range map[string]int{"1": 1, "12": 12, "007": 7, "+4": 4, " 3 ": 3} { //nolint:gocritic // mapKey: los espacios de " 3 " son el caso que se prueba
 		st, _, _ := drive(t, m, vars, in)
 		if st.Level != cart.LevelContinue || len(st.Lines) != 1 || st.Lines[0].Qty != want {
 			t.Errorf("%q: estado = %+v, quiero una línea de %d", in, st, want)

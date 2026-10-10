@@ -40,7 +40,7 @@ func TestNotes_BuyingWithoutNotesTakesTheSameKeystrokes(t *testing.T) {
 		vars := seededVars()
 		for _, k := range keys {
 			res := turn(m, model.Conversation{Vars: vars}, k, nil)
-			raw, _ := res.Vars[stateVarKey].(map[string]any)
+			raw, _ := res.Vars[stateVarKey].(map[string]any) //nolint:errcheck // aserción de tipo sobre un valor que el propio test construyó: si no casa, el test falla (o entra en pánico) igual
 			for _, key := range []string{"note", "note_split"} {
 				if _, present := raw[key]; present {
 					t.Fatalf("tras %q el estado lleva %q sin haber pulsado 3: %v", k, key, raw)
@@ -188,7 +188,7 @@ func TestNotes_ZeroLeavesTheCartUntouched(t *testing.T) {
 // Vacío tras sanear equivale a «0»: sin indicación y sin error (REQ-33e).
 func TestNotes_EmptyAfterSanitizingMeansZero(t *testing.T) {
 	m := cart.New()
-	for _, in := range []string{"", "   ", "​", "\n \t"} {
+	for _, in := range []string{"", "   ", "​", "\n \t"} { //nolint:staticcheck // ST1018: el invisible va literal a propósito, es la entrada que se prueba
 		res := turn(m, model.Conversation{Vars: walk(t, m, coffees(t, m, "2"), "3", "2")}, in, nil)
 		mustScreen(t, res.Outputs, continueBebidas)
 		if st := stateOf(t, res.Vars); st.Level != cart.LevelContinue || st.NoteSplit || len(st.Lines) != 1 || st.Lines[0].Customization != "" {

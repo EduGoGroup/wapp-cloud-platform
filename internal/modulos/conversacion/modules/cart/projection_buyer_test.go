@@ -171,7 +171,7 @@ func TestProjector_BuyerData_LastFieldAndCloseOfTheSameTurn(t *testing.T) {
 
 // cart_cancelled y cart_expired llevan la solicitud abierta a su estado conservando el
 // total; sin solicitud abierta son un no-op sin error (H29: el efecto sigue al estado).
-func TestProjector_Transitions(t *testing.T) {
+func TestProjector_Transitions(t *testing.T) { //nolint:gocyclo // una aserción por promesa del contrato, en secuencia; partirlo no lo aclara
 	cases := []struct {
 		effect string
 		status string

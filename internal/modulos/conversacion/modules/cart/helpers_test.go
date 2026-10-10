@@ -145,7 +145,7 @@ func v2Vars(t *testing.T) map[string]any {
 // contentOf devuelve, como contenido resuelto (lo que reciben Render y Prime), el
 // catálogo sembrado en unas Vars.
 func contentOf(vars map[string]any) model.Content {
-	raw, _ := vars[modules.VarContentRaw].(map[string]any)
+	raw, _ := vars[modules.VarContentRaw].(map[string]any) //nolint:errcheck // aserción de tipo sobre un valor que el propio test construyó: si no casa, el test falla (o entra en pánico) igual
 	return model.Content{Raw: raw}
 }
 

@@ -63,7 +63,7 @@ func TestProjector_ItemAdded_ReusesTheOpenIntake(t *testing.T) {
 func TestProjector_OpenLines_MirrorTheSnapshot(t *testing.T) {
 	r := newRig()
 	two := snapshotEffect(cart.EffectItemAdded, line("PAN", 2, 2.5), line("PAN", 1, 2.5))
-	two.Payload["items"].([]map[string]any)[1]["customization"] = "bien cocido"
+	two.Payload["items"].([]map[string]any)[1]["customization"] = "bien cocido" //nolint:errcheck // aserción de tipo sobre un valor que el propio test construyó: si no casa, el test falla (o entra en pánico) igual
 	want := []cartLine{
 		{SKU: "PAN", Label: "Etiqueta de PAN", Qty: 2, UnitPrice: 2.5},
 		{SKU: "PAN", Label: "Etiqueta de PAN", Qty: 1, UnitPrice: 2.5, Customization: "bien cocido"},

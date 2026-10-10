@@ -175,7 +175,7 @@ func TestBuyer_ZeroGoesBackToSummaryKeepingWhatWasCaptured(t *testing.T) {
 func TestBuyer_RequiredFieldCannotBeSkipped(t *testing.T) {
 	m := cart.New()
 	vars := walk(t, m, atSummary(t, m, twoFields()), "1")
-	for _, in := range []string{"", "   ", "​​", "\n\t"} {
+	for _, in := range []string{"", "   ", "​​", "\n\t"} { //nolint:staticcheck // ST1018: los invisibles van literales a propósito, son la entrada que se prueba
 		res := turn(m, model.Conversation{Vars: vars}, in, nil)
 		mustScreen(t, res.Outputs, "Necesitamos ese dato para completar tu pedido.\n\n"+buyerScreen("RUT", "1", "2"))
 		if len(res.Effects) != 0 {
@@ -213,7 +213,7 @@ func TestBuyer_TooLongIsRejectedNotTruncated(t *testing.T) {
 func TestBuyer_ValueIsSanitizedNotValidated(t *testing.T) {
 	m := cart.New()
 	vars := walk(t, m, atSummary(t, m, twoFields()), "1")
-	res := turn(m, model.Conversation{Vars: vars}, "  no​ soy\nun   RUT  ", nil)
+	res := turn(m, model.Conversation{Vars: vars}, "  no​ soy\nun   RUT  ", nil) //nolint:staticcheck // ST1018: el invisible va literal a propósito, es la entrada que se prueba
 	if len(res.Effects) != 1 {
 		t.Fatalf("efectos = %v, quiero uno", effectNames(res.Effects))
 	}

@@ -229,7 +229,7 @@ func TestProjector_Handles(t *testing.T) {
 		cart.EffectItemViewed:        false,
 		"survey_answer":              false,
 		"Item_Added":                 false,
-		" item_added":                false,
+		" item_added":                false, //nolint:gocritic // mapKey: el espacio inicial es el caso que se prueba
 		"":                           false,
 	}
 	for name, want := range cases {

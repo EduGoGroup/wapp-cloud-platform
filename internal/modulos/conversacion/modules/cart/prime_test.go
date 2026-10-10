@@ -220,7 +220,7 @@ func TestPrime_ReadsParamsAfterJSONBRoundTrip(t *testing.T) {
 
 // Catálogo v2: la variante nombrada se pre-agrega con SU precio; el artículo claro sin
 // variante clara se PREGUNTA; el combo es una línea.
-func TestPrime_VariantsAndCombo(t *testing.T) {
+func TestPrime_VariantsAndCombo(t *testing.T) { //nolint:gocyclo // una aserción por promesa del contrato, en secuencia; partirlo no lo aclara
 	content := contentOf(v2Vars(t))
 	const continueTortas = "Añadido al pedido ✅\n1) Agregar más de Tortas\n2) Finalizar pedido\n" +
 		"3) ✏️ Indicación para este artículo\n9) Cancelar pedido\n0) ← Volver"

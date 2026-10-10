@@ -24,7 +24,7 @@ import (
 func closedEffect(lines ...map[string]any) modules.Effect {
 	total := 0.0
 	for _, l := range lines {
-		total += float64(l["qty"].(int)) * l["unit_price"].(float64)
+		total += float64(l["qty"].(int)) * l["unit_price"].(float64) //nolint:errcheck // aserción de tipo sobre un valor que el propio test construyó: si no casa, el test falla (o entra en pánico) igual
 	}
 	return modules.Effect{Kind: kindPersist, Name: cart.EffectCartClosed,
 		Payload: map[string]any{"items": lines, "total": total}}
@@ -86,7 +86,7 @@ func TestProjector_CartClosed_Notes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRig()
 			eff := closedEffect(line("EMPA", 2, 2500))
-			eff.Payload["items"].([]map[string]any)[0]["customization"] = "sin ají"
+			eff.Payload["items"].([]map[string]any)[0]["customization"] = "sin ají" //nolint:errcheck // aserción de tipo sobre un valor que el propio test construyó: si no casa, el test falla (o entra en pánico) igual
 			if tc.set {
 				eff.Payload["customer_note"] = tc.note
 			}
@@ -126,7 +126,7 @@ func TestProjector_CartClosed_ReadsAJSONRoundTrippedPayload(t *testing.T) {
 func TestProjector_CartClosed_WritesTheCartRevision(t *testing.T) {
 	r := newRig()
 	eff := closedEffect(line("EMPA", 2, 2500))
-	eff.Payload["items"].([]map[string]any)[0]["customization"] = "sin ají"
+	eff.Payload["items"].([]map[string]any)[0]["customization"] = "sin ají" //nolint:errcheck // aserción de tipo sobre un valor que el propio test construyó: si no casa, el test falla (o entra en pánico) igual
 	r.project(t, meta(), eff)
 
 	revs := r.revisions.Revisions(r.onlyIntake(t).ID)
@@ -163,7 +163,7 @@ func TestProjector_CartClosed_AnnotatesTheEffect(t *testing.T) {
 	if payload["lifecycle_status"] != "closed" {
 		t.Errorf("lifecycle_status = %#v, quiero la clave legada \"closed\"", payload["lifecycle_status"])
 	}
-	if payload["total"] != 5000.0 || len(payload["items"].([]map[string]any)) != 1 {
+	if payload["total"] != 5000.0 || len(payload["items"].([]map[string]any)) != 1 { //nolint:errcheck // aserción de tipo sobre un valor que el propio test construyó: si no casa, el test falla (o entra en pánico) igual
 		t.Errorf("el payload original cambió: %v", payload)
 	}
 }
