@@ -24,6 +24,11 @@
 
 ### 0.1 · Niveles de ceremonia por paquete (`05` E-12)
 
+> ✎ **Sustituida el 2026-10-09** por el inventario aprobado: [`README.md`](README.md) § «Inventario E-12». Cambios: `trigger.go`,
+> `trigger/store.go` y `survey` bajan a simple; `trigger/store_memory.go` y `store/store.go` a medio; `registry.go` no sube;
+> `cart/projection.go` sube a complejo; `runtime` ya no es complejo en bloque (12 · 6 · 5). `send_budget_cableado_test.go` es de F3.
+> Los ficheros de más de 600 líneas nacen partidos (E-13). La tabla de abajo queda como historia.
+
 **Provisional, sin medir: la fija el inventario E-12 (T8.2), que aprueba Jhoan.** Deducida de los datos de esta
 spec; el nº de consumidores no está medido. Si un archivo sale peor, sube de nivel.
 
@@ -58,6 +63,9 @@ error de definición la envuelve con `%w` (`:304-336`: JSON mal formado, `flow_i
 `Conversation.Finished()` ⇔ `CurrentNode == NodeTerminal`. Leer: `model_test.go` (4 · 8 `t.Run`).
 
 ### 1.2 · `C/trigger` ← `internal/flujos/trigger`
+
+> ✎ **F8-01 (hallazgo 10)**: la normalización del texto **no** es NFC ni está en `trigger.go`: es `ToLower` → NFD → descarte de
+> marcas `Mn` → `strings.Fields`, en `config_resolver.go:355-375`. Y `ConfigResolver` exporta `Resolve`, **`ResolveLive`** e `IsEscape`.
 
 | Fichero | Líneas | Exp. | Qué promete |
 |---|---:|---:|---|

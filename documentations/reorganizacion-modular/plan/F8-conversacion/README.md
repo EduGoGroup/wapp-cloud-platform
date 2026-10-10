@@ -1,6 +1,6 @@
 # F8 · `conversacion` — el Motor de Flujos, su runtime y el cierre de todos los puentes y adaptadores
 
-> **Estado: sin empezar** (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Forma:
+> **Estado: en curso** desde el 2026-10-09 (F8-01, rama `reorg/f8-01-inventario-y-hojas` partida de `dev` @ `c0c0c03`; las 5 entradas, comprobadas: abajo). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Forma:
 > [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Rutas: **autoridad**
 > [`../FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas I1–I19 · J18–J22).
@@ -43,6 +43,13 @@
 | E4 | `grep -rn 'pendiente.Implementar' --include='*.go' internal/ \| wc -l` → **0** (nada a medias de otra fase) | el comando |
 | E5 | Jhoan decidió D-F8-1 (¿`model` en F5?) | [`../F5-catalogo/`](../F5-catalogo/README.md) o este README |
 
+**Comprobadas el 2026-10-09 (T8.1, `c0c0c03`)**: E1 ✔ (`internal/pendiente`, `internal/apipublica`, `fronteras_test.go` existen) ·
+E2 ✔ (`go list ./internal/modulos/...` → `acceso`, `captacion`, `catalogo`, `conversacion` (solo `model`), `edge`, `inferencia`,
+`solicitudes`; F7 cerrada en `ESTADO.md`) · E3 ✔ (`FaseActual = 7`, 54 rutas; ojo: `grep -c 'Handle('` da 85 porque cuenta
+líneas, no rutas — regla 6 del ecosistema: la cifra buena es la de la huella) · E4 ✔ con matiz: el `grep` literal da **11**, todas
+en `internal/candados` (tests, `testdata` y comentarios); contratos de producción en rojo, **0** · E5 ✔ (D-F8-1 = D-F5-1, «sí, en
+F5»: `C/model` existe y está verde; **T8.3 se tacha**).
+
 ## Salidas (es cierto al cerrar)
 
 - `internal/modulos/conversacion/` con 74–75 ficheros, cada uno con su `_test.go` en verde y
@@ -58,6 +65,154 @@
 - `ls internal/arranque/bridge_*.go` → **vacío**; la lista de puentes (import) de `fronteras_test.go` → **vacía**;
   `Conmutados` → **completa** (todos los módulos).
 
+## Inventario E-12 — aprobado por Jhoan el 2026-10-09 (T8.2)
+
+> Medido sobre `dev` @ `c0c0c03` por lectura del código viejo. **Manda sobre** el provisional de
+> [`diseno.md`](diseno.md) §0.1 y sobre la columna «Nivel E-12 (provisional)» de la tabla de sesiones. Si un archivo
+> sale peor al portarlo, sube de nivel y se anota aquí.
+
+Reglas de conteo: **líneas** `wc -l`; **exportados** = declaraciones de primer nivel exportadas + métodos exportados de
+tipos exportados (la regla de `candados.ExportadosCubiertos`; contado por grep/awk, coincide con `diseno.md` salvo
+`runtime/webhook_sink.go`: 5, no 6); **consumidores** = directorios distintos bajo `internal`/`cmd` con un `.go` de
+producción que importa el paquete (por paquete, no por fichero). Tamaño re-medido: **75 ficheros · 23.901 líneas**
+(74 por hacer: `model` ya está verde desde F5) — igual que la spec.
+
+### Hojas (F8-01)
+
+| Fichero | Lín. | Exp. | Estado en memoria | Concurrencia | BD / tx | Cons. (paq.) | Nivel |
+|---|---:|---:|---|---|---|---:|---|
+| `model/model.go` | 406 | 24 | no | no | no | 12 | **hecho en F5** (verde, 441 l; T8.3 se tacha) |
+| `trigger/trigger.go` | 257 | 33 | no | no | no | 5 | **simple** (tipos, constantes, `NoopResolver`) |
+| `trigger/config_resolver.go` | 375 | 5 | no (lee por puerto) | no | no | 5 | **medio** (prioridad, normalización NFC; corpus adversario) |
+| `trigger/store.go` | 36 | 2 | no | no | no | 5 | **simple** (puerto + centinela; necesita `store_test.go`: lleva un `var`) |
+| `trigger/store_memory.go` | 91 | 7 | `map` de reglas | `sync.Mutex` | no | 5 | **medio** (lo cubre la suite; + `-race`) |
+| `trigger/store_postgres.go` | 172 | 7 | no | no | 1 tabla (`flow_triggers`), sin tx | 5 | **complejo sin mutantes** (suite contra Postgres obligada; no hay CAS que mutar) |
+| `content/{content,static,json,router}.go` | 179 | 11 | no | no | no (puerto) | 3 | **simple** (una pasada) |
+| `store/store.go` | 875 | 42 | no | no | no | 11 | **medio** (13 interfaces, tipos, centinelas; el riesgo es partirlo) |
+| `store/repository_memory.go` | 817 | 37 | 10 mapas | `sync.Mutex`; 8 `time.Now()` | no | 11 | **complejo** (reloj inyectable) |
+| `store/repository_postgres.go` | 1.074 | 28 | no | no | 10 tablas; 3 `WithTx`; 2 `FOR UPDATE`; 5 `ON CONFLICT` | 11 | **complejo con mutantes** (`ReplaceTenantContentVersioned`, `CloseIntake`, `TouchContact`/`MarkWelcomed`) |
+| `modules/registry.go` | 346 | 19 | `map` de módulos | `sync.RWMutex` | no | 9 | **medio** + test `-race` (se escribe en el arranque, luego solo se lee) |
+| `modules/numbered.go` | 261 | 18 | no | no | no | 9 | **medio** |
+| `modules/consulta.go` | 244 | 16 | no | no | no | 9 | **medio** |
+| `modules/{ports,coerce}.go` | 103 | 6 | no | no | no | 9 | **simple** (`ports_test.go` con aserciones de compilación) |
+
+Cambios frente al provisional (`diseno.md` §0.1): `trigger.go` y `trigger/store.go` bajan a simple; `store_memory` de
+trigger baja a medio; `store/store.go` baja a medio; `registry.go` **no** sube a complejo.
+
+**Particiones obligadas (E-13, tope 600)**: los tres ficheros de `store` nacen partidos por tema (sufijo del origen,
+solo moviendo declaraciones): `store.go` → 2–3, `repository_memory.go` → 2–3, `repository_postgres.go` → 3–4. Cada
+trozo lleva su `_test.go`. `store (3)` serán ≈ 8–10 ficheros de producción.
+
+**Los gemelos en memoria se quedan en su paquete** (`C/store`, `C/trigger`), como dice el diseño: fases siguientes
+(`cart`, `runtime`) los usarán como dobles. `MigrateContactID` del gemelo viejo: se mira quién lo llama al escribir el
+contrato; si solo tests, se dice en el commit (E-8).
+
+### Resto del módulo (F8-02…F8-06; nivel por fichero)
+
+| Paquete (cons.) | simple | medio | complejo |
+|---|---|---|---|
+| `engine` (3) | — | `engine`, `consulta` | — |
+| `menu` (2), `media` (2), `survey` (2) | `menu`, `media`, `survey`, `survey/projection` | — | — |
+| `turnoacotado` (2) | `prompt` | `turnoacotado`, `troceado` | — |
+| `events` (6) | `events`, `kinds` | `summary`, `dispatcher`, `menu` | `store` (1.060 l, 4 tablas, CAS y reintento por único → suite con casos de carrera), `thread_reader` |
+| `cart` (3 reales, 8 nominales) | `effects`, `variants`, `resume`, `validate` | `cart`, `troceo`, `preresolutor`, `screens`, `prime`, `state`, `revalidate`, `buyer`, `consulta` | `projection` (escrituras encadenadas sin tx + índice único parcial) |
+| `admin` (3) | `doc`, `durable_flow` | `triggers`, `handlers` | — |
+| `runtime` (5) | `runtime`, `event_sink`, `log_sink`, `event_effects`, `summary_sources` | `exit_menu`, `thread`, `welcome`, `webhook_sink`, `persist_sink`, `send` | `keyedmutex`, `streak`, `runtime_engine`, `start`, `resume`, `event_lifecycle`, `events`, `incoming`, `aggregator`, `source_composer`, `tenant_resolver`, `self_numbers` |
+
+Cambios frente al provisional: `survey` baja a simple; `cart/projection.go` sube a complejo; `runtime` deja de ser
+«complejo en bloque» (12 complejos · 6 medios · 5 simples; mutantes en los 12). Nacen partidos además:
+`events/store.go`, `cart/cart.go` (re-anclar el candado AST de `Step`), `runtime/{events,incoming,aggregator}.go`.
+En tolerancia (500–600): `events/summary.go`, `admin/triggers.go`, `cart/troceo.go`, `cart/projection.go`.
+
+### Adaptadores `bridge_<x>.go`: F8 crea 0 y retira todos (T8.32)
+
+| Adaptador | Qué envuelve | Entra en `Conmutados` |
+|---|---|---|
+| `bridge_contact.go` (construido en `flows.go:90`) | `flujos/contact.Resolver` viejo sobre `nucleo/contact` | `nucleo` |
+| `bridge_inferencia.go` (solo queda `turneroBridge`) | `turnoacotado.Turnero` viejo sobre `inferencia/llmvia` | `inferencia` |
+| `bridge_captacion.go` (`aheadBridge`, `composerBridge`, `classifiedSink`, + la 2.ª instancia de `intake.Postgres` y `legacyThreadLimit`) | tres sentidos entre `captacion` nuevo y agregador/compositor viejos | `captacion` |
+| 2.ª instancia vieja de `intakes.Postgres` (`fase3_almacenes.go:157`, no es fichero) | `cart.NewProjector` viejo | `solicitudes` |
+
+`Conmutados` hoy: `acceso`, `edge`, `catalogo`. `conversacion` entra con su `conmutar`.
+
+**Puentes de import (T8.31)** en `fronteras_test.go:120-150`, los tres con `Muere: "F8"`: `solicitudes/intakes/telemetria → flujos/store`,
+`captacion/stages → flujos/store`, `captacion/reanalisis → flujos/events` (5 ficheros de producción + 6 de test, no «~6»).
+Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 están caducadas: ya importan `C/model`.
+
+**`send_budget_cableado_test.go`**: es de F3 (edge / cara de mensajes), ya adaptado; F8 no lo toca.
+
+## Hallazgos
+
+1. **(F8-01, inventario) El hallazgo 60 de F7, matizado leyendo el código; no reproducido.** Un job con sobre vacío **no**
+   llega a `Release` ni a `Retry`: `literalDe` (`captacion/pipeline/pipeline_chain.go:30,153-163`) corre antes que la plaza
+   y que la cadena y lo manda a `Fail` (`pipeline/backoff.go:105`). Lo alcanzable por esa vía es **literal perdido**: un job
+   viejo con sobre **lleno** recibe `updated_at = now()` (`intake/machine_postgres.go:272-276,309-316`) entre el
+   `CloseWindow` y el `PutSourceText` de otra ventana de la misma tupla; la subconsulta de `putSourceTextSQL`
+   (`intake/postgres.go:155-169`) lo elige y el `source_text_enc IS NULL` de fuera escribe 0 filas — misma firma de log que
+   el hallazgo 17. La **marca cruzada** (literal de A en B) exige una `pending` con sobre `NULL` de otro origen, y hay dos:
+   un flush con hilo vacío o composición fallida (`flujos/runtime/source_composer.go:364-367`, `aggregator.go:906-909`), y
+   el job de **re-análisis**, que nace `pending` sin sobre y lo recibe en una segunda sentencia
+   (`captacion/reanalisis/reanalisis.go:377` → `:399`) y ya está portado (F7). El arreglo de D-F7-9 en el agregador **no lo
+   cubre por sí solo**. Para F8-04/F8-05; aquí no se toca.
+2. **(F8-01) [`arquitectura.md`](arquitectura.md) §5 estaba caducada**: 3 adaptadores vivos, no 1; los puentes de F5 hacia
+   `flujos/model` ya no existen; `captacion/reanalisis` no importa `flujos/runtime`; y a la lista de ficheros de arranque a
+   re-cablear le faltaban `contenedor.go`, `fase3_almacenes.go`, `flows.go`, `flowforkind.go` y `http.go`. Corregido con ✎.
+3. **(F8-01) `Capas["conversacion"]` no incluye `catalogo`** (`fronteras_test.go:50-56`): lo necesitará `cart` (F8-03), y la
+   prohibición `conversacion → catalogo/indice` es por subpaquete, que el motor de fronteras no sabe expresar (aviso en
+   `:28-36`). Decisión para F8-03.
+4. **(F8-01) La definición de hecho §4.5 no ve los tests**: `go list -deps` ignora los cuatro tests de cableado de
+   `internal/arranque` que importan paquetes viejos (`iam`, `platformadmin`, `entitlements`, `gateway`, `publicapi`,
+   `flujos/runtime`). Para F8-07.
+5. **(F8-01) `bridge_contact_test.go` tiene 809 líneas**, sobre el tope de E-13; muere con el adaptador (T8.32).
+
+6. **(F8-01, `store`) Tres divergencias deliberadas del gemelo en memoria: ahora imita a Postgres** (cada una con su comentario
+   «Divergencia deliberada del viejo, F8-01» y su caso en la suite; ✅ **aceptadas por Jhoan, D-F8-7**): (a) `UpsertIntake` ya no escribe `CustomerNote`
+   (el viejo, `flujos/store/repository_memory.go:518`, guardaba la del argumento y borraba la de una cerrada; el SQL,
+   `repository_postgres.go:581-594`, ni nombra la columna); (b) `GetOpenIntake` y `GetIntakeByEvent` devuelven `CustomerNote ""`,
+   como la proyección de cabecera (`:759`); (c) con varias `open` del mismo contacto, `GetOpenIntake` y `CloseIntake` eligen la
+   más reciente por `created_at`, como el `ORDER BY` de Postgres, y no «la primera del recorrido del mapa» (`:613`, `:666`),
+   que era no determinista. 🟡 Ojo en F8-03…F8-05: un test viejo de `cart` o `runtime` que dependiera de (a) o (b) con el
+   doble en memoria estaba probando algo que producción no hace.
+7. **(F8-01, `store`) Conductas del viejo que se portan tal cual y NO se arreglan**: `ListResults` de Postgres no lee
+   `event_id` y devuelve `EventID ""` (memoria sí lo devuelve; `repository_postgres.go:346`); `UpsertIntake` con `EventID ""`
+   falla siempre en Postgres (NOT NULL de la 0055), así que el «ni con NULL lo pisa» del `COALESCE` es inalcanzable;
+   reescribir una línea `_shipping` ya existente viola `intake_items_shipping_uniq` en Postgres y memoria la duplica; y el
+   comentario de `CloseIntake` («el segundo la ve ya closed y no crea otra», `:673-675`) no es lo que hace el código: N
+   cierres con N eventos dan N solicitudes `closed` (la suite fija lo real). ✅ **Decidido por Jhoan (D-F8-8, 2026-10-09)**: `ListResults` de Postgres ya lee `event_id` (`03d82e9`) y el gemelo rechaza la segunda `_shipping` (`2677cb8`), cada uno con su caso (la suite pasa de 61 a **62** casos) y comprobado que el caso mata el código de antes; los otros dos no llevan código.
+8. **(F8-01, `store`) Los 18 tests viejos no fijaban ninguna carrera** (ni una goroutine). La suite añade tres (versionado,
+   cierre, bienvenida), y el montaje de Postgres **precalienta el pool** (16 conexiones): sin eso las llamadas salían
+   escalonadas y el mutante «`CloseIntake` sin `FOR UPDATE`» sobrevivía.
+9. **(F8-01, `store`) Los 9 métodos del gemelo que Postgres no tiene son solo de tests.** `MigrateContactID` lo llama solo
+   `contact.MemoryResolver` (`nucleo/contact/repository_memory.go:243`), que solo se construye con un `MemoryRepository` en
+   tests del runtime. Se portan los nueve: son los observadores del `Montaje` y los dobles de F8-03…F8-05.
+10. **(F8-01, `trigger`) [`diseno.md`](diseno.md) §1.2 no casaba con el código**: la normalización no es «NFC» ni vive en
+    `trigger.go`: es `ToLower` → NFD → descarte de marcas `Mn` → `strings.Fields`, en `config_resolver.go:355-375`; y a
+    `ConfigResolver` le faltaba `ResolveLive`. Corregido con ✎. Conductas fijadas en el corpus adversario y **no** arregladas:
+    «año» casa «ano»; dos bytes UTF-8 inválidos distintos casan entre sí; un emoji casa con y sin selector de variación; la İ
+    turca baja a «i» pero la ı sin punto no es «i»; `IsEscape` no desempata por `priority` sino por `trigger_id` menor
+    (`:233-243`). Equivalencia viejo ↔ nuevo: 67 filas de corpus, 1.005 comparaciones y 20.000 rondas aleatorias, 0 divergencias.
+11. **(F8-01, `trigger`) `flow_triggers.tenant_id` no tiene clave foránea a `tenants`** (`0023_flow_triggers.sql`), y el gemelo
+    en memoria no valida forma de UUID (un `trigger_id` que no lo es da `ErrTriggerNotFound`; Postgres, error de sintaxis). Se
+    porta tal cual y está escrito en el contrato.
+12. **(F8-01, `modules`) Un comentario del viejo no casaba con su código** (`numbered.go:92-106`: «un sello ilegible vale 0»; un
+    sello que no es string se lee como ausente). Se porta el comportamiento, se corrige el comentario y se fija con dos casos.
+    `AsInt` no acepta `float32` y `AsFloat` sí (`coerce.go:10-37`): asimetría portada y fijada. Los tests viejos de
+    `exit_menu_test.go:197-283` (prueban `menu.New()`/`survey.New()`) son de F8-02.
+13. **(F8-01, E-11) `modules/consulta.go` pasa sus exportados al inglés** (`Consulta` → `Query`, `Veredicto` → `Verdict`…):
+    tabla en [`tareas.md`](tareas.md), antes del bloque 2. ✅ **Se quedan en inglés (D-F8-9, 2026-10-09).**
+
+14. **(F8-01, gates) El binario viejo necesitó cuatro pasadas de `make test-procesos`**; el nuevo pasó a la primera. Las tres rojas,
+    por intermitencias ya conocidas (hallazgos 17 y 62 de F7), ninguna en las suites nuevas: (1) `TestP6_CRMBridge/callback_body_adversarial`,
+    `p6_crm_test.go:270: … write: broken pipe`; (2) `TestP4_MessageToDraft` (`adversarios`, `otro_borrador`, `cierre`), con
+    `p4_borrador_test.go:319: línea ERROR inesperada … pipeline: job FAILED · causa=job_invalido · «stages: el job no trae literal que
+    analizar (el compositor del flush no llegó a escribir el sobre)»`; (3) `TestP6_CRMBridge` (`push_first_attempt_fails`, `push_delivered`,
+    `push_exhausted`…), misma firma en `p6_crm_test.go:379`. 🔴 **La carrera de D-F7-9 ya no es «vista una vez contra el nuevo»**: dos
+    veces seguidas contra el **viejo**, en P4 y en P6, con la máquina cargada (load ≈ 11–13, ajeno a los gates). No reproducida a
+    propósito ni arreglada aquí; es de F8-04/F8-05. Sin medir: si las dos suites nuevas (≈ 9 s más de Postgres por binario) la hacen
+    más probable.
+    ✎ En la ampliación (sobre `2677cb8`) el `broken pipe` de `callback_body_adversarial` volvió a salir, esta vez contra el
+    **nuevo**: 2 de 7 pasadas en el día, una por binario. La carrera de D-F7-9 no volvió a aparecer (0 de 3).
+
 ## Orden de lectura
 
 `README` → [`arquitectura.md`](arquitectura.md) (sobre todo §4 singleton y §5 puentes y adaptadores) →
@@ -66,7 +221,7 @@
 
 ## Bloques de sesión
 
-Siete sesiones, **todas 💻** (para F8 ya no queda promoción web): sin PR ni traspaso, `git push origin dev`.
+Siete sesiones, **todas 💻**: cada una en **su rama partida de `dev`** y con PR a `dev` sin squash (regla 6 del `CLAUDE.md`, 2026-10-03; ✎ corregido en F8-01: aquí decía «sin PR, `git push origin dev`»).
 Cada una es un bloque de 45–90 min (objetivo, **sin medir**) y cierra con las tres cosas: tareas `[x]` con SHA,
 bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../sesiones/README.md).
 

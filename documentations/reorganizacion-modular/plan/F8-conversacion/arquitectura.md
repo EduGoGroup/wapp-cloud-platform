@@ -117,6 +117,12 @@ conmutan en **un solo** commit `conmutar(conversacion)`, junto con las rutas I1�
 
 ### 5.1 · Puentes de import de otras fases hacia el código viejo de conversación
 
+> ✎ **Re-medido el 2026-10-09 (T8.2, `c0c0c03`)**. Puentes vivos en `fronteras_test.go:120-150`, los tres con `Muere: "F8"`
+> y **retira: T8.31**: `solicitudes/intakes/telemetria → flujos/store` (1 fichero + 1 test), `captacion/stages → flujos/store`
+> (`draft.go`, `draft_events.go` + 3 tests) y `captacion/reanalisis → flujos/events` (`reanalisis.go`, `reanalisis_source.go`
+> + 2 tests): **5 ficheros de producción y 6 de test**, no «~6». Las dos filas de F5 de la tabla están **caducadas** (D-F5-1:
+> `catalogo` ya importa `C/model`), y `captacion/reanalisis` **no** importa `flujos/runtime` (el límite entra por constructor).
+
 Medidos sobre el código viejo (quién fuera de `flujos/**` importa `flujos/**`, producción):
 
 | Fase | Paquete nuevo (su referencia vieja) | Importa del viejo | Símbolos reales (no comentarios) | Re-toque en F8 |
@@ -134,6 +140,17 @@ comentario, `match_lineas.go:56`), `catalogo/catalogimport` (tipos de catálogo 
 `solicitudes/intakes/quotetext` (`LectorSemilla` estructural, `quotetext.go:210`).
 
 ### 5.2 · Adaptadores de arranque (`internal/arranque/bridge_<x>.go`, `05` §4.2)
+
+> ✎ **Re-medido el 2026-10-09 (T8.2)**: `ls internal/arranque/bridge_*.go` → **3** (`bridge_contact.go`, `bridge_inferencia.go`,
+> `bridge_captacion.go`), todos **retira: T8.32**. Precisiones sobre la tabla: `bridge_contact` se construye en `flows.go:90`
+> (fuera de `fase*.go`); de `bridge_inferencia` solo queda `turneroBridge`; `bridge_captacion` contiene además la 2.ª instancia
+> vieja de `intake.Postgres` (`newLegacyIntakeJobs`) y `legacyThreadLimit`, y mezcla tres sentidos de adaptación, así que
+> agregador, compositor y pool pasan a tipos nuevos **en el mismo commit**; la 2.ª instancia vieja de `intakes.Postgres` vive
+> en `fase3_almacenes.go:157-160` y la consume solo `cart.NewProjector` (`fase7_flujos.go:254`). `Conmutados` hoy: `acceso`,
+> `edge`, `catalogo`; entran `nucleo`, `inferencia`, `captacion`, `solicitudes` y `conversacion`. **Ficheros de arranque a
+> re-cablear** (por imports viejos, 42 de producción): `fase7_flujos.go` (11), `contenedor.go` (9), `fase3_almacenes.go` (5),
+> `fase5_captacion.go`, `fase8_transporte.go`, `flows.go`, `flowforkind.go`, `http.go`. El testigo de
+> `un_fichero_un_test_test.go:83-86` (`bridge_contact.go`) se retira con el adaptador.
 
 Cuando un módulo **nuevo** ya conmutado tiene que servir a un consumidor **viejo** que el arranque nuevo aún
 cablea, el tipo se traduce en `internal/arranque/bridge_<x>.go` (nivel simple, sin estado). No son los puentes
