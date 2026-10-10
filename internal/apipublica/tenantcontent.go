@@ -7,17 +7,22 @@
 // Motor (source:json,ref) o una ref de media por-tenant. Todo acotado al tenant del token
 // (INV-8): el aislamiento lo garantiza el store (PK/WHERE tenant_id), NUNCA el cuerpo.
 //
-// En el rojo solo existen el puerto, TenantContentDeps y MountTenantContent; los cuatro handlers,
-// la fila del listado y el techo efectivo (tenantContentBytes en la cara vieja) son no exportados
-// y nacen con el verde (05 E-4, P6). Sus promesas viven en el comentario de MountTenantContent.
+// En el rojo solo existían el puerto, TenantContentDeps y MountTenantContent; los cuatro
+// handlers, la fila del listado y el techo efectivo (tenantContentBytes, que usa además el import
+// de catálogo) son no exportados y nacieron con el verde (05 E-4, P6). Sus promesas viven en el
+// comentario de MountTenantContent.
 
 package apipublica
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/catalogimport"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // TenantContentStore es el puerto MÍNIMO del CRUD de contenido dinámico por-tenant que la cara
@@ -47,7 +52,7 @@ type TenantContentDeps struct {
 	// desde config.TenantContentConfig (WAPP_TENANT_CONTENT_MAX_BYTES).
 	//
 	// UNA SOLA FUENTE, A PROPÓSITO: este PUT y el import de catálogo (Plan 041 · Ola 3) escriben
-	// en la MISMA tabla, así que dos techos independientes abren una trampa concreta: subir el
+	// en la MISMA tabla, así que dos techos separados abren una trampa concreta: subir el
 	// del import, importar bien, y que después este PUT rechace ESE MISMO blob. El arranque le
 	// da el mismo número a los dos.
 	MaxBytes int64
@@ -104,7 +109,7 @@ type TenantContentDeps struct {
 //
 // Rareza portada tal cual: el blob NO sale byte a byte. Se emite con json.Marshal de un
 // json.RawMessage, que lo COMPACTA (quita los espacios entre tokens) y escapa `<`, `>` y `&`
-// como <, > y &: es el mismo valor JSON, no los mismos bytes que entraron por
+// como \u003c, \u003e y \u0026: es el mismo valor JSON, no los mismos bytes que entraron por
 // I6. Y un blob almacenado que no fuera JSON (I6 no lo deja entrar) responde el 500 en texto
 // plano «codificando respuesta».
 //
@@ -120,5 +125,201 @@ type TenantContentDeps struct {
 // Fallo de cableado: k.MW nil hace panic AL MONTAR (ver Common), con un mensaje que nombra
 // MountTenantContent. d.Content NO se comprueba al montar.
 func MountTenantContent(c *Cara, k Common, d TenantContentDeps) {
-	panic(pendiente.Implementar("apipublica.MountTenantContent"))
+	// CRUD de contenido dinámico por-tenant (tenant_content, R7): blobs JSONB que
+	// alimentan el adapter content.JSON del Motor (source:json,ref) o una ref de
+	// media por-tenant. Escrituras auditadas (content.write); lecturas sin auditoría
+	// (content.read). Todo acotado al tenant del token (INV-8). Sin cambios en el Motor.
+	mustHaveMW(k, "MountTenantContent")
+	c.Handle("PUT /api/v1/tenant-content/{ref}", protect(k,
+		"content.write", "tenant_content", tenantContentUpsertHandler(d.Content, d.MaxBytes)))
+	c.Handle("POST /api/v1/tenant-content/{ref}", protect(k,
+		"content.write", "tenant_content", tenantContentUpsertHandler(d.Content, d.MaxBytes)))
+	c.Handle("DELETE /api/v1/tenant-content/{ref}", protect(k,
+		"content.write", "tenant_content", tenantContentDeleteHandler(d.Content)))
+	c.Handle("GET /api/v1/tenant-content", protectRead(k,
+		"content.read", tenantContentListHandler(d.Content)))
+	c.Handle("GET /api/v1/tenant-content/{ref}", protectRead(k,
+		"content.read", tenantContentGetHandler(d.Content)))
+}
+
+// tenantContentBytes resuelve el techo del blob JSONB de tenant_content (defensa
+// DoS): el configurado, o el default si no se cableó.
+//
+// UNA SOLA FUENTE, A PROPÓSITO. Este PUT y el import de catálogo (Plan 041 · Ola 3)
+// escriben en la MISMA tabla, así que dos techos separados abren una trampa
+// concreta: subir el límite del import a 4 MiB, importar bien, y que después este
+// PUT rechace ESE MISMO blob. Por eso los dos salen de WAPP_TENANT_CONTENT_MAX_BYTES y
+// comparten el default de catalogimport (1 MiB, el valor que este endpoint ya tenía
+// hardcodeado: por defecto no cambia nada).
+func tenantContentBytes(configured int64) int64 {
+	if configured <= 0 {
+		return catalogimport.DefaultMaxJSONBytes
+	}
+	return configured
+}
+
+// tenantContentSummaryDTO es una fila del listado GET /api/v1/tenant-content: la ref
+// lógica y las marcas de tiempo. NO incluye el blob (se obtiene con GET /{ref}).
+type tenantContentSummaryDTO struct {
+	Ref       string `json:"ref"`
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// tenantContentTimeLayout (rfc3339 en la cara vieja) es el formato de los instantes del listado.
+const tenantContentTimeLayout = "2006-01-02T15:04:05Z07:00"
+
+// tenantContentUpsertHandler (upsertTenantContentHandler en la cara vieja) devuelve el handler
+// de PUT/POST /api/v1/tenant-content/{ref}: registra (upsert) el blob JSON crudo del cuerpo bajo
+// (tenant del token, ref de la ruta). El cuerpo ES el blob que luego lee el adapter
+// content.JSON del Motor (source:json,ref) — se valida que sea JSON. AUDITORÍA CERO
+// PII: se audita ref/action (content.write), NUNCA el contenido del blob. Respuestas:
+//
+//   - 200 con {ref} al persistir.
+//   - 400 si falta ref, el cuerpo está vacío o NO es JSON válido.
+//   - 401 sin identidad; 413 si el blob excede el límite; 500 en fallo del store.
+//
+// El techo se aplica LEYENDO, antes de que encoding/json vea nada: se reusa
+// catalogimport.ReadLimited, el mismo mecanismo (y el mismo número) que el import.
+func tenantContentUpsertHandler(cs TenantContentStore, maxBytes int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		if cs == nil {
+			writeError(w, http.StatusInternalServerError, "store de contenido no configurado")
+			return
+		}
+		ref := r.PathValue("ref")
+		if ref == "" {
+			writeError(w, http.StatusBadRequest, "ref requerida en la ruta")
+			return
+		}
+
+		ceiling := tenantContentBytes(maxBytes)
+		body, err := catalogimport.ReadLimited(r.Body, catalogimport.Limits{MaxJSONBytes: ceiling})
+		if err != nil {
+			if errors.Is(err, catalogimport.ErrDocumentTooLarge) {
+				writeTooLarge(w, "el contenido", ceiling)
+				return
+			}
+			writeError(w, http.StatusBadRequest, "no se pudo leer el cuerpo")
+			return
+		}
+		if len(body) == 0 || !json.Valid(body) {
+			writeError(w, http.StatusBadRequest, "el cuerpo debe ser un JSON válido (el blob de contenido)")
+			return
+		}
+
+		if err := cs.UpsertTenantContent(r.Context(), id.TenantID, ref, body); err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudo registrar el contenido")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ref": ref})
+	})
+}
+
+// tenantContentListHandler (listTenantContentHandler en la cara vieja) devuelve el handler de
+// GET /api/v1/tenant-content: lista las refs de contenido del tenant del token (INV-8), cada una
+// con sus timestamps. 200 con el arreglo (vacío si no hay); 401 sin identidad; 500 en fallo del
+// store.
+func tenantContentListHandler(cs TenantContentStore) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		if cs == nil {
+			writeError(w, http.StatusInternalServerError, "store de contenido no configurado")
+			return
+		}
+		summaries, err := cs.ListTenantContent(r.Context(), id.TenantID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudo listar el contenido")
+			return
+		}
+		out := make([]tenantContentSummaryDTO, 0, len(summaries))
+		for _, s := range summaries {
+			dto := tenantContentSummaryDTO{Ref: s.Ref}
+			if !s.CreatedAt.IsZero() {
+				dto.CreatedAt = s.CreatedAt.UTC().Format(tenantContentTimeLayout)
+			}
+			if !s.UpdatedAt.IsZero() {
+				dto.UpdatedAt = s.UpdatedAt.UTC().Format(tenantContentTimeLayout)
+			}
+			out = append(out, dto)
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
+}
+
+// tenantContentGetHandler (getTenantContentHandler en la cara vieja) devuelve el handler de GET
+// /api/v1/tenant-content/{ref}: el blob JSON crudo de contenido para (tenant del token, ref).
+// 200 con el blob (application/json); 404 si el tenant no tiene esa ref (o es de otro tenant: el
+// store filtra por tenant → 404); 401 sin identidad; 500 en otro fallo.
+func tenantContentGetHandler(cs TenantContentStore) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		if cs == nil {
+			writeError(w, http.StatusInternalServerError, "store de contenido no configurado")
+			return
+		}
+		ref := r.PathValue("ref")
+		if ref == "" {
+			writeError(w, http.StatusBadRequest, "ref requerida en la ruta")
+			return
+		}
+		blob, err := cs.GetTenantContent(r.Context(), id.TenantID, ref)
+		if err != nil {
+			if errors.Is(err, store.ErrTenantContentNotFound) {
+				writeError(w, http.StatusNotFound, "contenido no encontrado")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "no se pudo leer el contenido")
+			return
+		}
+		// El blob se almacenó ya validado como JSON (upsert exige json.Valid); se devuelve
+		// vía writeJSON(json.RawMessage) como application/json. No sale byte a byte: Marshal
+		// lo compacta y escapa <, > y & (rareza del viejo, conservada).
+		writeJSON(w, http.StatusOK, json.RawMessage(blob))
+	})
+}
+
+// tenantContentDeleteHandler (deleteTenantContentHandler en la cara vieja) devuelve el handler
+// de DELETE /api/v1/tenant-content/{ref}: borra el blob (tenant del token, ref). Escritura
+// auditada (content.write) sin PII. Respuestas: 204 al borrar; 404 si no existía (o
+// es de otro tenant); 401 sin identidad; 400 sin ref; 500 en otro fallo.
+func tenantContentDeleteHandler(cs TenantContentStore) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		if cs == nil {
+			writeError(w, http.StatusInternalServerError, "store de contenido no configurado")
+			return
+		}
+		ref := r.PathValue("ref")
+		if ref == "" {
+			writeError(w, http.StatusBadRequest, "ref requerida en la ruta")
+			return
+		}
+		if err := cs.DeleteTenantContent(r.Context(), id.TenantID, ref); err != nil {
+			if errors.Is(err, store.ErrTenantContentNotFound) {
+				writeError(w, http.StatusNotFound, "contenido no encontrado")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "no se pudo borrar el contenido")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 }

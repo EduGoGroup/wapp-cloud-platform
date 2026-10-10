@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // tenantcontent_test.go — cubre el contrato de tenantcontent.go (TenantContentStore,
@@ -410,7 +408,7 @@ func TestMountTenantContent_Get(t *testing.T) {
 	b := tenantContentSetup(t, cs, 0)
 	rec := b.do(tenantA, http.MethodGet, tenantContentTarget, "")
 	wantCode(t, "I10", rec, http.StatusOK)
-	wantExactBody(t, "I10", rec, `{"prompt":"<b>Tú & yo</b>","n":1.0}`)
+	wantExactBody(t, "I10", rec, `{"prompt":"\u003cb\u003eTú \u0026 yo\u003c/b\u003e","n":1.0}`)
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {
 		t.Errorf("I10: Content-Type %q, quiero application/json", got)
 	}
