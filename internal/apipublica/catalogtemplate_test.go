@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // catalogtemplate_test.go — cubre el contrato de catalogtemplate.go (MountCatalogTemplate): el

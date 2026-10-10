@@ -8,13 +8,21 @@
 // consola— porque salen de los MISMOS structs y del mismo texto versionado del módulo catálogo:
 // no pueden describir un contrato que este servidor ya no acepta.
 //
-// En el rojo solo existe MountCatalogTemplate; los dos handlers y sus auxiliares nacen con el
-// verde (05 E-4, P6). Las dependencias son las de catalogimport.go.
+// En el rojo solo existía MountCatalogTemplate; los dos handlers y sus auxiliares nacieron con
+// el verde (05 E-4, P6). Las dependencias son las de catalogimport.go.
 
 package apipublica
 
 import (
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/catalogimport"
 )
 
 // MountCatalogTemplate registra en c las rutas I16, "GET /api/v1/catalog/import/template", e
@@ -85,5 +93,135 @@ import (
 // mensaje que nombra MountCatalogTemplate (ver Common). Si falta una dependencia no se monta
 // nada y k ni se mira.
 func MountCatalogTemplate(c *Cara, k Common, d CatalogImportDeps) {
-	panic(pendiente.Implementar("apipublica.MountCatalogTemplate"))
+	if !catalogImportMountable(d) {
+		return
+	}
+	mustHaveMW(k, "MountCatalogTemplate")
+
+	// La plantilla y el prompt son LECTURA (content.read) y no tocan la BD: son el
+	// contrato dicho de dos maneras. Cuelgan de la misma condición que el POST —y por
+	// tanto aparecen y desaparecen con él— porque son la primera mitad del mismo
+	// acto: repartir la plantilla de un import que no está montado mandaría al
+	// operador a llenarla para encontrarse un 404 al subirla (T3.2).
+	canImport := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureCatalogImport)
+	c.Handle("GET /api/v1/catalog/import/template", protectRead(k, "content.read", canImport(catalogTemplateHandler())))
+	c.Handle("GET /api/v1/catalog/import/prompt", protectRead(k, "content.read", canImport(catalogTemplatePromptHandler())))
+}
+
+// catalogTemplateFormatJSON (formatJSON en la cara vieja) es el formato por defecto de la
+// plantilla: el contrato mismo. Los otros dos (exportFormatCSV/exportFormatXLSX) los declara el
+// export de solicitudes y se reusan tal cual: dos juegos de nombres para "csv" en la misma API
+// sería una trampa para quien la consume.
+const catalogTemplateFormatJSON = "json"
+
+// catalogTemplateFilename (templateFilename en la cara vieja) es el nombre con el que se
+// descarga la plantilla. Sin fecha, a diferencia del export: dos exports distintos no deben
+// pisarse en la carpeta de descargas, pero dos plantillas SÍ —la nueva sustituye a la vieja, y
+// tener «catalogo-plantilla-20260806.json» y otras cuatro al lado es justo cómo alguien
+// acaba llenando la caducada.
+const catalogTemplateFilename = "catalogo-plantilla"
+
+// catalogTemplateHandler sirve
+// GET /api/v1/catalog/import/template?format=json|csv|xlsx: la plantilla de
+// ejemplo que el dueño del negocio descarga para partir de ella (patrón
+// buildImportTemplate de EduGo 038, design §1).
+//
+// LA SIRVE EL BACKEND, no una copia pegada en la consola, y ese es el punto entero
+// del patrón: la plantilla sale de los MISMOS structs del contrato
+// (catalogimport.BuildTemplate), así que no puede describir un contrato que este
+// servidor ya no acepta. Una plantilla estática en el front se queda vieja el día
+// que sube ImportVersion y reparte documentos que el import rechaza en bloque.
+//
+// Las respuestas, una a una, están en el contrato de MountCatalogTemplate.
+func catalogTemplateHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		format := r.URL.Query().Get("format")
+		if format == "" {
+			format = catalogTemplateFormatJSON
+		}
+
+		var buf bytes.Buffer
+		var err error
+		switch format {
+		case catalogTemplateFormatJSON:
+			err = catalogTemplateWriteJSON(&buf)
+		case exportFormatCSV:
+			err = exportWriteCSV(&buf, catalogimport.TabularColumns(), catalogimport.TemplateSheetRows())
+		case exportFormatXLSX:
+			err = exportWriteXLSX(&buf, catalogimport.TabularSheetName,
+				catalogimport.TabularColumns(), catalogimport.TemplateSheetRows())
+		default:
+			writeError(w, http.StatusBadRequest, "format inválido: usa json, csv o xlsx")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudo generar la plantilla")
+			return
+		}
+
+		w.Header().Set("Content-Type", catalogTemplateContentType(format))
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf("attachment; filename=%q", catalogTemplateFilename+"."+format))
+		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+		w.WriteHeader(http.StatusOK)
+		if _, werr := w.Write(buf.Bytes()); werr != nil {
+			return
+		}
+	})
+}
+
+// catalogTemplateWriteJSON (writeTemplateJSON en la cara vieja) serializa la plantilla
+// INDENTADA y con salto final. No es cosmética: este archivo lo abre y lo edita a mano el dueño
+// del negocio, y una sola línea de 900 caracteres es ilegible en cualquier editor y en la caja
+// de texto de un LLM.
+func catalogTemplateWriteJSON(w io.Writer) error {
+	body, err := json.MarshalIndent(catalogimport.BuildTemplate(), "", "  ")
+	if err != nil {
+		return fmt.Errorf("plantilla: serializar el documento: %w", err)
+	}
+	if _, werr := w.Write(append(body, '\n')); werr != nil {
+		return fmt.Errorf("plantilla: escribir el documento: %w", werr)
+	}
+	return nil
+}
+
+// catalogTemplateContentType (templateContentType en la cara vieja) es el MIME de cada formato
+// de la plantilla.
+func catalogTemplateContentType(format string) string {
+	if format == catalogTemplateFormatJSON {
+		return "application/json; charset=utf-8"
+	}
+	return exportContentType(format)
+}
+
+// catalogTemplatePromptResponse (catalogPromptResponse en la cara vieja) es el prompt-plantilla
+// servido a la consola.
+//
+// Viaja con el format y la VERSIÓN del contrato al que corresponde, y no por
+// simetría: el BFF puede cachear este texto y una pantalla que muestre el prompt de
+// la versión 1 cuando el servidor ya valida la 2 mandaría al dueño a generar
+// documentos que se rechazan. Con la versión al lado, la pantalla puede notarlo.
+type catalogTemplatePromptResponse struct {
+	Format  string `json:"format"`
+	Version int    `json:"version"`
+	Prompt  string `json:"prompt"`
+}
+
+// catalogTemplatePromptHandler (catalogPromptHandler en la cara vieja) sirve
+// GET /api/v1/catalog/import/prompt: el texto que el dueño del negocio pega en SU LLM (design
+// §6) junto con la plantilla y su lista de productos.
+//
+// Existe como ENDPOINT y no como texto en la plantilla del BFF porque el prompt
+// está versionado junto al contrato (vive en el módulo catálogo, con un test que lo ata a
+// ImportVersion). Copiado en un HTML de otro repo sería una
+// segunda fuente, y envejecería sin que nadie se enterase: el BFF lo pide y lo
+// muestra como texto copiable.
+func catalogTemplatePromptHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, catalogTemplatePromptResponse{
+			Format:  catalogimport.ImportFormat,
+			Version: catalogimport.ImportVersion,
+			Prompt:  catalogimport.ImportPrompt(),
+		})
+	})
 }
