@@ -651,14 +651,17 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     `CloseWithSourceText_AlreadyClosedOrUnknownID_FalseAndNothingTouched`. Agregador y compositor, 14: los cuatro pedidos
     (quitar la guarda, cerrar sin sobre, sobre sin cerrar, orden viejo) y diez más; «quitar la guarda» lo mata **un solo**
     test, `TestSweep_AMessageDuringTheCompositionKeepsTheWindowOpen`. Re-análisis, 11. Salvo los dos contra Postgres real,
-    son los declarados por los sub-agentes, no repetidos por el orquestador.
+    son los declarados por los sub-agentes, no repetidos por el orquestador. ✎ **Jhoan (2026-10-10)**: los siete que
+    sostienen el arreglo se repiten en F8-07 (T8.43), por quien no escribió el código.
 58. **(F8-06b, gates) Verdes sobre `42a06574`, con una intermitencia ajena por el camino.** `GOWORK=off make ci-local`
     `GATE_RC=0` (239 `ok`, lint `0 issues.`); `PENDIENTES=0 · ROJOS=0`; 0 `--- SKIP` (4.475 PASS de primer nivel);
     `make test-procesos` nuevo y viejo `RC=0 · PASS=1293 · FAIL=0 · SKIP=0`, sin la carrera en ninguno. Tras T8.39 (sobre
     `83254490`) la primera pasada contra el nuevo dio `RC=1 · PASS=1288 · FAIL=2`: `TestP6_CRMBridge/callback_body_adversarial`,
     `p6_crm_test.go:270`, «write: connection reset by peer» — la intermitencia del callback del CRM del hallazgo 14 (allí
     «broken pipe»), ajena al cambio; repetida sola, `RC=0 · PASS=1290`. **Sin correr**: `make ci-docker`, la integración
-    vieja, el arranque real y el e2e de TX.24 (F8-07). La carrera no se reprodujo a propósito bajo carga.
+    vieja, el arranque real y el e2e de TX.24 (F8-07). La carrera no se reprodujo a propósito bajo carga. ✎ **Jhoan
+    (2026-10-10): se da por bueno sin test de estrés**: con una sola sentencia no queda instante en que la fila esté
+    `pending` sin sobre; el argumento es de construcción, no de estadística.
 59. **(F8-06b, método y costes)** Tres sub-agentes en serie, rojo y verde con el mismo (reanudado), ninguno commitea.
     (a) El rojo de un cambio a una operación que ya existe es **por aserción**, no por `panic` (como en D-F8-15), y los casos
     de suite nuevos viven en una tabla aparte hasta el verde, porque la suite corre sin etiqueta. (b) Coste del orden nuevo:
@@ -668,7 +671,8 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     recoge `RecoverAtBoot`, sin ERROR. (d) El doble `aggregatorJobs` hace `ctxAware` también a los cierres. (e) Un
     `golangci-lint` a mano necesita `GOTOOLCHAIN=go1.26.5` delante (el `Makefile` lo exporta). (f) **Residual conocido, no
     cambiado**: el hilo y la cola no se escriben en un solo acto, así que un mensaje ya en el hilo cuya fila aún no movió
-    `OpenOrAppend` puede entrar en el sobre y abrir después otra ventana; pasaba igual con el orden viejo y no es D-F7-9.
+    `OpenOrAppend` puede entrar en el sobre y abrir después otra ventana; pasaba igual con el orden viejo y no es D-F7-9. ✎ Deuda **D-37** de `deuda.md` (Jhoan, 2026-10-10: post-migración;
+    deducido leyendo, sin verificar el orden real de las dos escrituras).
 
 ## Orden de lectura
 
@@ -692,7 +696,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-05 ✅ | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo y `welcome`, `thread` y `send` verdes (✎ 2026-10-10, D-F8-12: 14, no 11), mutantes muertos, `pendiente` del runtime = 0 (2026-10-10, rama `reorg/f8-05-runtime-nucleo`, `46b6a1ec` … `f5fd0374` y tres arreglos decididos después (`c44c212f`, `6eb31a3d`, `a9da0105`), PR #67 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash) |
 | F8-06 ✅ | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo (2026-10-10, rama `reorg/f8-06-cara-http-y-conmutar`, `5ba7f419` … `fe6305b9`; hallazgos 47–51) |
 | F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39, T8.40 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; el job de re-análisis nace con su sobre; caso de P4 verde contra el binario nuevo. ✎ **hecha** (2026-10-10; `a0144628` … `42a06574`; hallazgos 52–59) |
-| F8-07 | cierre | — | T8.36–T8.38, T8.41, T8.42 (✎ 2026-10-10) | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
+| F8-07 | cierre | — | T8.36–T8.38, T8.41–T8.43 (✎ 2026-10-10) | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
 
 Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (medido en el código viejo):
 `admin` importa `runtime` (`handlers.go:24,306,308`), así que no puede nacer antes que sus contratos y va con la cara

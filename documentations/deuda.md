@@ -458,6 +458,25 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   consumidor o, si no compensa, anotar por qué se deja.
 - **Veredicto**: después del relevo de F10, en una sesión propia que abarca varios repos.
 
+### D-37 · 🟡 El hilo y la cola no se escriben en un solo acto: un mensaje puede entrar en dos ventanas
+
+> Abierta el 2026-10-10 por decisión de Jhoan tras F8-06b (hallazgo 59 (f) de
+> `reorganizacion-modular/plan/F8-conversacion/README.md`): **para después de la migración**. **Deducida leyendo el
+> código, no vista ni reproducida.**
+
+- **Dónde**: el camino del entrante escribe el mensaje en el hilo (`conversation_events`) y lo apunta en la cola
+  (`intake_jobs`, `OpenOrAppend`) en dos sentencias, sin transacción. El cierre de la ventana compone el literal leyendo
+  el **hilo** y decide si la ventana cambió mirando la **cola** (`CloseWithSourceText`, guarda `id` + `updated_at`).
+- **El hueco**: si la ventana vence con un mensaje ya en el hilo cuyo apunte en la cola aún no llegó, el sobre lo incluye,
+  la guarda no lo ve, y el apunte abre después **otra ventana** solo con ese mensaje: se analizaría dos veces, la segunda
+  como un borrador de un único mensaje. No se pierde nada.
+- **Lo que no se sabe**: en qué orden escribe el entrante el hilo y la cola (**sin verificar**: si la cola va primero, el
+  hueco no existe en esta forma) y si ocurre alguna vez. Es estrecho: la ventana tiene que vencer entre las dos escrituras
+  de un mismo mensaje.
+- **No es D-F7-9** y no lo introdujo su arreglo: el viejo, que cerraba y componía después, tenía el mismo hueco.
+- **Veredicto**: se deja. Lo primero, cuando toque, es confirmar el orden real de las dos escrituras. Arreglarlo pide una
+  regla (qué se hace con el mensaje tardío), no un parche. Después del relevo de F10.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes

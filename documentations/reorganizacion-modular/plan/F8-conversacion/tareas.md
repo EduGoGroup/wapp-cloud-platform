@@ -252,7 +252,7 @@ Para cuando: un job de ventana nunca es visible para el worker en `pending` sin 
   - **Hecho cuando**: un job de re-análisis nunca es visible en `pending` sin sobre; fallo al componer → no se abre job y la petición lo dice (hoy: job abierto sin literal que el worker mata); mutantes muertos; suite `Contrato` de `intake` verde en memoria y en Postgres; si `PutSourceText` queda sin llamante de producción, dicho y preguntado, no borrado.
   - **Gate**: `G` · `make test-procesos` (nuevo y viejo) · **Commit**: `fix(captacion): el job de re-análisis nace con su sobre (D-F7-9)`
 
-## Bloque 7 · cierre · 💻 · sesión F8-07 · T8.36–T8.38, T8.41–T8.42 (✎ 2026-10-10: dos tareas nuevas tras F8-06b)
+## Bloque 7 · cierre · 💻 · sesión F8-07 · T8.36–T8.38, T8.41–T8.43 (✎ 2026-10-10: tres tareas nuevas tras F8-06b)
 Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 entera.
 
 - [ ] **T8.36 · Gates y arranque local del binario nuevo** · 💻 · dep. T8.35, T8.39, T8.40 (✎ D-F8-13) · cumple R8.8.a, R8.8.c
@@ -272,7 +272,13 @@ Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 entera.
   - **Hecho cuando**: el caso acepta como rechazo válido la respuesta de error **o** el corte al enviar, y sigue fallando si el servidor **acepta** el cuerpo; sin tocar el servidor; sin `time.Sleep` ni `t.Skip`; `-run TestP6_CRMBridge -count=10` verde contra los dos binarios.
   - **Gate**: `make vet-integracion` · `make test-procesos` · **Commit**: `procesos(solicitudes): el callback adversario del CRM tolera el corte de conexión`
 
-- [ ] **T8.38 · Cerrar F8** · 💻 · dep. T8.36, T8.41, T8.42 (y T8.37 si aplica)
+- [ ] **T8.43 · Repetir los mutantes que sostienen el arreglo de D-F7-9** · 💻 · dep. T8.41 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgo 57 del README)
+  - **Qué**: en F8-06b, 37 de los 39 mutantes los corrieron los sub-agentes que escribieron el código; el orquestador solo repitió los dos del SQL contra Postgres real. Aquí los repite **quien no escribió el código**, sobre la cabeza integrada y **después de T8.41** (que cambia el compositor).
+  - **Los siete**: en `C/runtime/aggregator_sweep.go` — (1) volver al orden viejo (cerrar y después componer y escribir), (2) cerrar sin sobre, (3) escribir el sobre sin cerrar, (4) quitar la guarda de «la ventana no cambió» (en el gemelo `intake/memory.go`, corriendo los tests de `runtime`); en `captacion/reanalisis/reanalisis.go` — (5) abrir el job y componer después, (6) abrir el job pese al fallo de composición, (7) tragarse el fallo de composición.
+  - **Hecho cuando**: cada uno **compila** y mata al menos un test, con el nombre del test anotado; un mutante que no compila no cuenta como muerto; en serie y por `go test -overlay` sobre copias fuera del repo, nunca editando el checkout; si alguno sobrevive, nace su caso en un commit `test(…)`.
+  - **Gate**: la tabla mutante → test en el hallazgo de cierre · **Commit**: ninguno si todos mueren
+
+- [ ] **T8.38 · Cerrar F8** · 💻 · dep. T8.36, T8.41, T8.42, T8.43 (y T8.37 si aplica)
   - **Ficheros**: `ESTADO.md`, este `README.md` (estado «cerrada», SHA, hallazgos)
   - **Hecho cuando**: los 10 puntos de `reglas.md` §4 escritos con su número en `ESTADO.md`; `origin/dev` al día; la siguiente es F9/F10 (decisión de Jhoan). No se toca `main`.
   - **Commit**: `docs(reorganizacion-modular): F8 cerrada`
