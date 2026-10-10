@@ -1,10 +1,9 @@
-//go:build pendiente
-
 package apipublica_test
 
-// catalogimport_apply_test.go — trozo de catalogimport_test.go (05 E-13): el diff, la respuesta,
-// el apply con su versionado y los tres desenlaces del catálogo vigente de I14
-// (MountCatalogImport). Los dobles y auxiliares (catalogImport…) viven en catalogimport_test.go.
+// catalogimport_apply_test.go — gemelo de catalogimport_apply.go (05 E-13), que no exporta nada:
+// prueba por MountCatalogImport el tramo común del import —el diff, la respuesta, el apply con
+// su versionado y los tres desenlaces del catálogo vigente—. Los dobles y auxiliares
+// (catalogImport…) viven en catalogimport_test.go.
 
 import (
 	"encoding/json"

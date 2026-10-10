@@ -7,16 +7,22 @@
 // (catalogtabular.go, I15) y la plantilla con su prompt (catalogtemplate.go, I16 e I17): las
 // cuatro rutas montan con la MISMA condición, y por eso comparten CatalogImportDeps.
 //
-// En el rojo solo existen los dos puertos, CatalogImportDeps y MountCatalogImport; el handler,
-// la respuesta, el tramo común con la planilla y sus auxiliares nacen con el verde (05 E-4, P6).
+// En el rojo solo existían los dos puertos, CatalogImportDeps y MountCatalogImport; el handler,
+// la respuesta, el tramo común con la planilla y sus auxiliares nacieron con el verde (05 E-4,
+// P6). Los nombres no exportados llevan el tema del fichero (catalogImport…); el comentario de
+// cada uno dice cómo se llamaba en la cara vieja.
 
 package apipublica
 
 import (
 	"context"
+	"errors"
+	"net/http"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/catalogimport"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // CatalogImportContentReader es el puerto MÍNIMO de lectura que el import consume: el blob
@@ -185,5 +191,168 @@ type CatalogImportDeps struct {
 // mensaje que nombra MountCatalogImport (ver Common). Si falta una dependencia no se monta nada
 // y k ni se mira.
 func MountCatalogImport(c *Cara, k Common, d CatalogImportDeps) {
-	panic(pendiente.Implementar("apipublica.MountCatalogImport"))
+	// Sin store de contenido, sin versionador o sin resolver de features las rutas NO
+	// se montan: mejor un 404 de ruta inexistente que un import que responde 500 a
+	// medio camino o, peor, que se aplica sin poder comprobar el plan.
+	if !catalogImportMountable(d) {
+		return
+	}
+	mustHaveMW(k, "MountCatalogImport")
+
+	// TRES GUARDIAS, Y NINGUNO SUSTITUYE A OTRO. El scope (content.write) dice
+	// "puedes tocar el contenido de este tenant"; la feature (catalog_import) dice "tu
+	// plan incluye cargarlo de golpe"; y la auditoría deja constancia. RequireFeature
+	// se compone SIEMPRE después de Authenticate y RequirePermission: antes no habría
+	// identidad de la que sacar el tenant y el gate cortaría fail-closed a todo el
+	// mundo.
+	//
+	// MISMO SCOPE QUE tenant-content, y por lo mismo que las variables de empresa: el
+	// import escribe exactamente donde escribe el PUT genérico (public.tenant_content),
+	// así que inventarle un scope propio no protegería nada nuevo y dejaría la ruta
+	// inaccesible hasta una migración de grants.
+	//
+	// A DIFERENCIA de tenant-variables, esto SÍ lleva gate de feature: cargar el
+	// catálogo entero validado, con diff y versión, es una capacidad que se vende
+	// (taxonomía del Plan 040). Quien no la tenga sigue pudiendo escribir su blob a
+	// mano por PUT /api/v1/tenant-content/{ref}.
+	canImport := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureCatalogImport)
+	c.Handle("POST /api/v1/catalog/import", protect(k, "content.write", "catalog_import",
+		canImport(catalogImportHandler(d.Content, d.ContentVersions, catalogImportLimits(d)))))
+}
+
+// catalogImportMountable es la condición de montaje de las CUATRO rutas del import (el
+// `if d.Content == nil || d.ContentVersions == nil || d.Entitlements == nil` de
+// registerCatalogImport en la cara vieja). Vive en una función para que los tres Mount* no
+// puedan escribirla distinta.
+func catalogImportMountable(d CatalogImportDeps) bool {
+	return d.Content != nil && d.ContentVersions != nil && d.Entitlements != nil
+}
+
+// catalogImportLimits arma los topes anti-abuso de las dos puertas del import. El de bytes es
+// el techo de tenant_content ya resuelto (una sola fuente: ver tenantContentBytes); el de
+// artículos viaja tal cual y lo resuelve el validador.
+func catalogImportLimits(d CatalogImportDeps) catalogimport.Limits {
+	return catalogimport.Limits{
+		MaxJSONBytes: tenantContentBytes(d.ContentMaxBytes),
+		MaxItems:     d.ImportMaxItems,
+	}
+}
+
+// Modos del import (D-041.6). validate no escribe NADA; apply re-valida y escribe.
+// (importModeValidate / importModeApply en la cara vieja.)
+const (
+	catalogImportModeValidate = "validate"
+	catalogImportModeApply    = "apply"
+)
+
+// catalogImportDefaultRef (defaultCatalogRef en la cara vieja) es la ref de tenant_content a la
+// que va el catálogo cuando el llamante no dice otra. No es un valor cualquiera: es el que usan
+// los flujos del e2e y el que tres tests del motor dan por hecho, así que un default distinto
+// dejaría el import escribiendo en una ref que nadie lee.
+const catalogImportDefaultRef = "catalogo"
+
+// catalogImportErrors es el cuerpo del 400 por documento inválido: el código
+// estable que la pantalla distingue, más TODOS los defectos con su ubicación
+// (T3.1). Es el motivo de que el 400 no use writeError: una lista de problemas
+// accionables no cabe en un `{"error":"..."}`.
+type catalogImportErrors struct {
+	Error  string                           `json:"error"`
+	Errors []catalogimport.ImportFieldError `json:"errors"`
+}
+
+// catalogImportHandler devuelve el handler de
+// POST /api/v1/catalog/import?mode=validate|apply&ref=<ref> (D-041.6): recibe el
+// documento de catálogo como JSON CRUDO en el cuerpo (el JSON es portátil, INV-05:
+// no lleva tenant ni ref) y, según el modo, enseña qué cambiaría o lo aplica.
+//
+// EL MODO POR DEFECTO ES validate, y es una decisión de seguridad, no de
+// comodidad: quien olvide el parámetro ve el diff, no se encuentra el catálogo
+// reemplazado. Un modo desconocido es 400 —no se adivina— porque "aply" tecleado
+// a las prisas no puede degradar a "no hagas nada" en silencio ni, mucho menos,
+// a "escribe".
+//
+// APPLY RE-VALIDA STATELESS. No hay ticket, ni sesión, ni "confirma lo que
+// validaste": el apply vuelve a leer, a validar y a diffear el documento que le
+// llega. Así el estado del servidor no depende de una llamada anterior y dos
+// pantallas abiertas no pueden confirmar la validación de la otra.
+//
+// Las respuestas, una a una, están en el contrato de MountCatalogImport.
+func catalogImportHandler(cs CatalogImportContentReader, vw CatalogImportVersionWriter, limits catalogimport.Limits) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target, ok := catalogImportTargetFrom(w, r, store.VersionSourceImportJSON)
+		if !ok {
+			return
+		}
+		doc, code, errBody := catalogImportDecodeBody(r, limits)
+		if errBody != nil {
+			writeJSON(w, code, errBody)
+			return
+		}
+		catalogImportFinish(w, r, cs, vw, target, doc)
+	})
+}
+
+// catalogImportTargetFrom resuelve identidad y query de un import, y responde ÉL MISMO
+// cuando algo falta (ok=false ⇒ la respuesta ya está escrita).
+//
+// Los dos caminos del import comparten este preámbulo ENTERO, y por eso está aquí y
+// no copiado en cada handler: escrito dos veces, bastaría con que un día uno de los
+// dos dejara de comprobar el tenant para que un import escribiera donde no debe.
+//
+// La comprobación vieja de «store nil ⇒ 500» no se porta: las rutas solo se montan con los dos
+// puertos presentes (catalogImportMountable).
+func catalogImportTargetFrom(w http.ResponseWriter, r *http.Request, source string) (catalogImportTarget, bool) {
+	id, ok := httpapi.IdentityFromContext(r.Context())
+	if !ok || id.TenantID == "" {
+		writeError(w, http.StatusUnauthorized, "autenticación requerida")
+		return catalogImportTarget{}, false
+	}
+	mode, ref, msg := catalogImportParams(r)
+	if msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return catalogImportTarget{}, false
+	}
+	return catalogImportTarget{tenantID: id.TenantID, mode: mode, ref: ref, source: source}, true
+}
+
+// catalogImportParams (importParams en la cara vieja) resuelve el modo y la ref del query
+// string. Devuelve el mensaje de error (vacío = todo bien) en vez de escribir la respuesta,
+// para que el handler conserve un solo punto de salida por caso y no infle su complejidad.
+func catalogImportParams(r *http.Request) (mode, ref, msg string) {
+	mode = r.URL.Query().Get("mode")
+	if mode == "" {
+		mode = catalogImportModeValidate
+	}
+	if mode != catalogImportModeValidate && mode != catalogImportModeApply {
+		return "", "", "mode debe ser " + catalogImportModeValidate + " o " + catalogImportModeApply
+	}
+	ref = r.URL.Query().Get("ref")
+	if ref == "" {
+		ref = catalogImportDefaultRef
+	}
+	return mode, ref, ""
+}
+
+// catalogImportDecodeBody (decodeImportBody en la cara vieja) lee el documento con el techo de
+// bytes aplicado ANTES de deserializar y lo valida. Devuelve el documento tipado y, si algo
+// falla, el status + el cuerpo de error ya armado (nil = todo bien). El cuerpo es `any`
+// porque los dos fallos posibles tienen forma distinta: el techo de bytes
+// responde un error simple y el documento inválido, la lista completa de
+// defectos.
+func catalogImportDecodeBody(r *http.Request, limits catalogimport.Limits) (catalogimport.CatalogImport, int, any) {
+	raw, err := catalogimport.ReadLimited(r.Body, limits)
+	if err != nil {
+		if errors.Is(err, catalogimport.ErrDocumentTooLarge) {
+			return catalogimport.CatalogImport{}, http.StatusRequestEntityTooLarge,
+				tooLarge("el documento", tenantContentBytes(limits.MaxJSONBytes))
+		}
+		return catalogimport.CatalogImport{}, http.StatusBadRequest,
+			errorBody("no se pudo leer el cuerpo")
+	}
+	doc, verr := catalogimport.Validate(raw, limits)
+	if verr != nil {
+		return catalogimport.CatalogImport{}, http.StatusBadRequest,
+			catalogImportErrors{Error: "validation_failed", Errors: verr.Errors}
+	}
+	return doc, 0, nil
 }
