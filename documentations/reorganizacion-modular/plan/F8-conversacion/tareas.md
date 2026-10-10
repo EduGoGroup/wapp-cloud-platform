@@ -135,27 +135,27 @@ Para cuando: `engine`, `menu`, `survey`, `media`, `turnoacotado` verdes; `G`, `V
 ## Bloque 3 · `events` y `cart` · 💻 · sesión F8-03 · T8.12, T8.15–T8.17, T8.24, T8.25
 Para cuando: `events` (7) y `cart` (14) verdes; `eventshelpertest` con doble y suite; goldens idénticos; candado de orden sin etiqueta, verde y mutado. (21 ficheros + doble + testdata.)
 
-- [ ] **T8.12 · rojo(conversacion): `events` (7) y el doble `eventshelpertest`** · 💻 · dep. T8.4 · cumple R8.2.f, R8.4.d
+- [x] **T8.12 · rojo(conversacion): `events` (7) y el doble `eventshelpertest`** · 💻 · dep. T8.4 · cumple R8.2.f, R8.4.d — `8c819b40` (114 exportados; `store.go` nace partido en 4: `store`, `store_list`, `store_filter`, `store_append`; `events.go`, `kinds.go` y `store_filter.go` nacen ya verdes; suite de 51 casos, 4 de carrera; la de Postgres vive en `test/procesos/events_contrato_test.go`)
   - **Ficheros**: `C/events/{events,kinds,dispatcher,menu,summary,thread_reader,store}.go` + tests; `C/events/eventshelpertest/{store,contrato}.go` (+ test **verde** del doble)
   - **Hecho cuando**: 114 exportados; reglas de `diseno.md` §2.4 (INV-13 incluida) en los comentarios; D-1 citada en `store.go`; el doble satisface `EventStore`, `SummaryAppender`, `ThreadReader`; la suite `Contrato(t, func(t) Montaje)` corre contra el doble y, con el arnés de F9-A, contra `events.Store` en Postgres (P4); arista `conversacion → acceso` en la lista blanca.
   - **Gate**: `V` · `go test ./internal/modulos/conversacion/events/eventshelpertest/; echo rc=$?` → 0
   - **Commit**: `rojo(conversacion): contrato de events y su doble en memoria`
-- [ ] **T8.24 · verde(conversacion): `events` (7)** · 💻 · dep. T8.12, T8.23 — *`admin` (4) pasa a T8.13: importa `runtime` y no puede nacer antes que sus contratos*
+- [x] **T8.24 · verde(conversacion): `events` (7)** · 💻 · dep. T8.12, T8.23 — `menu` + `dispatcher` `f909402e` (juntos: separados no compilan ni pasan `unused`) · `summary` `6590724e` (se parte: `summary.go` + `summary_render.go`) · `store.go` `d3c2f89e` · `store_list.go` `006e4248` · `store_append.go` `6284c04e` · `thread_reader.go` `1667bca9`; suite 51/51 en memoria y en Postgres; 56 mutantes del adaptador, 55 muertos y 1 equivalente. El `G` se corrió **una vez**, sobre la cabeza integrada (`790ca522`), no por commit — *`admin` (4) pasa a T8.13: importa `runtime` y no puede nacer antes que sus contratos*
   - **Hecho cuando**: un test por promesa del contrato; la verdad de `events/store.go` y `events/thread_reader.go` la da la suite contra Postgres (P4) y F9; textos del menú literales.
   - **Gate**: `G` por commit · **Commit**: `verde(conversacion): <fichero>`
-- [ ] **T8.15 · rojo(conversacion): `cart` — estado y bordes (8)** · 💻 · dep. T8.7, T8.6
+- [x] **T8.15 · rojo(conversacion): `cart` — estado y bordes (8)** · 💻 · dep. T8.7, T8.6 — `69d99d54` (trae también `cart.go`: `Prime` y `ValidateNode` son métodos de `Module` y sin él los ocho no compilan; `validate.go` nace verde; la frontera `conversacion → catalogo` y su test, D-F8-10)
   - **Ficheros**: `C/modules/cart/{state,effects,variants,validate,buyer,revalidate,resume,prime}.go` + tests
   - **Hecho cuando**: importa `modulos/catalogo` y `modulos/solicitudes/intakes` (aristas en la lista blanca); nombres de efecto y textos literales; `revalidate.go` devuelve `intakes.PriceList`.
   - **Gate**: `V` · **Commit**: `rojo(conversacion): contrato de cart (estado y bordes)`
-- [ ] **T8.16 · rojo(conversacion): `cart` — el módulo (6) y los goldens** · 💻 · dep. T8.15 · cumple R8.3.c
+- [x] **T8.16 · rojo(conversacion): `cart` — el módulo (6) y los goldens** · 💻 · dep. T8.15 · cumple R8.3.c — `6dc8e574` (`cart.go` nace partido en 4: `cart`, `cart_levels`, `cart_notes`, `cart_navigation`; goldens y catálogos de `testdata` copiados byte a byte, `cmp` rc=0)
   - **Ficheros**: `C/modules/cart/{cart,troceo,preresolutor,screens,consulta,projection}.go` + tests; `C/modules/cart/testdata/cart_v{1,2}_transcript.golden.txt` (copia literal, D-F8-3)
   - **Hecho cuando**: H24, H29, ola6 y 054 escritos como promesas de `cart.go`/`projection.go`; el test golden compila y cae en rojo; el corpus de equivalencia de `troceo`/`preresolutor` lleva casos adversarios (`reglas.md` §0).
   - **Gate**: `V` · **Commit**: `rojo(conversacion): contrato de cart (módulo) y sus goldens`
-- [ ] **T8.17 · rojo(conversacion): candado de orden de `Step`** · 💻 · dep. T8.16 · cumple R8.4.b
+- [x] **T8.17 · rojo(conversacion): candado de orden de `Step`** · 💻 · dep. T8.16 · cumple R8.4.b — `790ca522` (re-anclado: busca `Step` donde viva; comprobado con un cuerpo temporal que pasa con el orden bueno y cae al mover la petición bajo `st.Started = true`)
   - **Ficheros**: `C/modules/cart/orden_consulta_ast_test.go` (con `//go:build pendiente` hasta el verde de `cart.go`)
   - **Hecho cuando**: exige una de cada pieza; comprobado que **ve** `Step` cuando exista el cuerpo.
   - **Gate**: `V` · **Commit**: `rojo(conversacion): candado del orden de la consulta en cart`
-- [ ] **T8.25 · verde(conversacion): `cart` (14)** · 💻 · dep. T8.15–T8.17, T8.24 · cumple R8.3.c, R8.4.b
+- [ ] **T8.25 · verde(conversacion): `cart` (14)** · 💻 · dep. T8.15–T8.17, T8.24 · cumple R8.3.c, R8.4.b — **pendiente: F8-03 paró a los ≈ 80 min con `events` verde y `cart` en rojo; se relanza la misma sesión.** Plan del verde (del sub-agente que escribió el rojo): (1) un commit obligado por `unused` con 12 ficheros (`state`, `effects`, `variants`, `buyer`, `screens`, `preresolutor`, `consulta`, `troceo`, `cart`, `cart_levels`, `cart_notes`, `cart_navigation`), que quita la etiqueta a sus tests, a `helpers_test.go`, a los goldens y al candado; (2) `prime.go` (antes, mover `TestWithLogger_PrimeWarnsAboutDiscardedFields` de `cart_test.go` a `prime_test.go`); (3) `resume.go`; (4) `revalidate.go`; (5) `projection.go`, con mutantes. A resolver en (1): `loadCatalog` vivía en el `catalog.go` viejo y `catalogo` no lo exporta (nace en `cart`); y si `cloneVars` se sustituye por `modules.CloneVars`
   - **Hecho cuando**: test golden verde **sin** `-update`; `orden_consulta_ast_test.go` sin `//go:build pendiente` y verde; mutación local del orden → rojo (se deshace sin commitear); las tres cosas del cierre; `dev` empujado.
   - **Gate**: `G` · **Commit**: `verde(conversacion): <fichero>`
 

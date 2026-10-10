@@ -251,6 +251,52 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     `reglas.md` T-6: `WithConsultaResolver`, `ObservadorConsulta`, `Desenlace…`): corregidos con ✎ al cerrar la sesión; la
     correspondencia completa está en [`tareas.md`](tareas.md), antes del bloque 3.
 
+21. **(F8-03, frontera; ✅ D-F8-10, Jhoan, 2026-10-09) El hallazgo 3, medido y decidido.** El `cart` viejo no importa ningún
+    paquete de catálogo: el catálogo vivía **dentro** de él (`cart/catalog.go`, hoy `modulos/catalogo`, F5). El nuevo usa solo el
+    paquete raíz (`Catalog`, `Category`, `Article`, `Variant`, `ParseCatalog`, `HasVariants`, en 9 ficheros) y nunca
+    `catalogo/indice`. Queda: `"catalogo"` en `Capas["conversacion"]` y un test propio en `fronteras_test.go`,
+    `TestConversacionDoesNotImportCatalogIndex`, sin ampliar el motor; comprobado por mutación (`fronteras_test.go:213`).
+    `Capas` tiene ahora `conversacion → catalogo` y `catalogo → conversacion` a la vez: no hay ciclo de paquetes.
+22. **(F8-03, `events`, E-13) Dos particiones más de las previstas.** `store.go` nace en cuatro (`store`, `store_list`,
+    `store_filter`, `store_append`) y `summary.go`, que con su lógica medía 646 líneas, en dos (`summary.go` 498 +
+    `summary_render.go`: `Encode` y `Render`). `events` son **10** ficheros de producción, no 7; los 114 exportados no cambian.
+    Por el lint `unused`: `menu` y `dispatcher` van verdes en un commit; `eventColumnsE`, `scanRescuable` y `nullableID` nacen en
+    `store_list.go`, no en `store.go`.
+23. **(F8-03, `events`) Comentarios del viejo que no casaban con su código, corregidos en el contrato, y rarezas portadas tal
+    cual.** `flujos/events/menu.go:268` dice que cada cierre va separado por una línea en blanco y solo el primero la lleva (con
+    más de cinco rescatables, «…y N más» queda pegado al cierre; fijado en `BuildRescue`); `summary.go:365,546` nombran un
+    `BuildSummary` que no existe (es `LoadSummary`); `events.go:144` dice «hoy nadie filtra `entry_kind = 'message'`» y lo hace
+    `ListPastedByOwner` (`thread_reader.go:204`). Portado y fijado, **no** arreglado: `ListRescuable` y `ListEvents` fallan con el
+    texto «events: recorrer eventos **vivos**» (`store.go:718`, el `collect` compartido); un id inexistente en `TransitionEvent`
+    da `ErrNotOpen`, no `ErrEventMissing`; `Touch` refresca también un evento terminal; `AppendDecision` no devuelve el `seq`.
+24. **(F8-03, `events`) La suite y sus mutantes.** `eventshelpertest.Contrato`: 51 casos (4 de carrera: único parcial, CAS de
+    estado, `Touch` contra transición, numeración del historial con 4 escritores porque el adaptador reintenta 5 veces). 56
+    mutantes del adaptador contra Postgres: 55 muertos y **1 equivalente** (quitar `entry_kind='message'` de `ListPastedByOwner`:
+    la única puerta que escribe `origin='owner_pasted'` clava ese grado). No hay mutante de «quitar el único parcial»: vive en la
+    migración 0051; lo mutado es su traducción a `ErrAliveExists`. 🟡 El test viejo
+    `TestIntegration_MarcaVencidoSinFilaUsaElMismoDefaultQueLaBD` comparaba el 7200 del SQL con el `DEFAULT` de la columna; el caso
+    nuevo (`ListRescuable_StaleIsAMarkNotAFilter`) fija el 7200 pero ya no lo compara con el esquema: candidato a caso de P10.
+    `test/procesos` solo puede nombrar `events.New…` (candado `ProcessImports`): de ahí los alias `eventshelpertest.Event` y
+    `ClockOption`.
+25. **(F8-03, `cart`, rojo) Desvíos del reparto y rarezas que el verde tiene que portar.** `cart.go` entra en el commit de T8.15
+    (no en el de T8.16) y nace en cuatro (`cart` con `Step`, `cart_levels`, `cart_notes`, `cart_navigation`). De los cuatro
+    «simples» solo `validate.go` nace verde: `resume` lee el estado de `state.go`, `variants` no tiene quien lo llame y los
+    auxiliares de `effects` solo se ven por `Step`. Rarezas del viejo, cada una con su caso ya escrito: una cantidad inválida no
+    cuenta como inválido de opción y reinicia el contador (`cart.go:284`, `:497-500`); «2postres» no es número y el fuzzy lo
+    perdona como errata (`preresolutor.go:173`); en la cantidad, un veredicto «0» pasa la aduana y significa volver
+    (`consulta.go:164`, `cart.go:485`); el aviso de largo del checklist habla de «indicación» (`buyer.go:113`). 🟡 **Para Jhoan,
+    sin bloquear**: un `item_added` reentregado tras el cierre reusa la solicitud **cerrada** de su evento y le reescribe las
+    líneas (`projection.go:218-228`: la segunda pregunta no filtra por estado). Sin llamante de producción, ni viejo ni nuevo:
+    `PriceListOf` y `RevalidationMessage` (`revalidate.go:16`). `projection.go:314,433` dicen que el dispatcher «loguea sin
+    abortar» y `:253` que ya no es cierto desde D-054.4: no se afirma en el contrato; se comprueba al portar `runtime`
+    (F8-04/05). Ningún test nuevo de `cart` depende de D-F8-7/D-F8-8. El `summary_test.go` viejo de `events` conducía el `cart`
+    real para fijar la clave `"cart"`/`"level"` de `Vars`; el nuevo la fija con un literal, y el renombre al otro lado lo tiene
+    que cazar el test de `cart`.
+26. **(F8-03, método) No cupo en una sesión: 21 ficheros con dos complejos son dos bloques.** El rojo de `events` (con doble y
+    suite) llevó ≈ 35 min y su verde con mutantes ≈ 26; el rojo de `cart`, ≈ 41 en paralelo. Los dos rojos validaron sus tests
+    contra la lógica vieja como oráculo temporal (sin commitear) antes de portar, que es lo que hizo fiable el verde de `events`.
+    El verde de `cart` (T8.25) queda para el relanzamiento.
+
 ## Orden de lectura
 
 `README` → [`arquitectura.md`](arquitectura.md) (sobre todo §4 singleton y §5 puentes y adaptadores) →
@@ -267,7 +313,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 |---|---|---|---|---|
 | F8-01 | inventario E-12 y hojas | medio · `store` complejo · `content` simple | T8.1–T8.8, T8.22 | inventario **aprobado por Jhoan** (antes no se escribe código); `model`·`trigger`·`content`·`store`·`modules` verdes; suites `Contrato` en memoria y en Postgres |
 | F8-02 ✅ | motor | medio · `menu`/`media`/`survey` simple | T8.9–T8.11, T8.14, T8.23 | `engine`·`menu`·`survey`·`media`·`turnoacotado` verdes (2026-10-09, rama `reorg/f8-02-motor`, `d8fd4ac` … `4ce435f`, PR #61 en `dev`, merge `df340a6`) |
-| F8-03 | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (7) y `cart` (14) verdes; goldens idénticos; candado de orden verde y mutado |
+| F8-03 🔧 | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (7) y `cart` (14) verdes; goldens idénticos; candado de orden verde y mutado — **a medias (2026-10-09, rama `reorg/f8-03-events-cart`, `8c819b40` … `790ca522`)**: `events` verde, `cart` en rojo; falta T8.25, se relanza |
 | F8-04 | `runtime` (1): contratos de los 23 y soporte | complejo | T8.18–T8.21, T8.26 | 23 contratos en rojo, candado de rachas escrito, los 12 de soporte verdes |
 | F8-05 | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo verdes, mutantes muertos, `pendiente` del runtime = 0 |
 | F8-06 | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo |
