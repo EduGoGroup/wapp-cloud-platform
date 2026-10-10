@@ -13,7 +13,7 @@
 
 ## Antes de pegar el prompt (Jhoan)
 
-- [ ] La sesión anterior (F8-03) está integrada y empujada en `dev`, **con sus dos mitades**: la primera ya lo está (PR #62, merge `8b841c8d`); la segunda (T8.25, el verde de `cart`), PR a `dev` por abrir desde `reorg/f8-03b-cart-verde`.
+- [ ] La sesión anterior (F8-03) está integrada y empujada en `dev`, **con sus dos mitades**: la primera ya lo está (PR #62, merge `8b841c8d`); la segunda (T8.25, el verde de `cart`), PR #63 a `dev`, abierto desde `reorg/f8-03b-cart-verde`.
 - [ ] Decisiones rellenas en [`../DECISIONES.md`](../DECISIONES.md): D-F8-4 (regla «`events` sin clasificador»), D-F8-5 (lista blanca).
 - [ ] `go1.26.5` y `golangci-lint v2.12.2` disponibles (`make toolchain`).
 - [ ] Arrancar: `cd /Volumes/Projects/source/wApp/cloud/wapp-cloud-platform && claude`.
