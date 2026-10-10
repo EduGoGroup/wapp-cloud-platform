@@ -26,7 +26,7 @@ import (
 // efectos con su reintento acotado (D-054.4).
 //
 // Piezas (nombres del viejo, ya en inglés): prepareResume, outputTexts, dispatch,
-// retryDurableSink, durableRetrySleep, durableRetryAttempts = 2 y
+// retryDurableSink, projectionRetrier, durableRetrySleep, durableRetryAttempts = 2 y
 // durableRetryBackoff = 25 * time.Millisecond.
 //
 // # Reanudación por módulo (Plan 027 · Ola 3 · T8, cierra H9)
@@ -81,8 +81,13 @@ import (
 //   - FO-6 · Agotado el cupo, o ante el permanente: se CORTA. No se despachan los efectos ni
 //     los sinks que quedaban y el resultado es ErrTurnCutBySinkFailure envolviendo al último
 //     error.
-//   - FO-7 · Se reintenta el Handle ENTERO del sink: si la fila de flow_events ya se había
-//     escrito, el reintento la duplica (no hay unicidad). Compromiso asumido y portado.
+//   - FO-7 · El reintento RETOMA DONDE FALLÓ. Divergencia deliberada del viejo (D-F8-15,
+//     hallazgo 34c): el viejo repetía el Handle ENTERO y, como flow_events no tiene unicidad,
+//     un fallo de proyección que cedía dejaba DUPLICADAS la fila del outbox y la decisión del
+//     hilo. Ahora, con un sink que ofrece RetryProjection (el PersistSink): si lo último que
+//     falló fue la PROYECCIÓN, se repite solo la proyección; si fue el outbox, el Handle
+//     entero (no se había escrito nada). Se decide en CADA intento, según el último error. Un
+//     sink que no la ofrece recibe el Handle entero, como siempre.
 //
 // # Qué hace quien recibe el corte
 //
@@ -364,6 +369,12 @@ func (rt *Runtime) dispatch(ctx context.Context, ec EffectContext, effects []mod
 	return nil
 }
 
+// projectionRetrier es el sink que sabe repetir SOLO su proyección, sin volver a escribir lo
+// que su Handle ya dejó escrito (el PersistSink). Lo usa retryDurableSink.
+type projectionRetrier interface {
+	RetryProjection(ctx context.Context, ec EffectContext, eff modules.Effect) error
+}
+
 // retryDurableSink reintenta UN sink que ya falló materializando un efecto
 // durable (D-054.4, primer intento hecho por dispatch: firstErr es su error, ya
 // confirmado ErrMaterializationFailed). Corta de inmediato —sin gastar ni un
@@ -376,18 +387,20 @@ func (rt *Runtime) dispatch(ctx context.Context, ec EffectContext, effects []mod
 // logueado, pero no cuenta contra el cupo ni corta el turno—. Devuelve nil en
 // cuanto un intento cuenta como éxito, o el último error si el cupo se agota.
 //
-// ⚠️ COMPROMISO ASUMIDO, dicho entero: se reintenta el `Handle` COMPLETO del sink,
-// no solo la proyección que falló. Si el INSERT del outbox (`flow_events`) ya había
-// tenido éxito y lo que falló fue el proyector, el reintento vuelve a insertar esa
-// fila: `flow_events` NO tiene restricción de unicidad, así que queda duplicada. Se
-// acepta a propósito, y por tres razones: (1) solo ocurre en el camino estrecho de
-// un fallo TRANSITORIO que luego cede —un permanente corta sin reintentar—; (2) el
-// outbox es append-only y su consumidor de negocio (el webhook) no lee de aquí, así
-// que el daño se limita a doble conteo en las métricas de ciclo de vida, no a una
-// entrega duplicada al comercio; y (3) la alternativa —cirugía dentro de PersistSink
-// para reintentar solo la llamada al proyector— parte una operación que hoy es
-// legible de arriba abajo, a cambio de una métrica. Si algún día el outbox gana un
-// consumidor de negocio, esta decisión hay que rehacerla: el cálculo cambia.
+// Divergencia deliberada del viejo (D-F8-15, hallazgo 34c): el reintento RETOMA DONDE
+// FALLÓ. El viejo repetía siempre el `Handle` COMPLETO del sink, y como `flow_events` no
+// tiene clave de idempotencia ni índice único, un fallo del proyector que luego cedía dejaba
+// DUPLICADAS la fila del outbox y la decisión del hilo (el viejo lo asumía como «doble
+// conteo en métricas»; Jhoan decidió arreglarlo). Ahora, en CADA intento y según el ÚLTIMO
+// error:
+//
+//   - fue de la PROYECCIÓN y el sink sabe retomarla (projectionRetrier): se llama solo a
+//     RetryProjection. El outbox y el hilo no se repiten; el hilo es best-effort, así que si
+//     falló en el primer intento ya quedó logueado por dispatch y no se reintenta;
+//   - fue del outbox, o el sink no ofrece RetryProjection: el Handle entero, como siempre.
+//
+// «El último» y no «el primero»: un Handle reintentado tras un fallo de outbox puede pasar el
+// outbox y caer en la proyección, y el intento siguiente ya no debe volver a escribirlo.
 func (rt *Runtime) retryDurableSink(ctx context.Context, sink EventSink, ec EffectContext, eff modules.Effect, sessionID string, firstErr error) error {
 	lastErr := firstErr
 	for attempt := 1; attempt <= durableRetryAttempts; attempt++ {
@@ -397,7 +410,11 @@ func (rt *Runtime) retryDurableSink(ctx context.Context, sink EventSink, ec Effe
 		if werr := durableRetrySleep(ctx, durableRetryBackoff); werr != nil {
 			return werr
 		}
-		lastErr = sink.Handle(ctx, ec, eff)
+		if retrier, ok := sink.(projectionRetrier); ok && isProjectionFailure(lastErr) {
+			lastErr = retrier.RetryProjection(ctx, ec, eff)
+		} else {
+			lastErr = sink.Handle(ctx, ec, eff)
+		}
 		if lastErr == nil || !errors.Is(lastErr, ErrMaterializationFailed) {
 			if lastErr != nil {
 				rt.log.Error("runtime: sink de efecto falló tras reintentar (best-effort, no bloquea el turno)",

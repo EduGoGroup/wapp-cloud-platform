@@ -92,6 +92,24 @@ var decisionEffects = map[string]struct{}{
 // Su texto es observable (sale en el log del despacho) y se copia literal.
 var ErrMaterializationFailed = errors.New("runtime: la materialización del efecto falló")
 
+// projectionError envuelve, SIN cambiarle el texto, el error de la proyección (paso 3 de
+// Handle), para que el reintento del despacho sepa que el outbox y el hilo YA se escribieron
+// y retome en la proyección (RetryProjection; D-F8-15). Es transparente: Error devuelve el
+// del envuelto y Unwrap lo devuelve, así que errors.Is sigue viendo la marca y la causa. El
+// fallo del outbox NO lo lleva.
+type projectionError struct{ err error }
+
+func (e projectionError) Error() string { return e.err.Error() }
+
+func (e projectionError) Unwrap() error { return e.err }
+
+// isProjectionFailure dice si err es —o lleva dentro, también unido al error del hilo con
+// errors.Join— un fallo de la PROYECCIÓN de un PersistSink.
+func isProjectionFailure(err error) bool {
+	var failure projectionError
+	return errors.As(err, &failure)
+}
+
 // PersistSink es el EventSink que MATERIALIZA cada efecto en el outbox append-only
 // flow_events y delega la PROYECCIÓN tipada a los modules.Projector registrados (Plan
 // 027 · Ola 3 · T8, cierra H10). NO conoce los efectos de ningún módulo: el switch
@@ -236,6 +254,14 @@ func (s *PersistSink) WithDecisionThread(a DecisionAppender) *PersistSink {
 // primero): errors.Is reconoce los dos orígenes y la marca, que la lleva solo la
 // proyección.
 //
+// # Qué pasa si el despacho reintenta
+//
+// Handle no reintenta nada. Si el despacho lo repite ENTERO, repite los tres pasos:
+// flow_events no tiene unicidad, así que la fila se duplicaría, y la decisión del hilo
+// también. Por eso el fallo de la proyección sale reconocible (sin cambiar su texto) y el
+// despacho, ante él, NO vuelve a llamar a Handle: llama a RetryProjection, que repite solo
+// el paso 3. Ante un fallo del outbox sí repite Handle: no se había escrito nada.
+//
 // # Qué devuelve, en resumen
 //
 // nil si todo fue bien o si lo único que había que hacer era el outbox; el error del
@@ -269,6 +295,49 @@ func (s *PersistSink) Handle(ctx context.Context, ec EffectContext, eff modules.
 	// colaría en el hilo datos que el cliente no decidió.
 	threadErr := s.appendDecision(ctx, ec, eff)
 
+	if perr := s.project(ctx, ec, eff); perr != nil {
+		// Igual que arriba: SOLO la proyección (o el outbox) lleva la marca.
+		// threadErr, si lo hay, viaja JUNTO (errors.Join no lo descarta, así que
+		// el despacho lo sigue viendo en el log) pero no la lleva él mismo.
+		return errors.Join(threadErr, perr)
+	}
+	return threadErr
+}
+
+// RetryProjection repite SOLO la proyección tipada de un efecto (el paso 3 de Handle) cuyo
+// Handle ya escribió el outbox y el hilo y falló al proyectar. Es lo que llama el reintento
+// acotado del despacho (resume.go, FO-7) en vez de repetir Handle.
+//
+// Divergencia deliberada del viejo (D-F8-15, hallazgo 34c): el viejo reintentaba el Handle
+// ENTERO, y como flow_events no tiene clave de idempotencia ni índice único, cada reintento
+// tras un fallo de proyección DUPLICABA la fila del outbox y la decisión del hilo.
+//
+// Qué promete:
+//
+//   - NO toca el outbox flow_events ni el hilo de decisiones. El hilo es best-effort: si
+//     falló en el primer intento, ya se logueó y NO se reintenta aquí.
+//   - Proyecta igual que Handle: mismo ctx, el PRIMER proyector cuyo Handles(eff.Name) sea
+//     true, el efecto ENTERO (el mismo mapa Payload, también si es modules.KindPrivate) y
+//     los seis campos del EffectContext.
+//   - Devuelve nil si la proyección fue bien, si ningún proyector acepta el efecto o si el
+//     receptor es nil (no hay nada que proyectar).
+//   - Si el proyector falla, devuelve un error que cumple errors.Is con
+//     ErrMaterializationFailed y con el error del proyector, con el MISMO texto que Handle:
+//     "runtime: la materialización del efecto falló: proyección: <error del proyector>". Ese
+//     error se reconoce otra vez como fallo de proyección: el siguiente intento vuelve aquí.
+//
+// Llamarlo sin un Handle previo no es un error, pero deja el efecto sin fila en el outbox.
+func (s *PersistSink) RetryProjection(ctx context.Context, ec EffectContext, eff modules.Effect) error {
+	if s == nil {
+		return nil
+	}
+	return s.project(ctx, ec, eff)
+}
+
+// project es el paso 3 de Handle: delega en el primer proyector que reconoce el efecto. Su
+// error sale marcado con ErrMaterializationFailed y envuelto en projectionError; nil si
+// proyectó o si nadie lo reconoce.
+func (s *PersistSink) project(ctx context.Context, ec EffectContext, eff modules.Effect) error {
 	meta := modules.EffectMeta{
 		TenantID:    ec.TenantID,
 		ContactID:   ec.ContactID,
@@ -278,17 +347,15 @@ func (s *PersistSink) Handle(ctx context.Context, ec EffectContext, eff modules.
 		EventID:     ec.EventID,
 	}
 	for _, p := range s.projectors {
-		if p.Handles(eff.Name) {
-			if perr := p.Project(ctx, meta, eff); perr != nil {
-				// Igual que arriba: SOLO la proyección (o el outbox) lleva la marca.
-				// threadErr, si lo hay, viaja JUNTO (errors.Join no lo descarta, así que
-				// el despacho lo sigue viendo en el log) pero no la lleva él mismo.
-				return errors.Join(threadErr, fmt.Errorf("%w: proyección: %w", ErrMaterializationFailed, perr))
-			}
-			return threadErr
+		if !p.Handles(eff.Name) {
+			continue
 		}
+		if perr := p.Project(ctx, meta, eff); perr != nil {
+			return projectionError{fmt.Errorf("%w: proyección: %w", ErrMaterializationFailed, perr)}
+		}
+		return nil
 	}
-	return threadErr
+	return nil
 }
 
 // appendDecision escribe la fila `decision` del hilo para un efecto de la
