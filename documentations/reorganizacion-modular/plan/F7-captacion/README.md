@@ -249,6 +249,7 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
     `IS NOT NULL` a secas en el reclamo no vale: el sobre NULL es una forma legítima y definitiva (ventana solo de media,
     hilo apagado). ✅ **Decidido por Jhoan (2026-10-08, D-F7-9): se porta tal cual** en F7-03, dicho en el contrato de
     `pipeline`; el arreglo de la causa (cierre y sobre en un solo acto) lo hereda **F8**, con el agregador.
+    ✎ **Arreglada en F8-06b (2026-10-10)**, en el binario nuevo: hallazgos 53 y 54 del README de F8.
 18. **`stages` son 14 ficheros de producción, no 10** (F7-02): `draft.go` en cuatro por tema (D-F7-6: `draft.go` 405 l,
     `draft_revision.go` 336, `draft_events.go` 236, `draft_push.go` 98) y `match_cascade.go` en dos (el barrido y su
     prefiltro en `match_cascade_sweep.go`, sin exportados, porque pasaba de 500). El mayor es `match.go`, 484; el mayor

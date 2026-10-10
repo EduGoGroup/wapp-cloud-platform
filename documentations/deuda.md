@@ -418,6 +418,65 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 - **Veredicto**: se porta tal cual. El arreglo es pequeño (no escribir sobre una cerrada), pero **qué hacer con el hecho
   tardío** (descartarlo, avisar, abrir otra solicitud) es una regla de negocio. Después del relevo de F10.
 
+### D-35 · 🟡 `PutSourceText` y `ComposeAtFlush` sin llamante de producción en el árbol nuevo
+
+> Abierta el 2026-10-10 por decisión de Jhoan al planificar F8-06b (hallazgo 55 de
+> `reorganizacion-modular/plan/F8-conversacion/README.md`): **se dejan y se anota; no se borran de paso**.
+
+- **Dónde**: `(*SourceTextComposer).ComposeAtFlush` (`internal/modulos/conversacion/runtime/source_composer_flush.go`), la
+  interfaz `runtime.SourceTextWriter` y el campo `SourceTextComposer.jobs` (`source_composer.go`), e
+  `intake.JobStore.PutSourceText` con sus dos implementaciones (`internal/modulos/captacion/intake/postgres.go` y
+  `memory.go`); más sus tests y los casos `PutSourceText_*` de la suite (`intakehelpertest/queue_put_contrato.go`).
+- **Por qué**: el arreglo de D-F7-9 (F8-06b) hizo que la ventana cierre con su sobre (`CloseWithSourceText`) y que el job
+  de re-análisis nazca con el suyo (`OpenReanalysis`). Eran los dos únicos llamantes. El arranque sigue cableando
+  `composer.jobs` con `c.intakeJobStore`, y los tests de cableado siguen afirmando esa identidad.
+- **Consecuencia**: código vivo en el puerto que ningún camino de producción ejercita; la suite contra Postgres lo sigue
+  probando. Sin riesgo funcional.
+- **Veredicto**: decidir en F8-07 o tras el relevo de F10 entre **borrar** (la operación, `SourceTextWriter`,
+  `composer.jobs`, sus casos de suite y las aserciones de cableado, en su propio commit) o **conservar** con un motivo.
+  ✎ **Decidido por Jhoan (2026-10-10, tras F8-06b): se borra en F8-07**, en su propio commit. No es código viejo que
+  espere a F10: es código nuevo que quedó huérfano, y dejarlo invita a reabrir la carrera de D-F7-9.
+
+### D-36 · 🟡 Los cambios de conducta visibles del binario nuevo, sin revisar contra los consumidores
+
+> Abierta el 2026-10-10 por decisión de Jhoan tras F8-06b: **sesión aparte, cuando termine el plan**. La reconstrucción
+> se hizo mirando solo este repo; los consumidores (`wapp-client-console`, `wapp-guardian-bff`, `wapp-platform-console`,
+> el Edge) no se tocaron.
+
+- **Qué es**: cada vez que el árbol nuevo responde distinto del viejo a propósito (una «divergencia deliberada»), un
+  consumidor que esperaba la respuesta vieja puede pintarla mal o no tratarla.
+- **El caso que la abre** (F8-06b, T8.40, hallazgo 54 de `reorganizacion-modular/plan/F8-conversacion/README.md`):
+  `POST …/reanalyze` devuelve ahora **500** «no se pudo pedir el re-análisis de la solicitud» cuando falla la composición
+  del literal; el viejo respondía 200 «en curso» y el job moría después. **No se miró** cómo lo muestra la consola del
+  cliente.
+- **Por dónde empezar**: el inventario no está hecho. Punto de partida medido el 2026-10-10: 26 comentarios «Divergencia
+  deliberada del viejo» en 14 ficheros de producción de `internal/modulos`, `internal/nucleo`, `internal/apipublica` e
+  `internal/arranque` (`grep` de la frase literal, sin tests), más las decisiones de `plan/DECISIONES.md`. **La mayoría
+  son internas** (logs, orden de pasos, reintentos) y no llegan a un consumidor: hay que separarlas.
+- **Qué hace la sesión**: (1) listar las divergencias que cambian algo observable desde fuera (código HTTP, cuerpo,
+  texto de error, trama gRPC); (2) por cada una, mirar en el consumidor cómo trata la respuesta nueva; (3) adaptar el
+  consumidor o, si no compensa, anotar por qué se deja.
+- **Veredicto**: después del relevo de F10, en una sesión propia que abarca varios repos.
+
+### D-37 · 🟡 El hilo y la cola no se escriben en un solo acto: un mensaje puede entrar en dos ventanas
+
+> Abierta el 2026-10-10 por decisión de Jhoan tras F8-06b (hallazgo 59 (f) de
+> `reorganizacion-modular/plan/F8-conversacion/README.md`): **para después de la migración**. **Deducida leyendo el
+> código, no vista ni reproducida.**
+
+- **Dónde**: el camino del entrante escribe el mensaje en el hilo (`conversation_events`) y lo apunta en la cola
+  (`intake_jobs`, `OpenOrAppend`) en dos sentencias, sin transacción. El cierre de la ventana compone el literal leyendo
+  el **hilo** y decide si la ventana cambió mirando la **cola** (`CloseWithSourceText`, guarda `id` + `updated_at`).
+- **El hueco**: si la ventana vence con un mensaje ya en el hilo cuyo apunte en la cola aún no llegó, el sobre lo incluye,
+  la guarda no lo ve, y el apunte abre después **otra ventana** solo con ese mensaje: se analizaría dos veces, la segunda
+  como un borrador de un único mensaje. No se pierde nada.
+- **Lo que no se sabe**: en qué orden escribe el entrante el hilo y la cola (**sin verificar**: si la cola va primero, el
+  hueco no existe en esta forma) y si ocurre alguna vez. Es estrecho: la ventana tiene que vencer entre las dos escrituras
+  de un mismo mensaje.
+- **No es D-F7-9** y no lo introdujo su arreglo: el viejo, que cerraba y componía después, tenía el mismo hueco.
+- **Veredicto**: se deja. Lo primero, cuando toque, es confirmar el orden real de las dos escrituras. Arreglarlo pide una
+  regla (qué se hace con el mensaje tardío), no un parche. Después del relevo de F10.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes

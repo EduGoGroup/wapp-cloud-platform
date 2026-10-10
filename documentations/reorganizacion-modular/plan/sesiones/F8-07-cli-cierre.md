@@ -6,7 +6,7 @@
 | Entorno | 💻 solo local |
 | Nivel (E-12) | no aplica (no se escribe código de producción) |
 | Duración objetivo | 45–90 min |
-| Tareas | T8.36–T8.38 (T8.37 = T9.29) |
+| Tareas | T8.36–T8.38 (T8.37 = T9.29), T8.41, T8.42 y T8.43 (✎ 2026-10-10, Jhoan tras F8-06b: borrar `PutSourceText`/`ComposeAtFlush`, deuda D-35; el caso adversario del callback del CRM; y repetir los siete mutantes que sostienen D-F7-9) |
 | Depende de | F8-06b (✎ 2026-10-10, D-F8-13: antes F8-06) |
 | Decisiones | D-F9-1 (adelantar F9) |
 | Se para cuando | la definición de hecho de [`reglas.md`](../F8-conversacion/reglas.md) §4 entera: suites de los puertos con BD verdes contra Postgres · `cmd/server-modular` arranca solo y recorre una conversación · `make test-procesos` y `make ci-local` rc=0 con 0 SKIP · PR a `dev` abierto desde la rama de la sesión |
@@ -30,7 +30,7 @@ documentations/reorganizacion-modular/plan/sesiones/PROTOCOLO-CLI.md
 Tu encargo (y solo este):
 - Fase: F8 · conversacion → documentations/reorganizacion-modular/plan/F8-conversacion/
 - Bloque: 7 · cierre
-- Tareas: T8.36–T8.38 (T8.37 = T9.29 de plan/F9-procesos/tareas.md) de plan/F8-conversacion/tareas.md
+- Tareas: T8.36–T8.38 (T8.37 = T9.29 de plan/F9-procesos/tareas.md), T8.41, T8.42 y T8.43 de plan/F8-conversacion/tareas.md (T8.41 y T8.42, cada una en su propio commit, ANTES de los gates de cierre; T8.43, los mutantes, después de T8.41)
 - Te paras cuando: se cumple entera la definición de hecho de plan/F8-conversacion/reglas.md §4: las suites de los puertos con BD pasan contra Postgres, `cmd/server-modular` arranca solo y recorre una conversación, `make test-procesos` y `make ci-local` dan rc=0 con 0 SKIP, y `dev` está empujado.
 - Decisiones: D-F9-1 (adelantar F9) en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
 - Skills: validar-antes-de-cerrar, procesos-testcontainers.

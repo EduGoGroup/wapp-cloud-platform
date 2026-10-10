@@ -242,17 +242,17 @@ con un párrafo por tarea en el mensaje.
 
 Para cuando: un job de ventana nunca es visible para el worker en `pending` sin sobre (salvo el hilo vacío); caso de P4 verde contra el binario nuevo. Nivel **complejo**: rojo y verde, suite contra Postgres, mutantes.
 
-- [ ] **T8.39 · D-F7-9: el agregador compone antes de cerrar y cierra con el sobre en una sentencia** · 💻 · dep. T8.35
+- [x] **T8.39 · D-F7-9: el agregador compone antes de cerrar y cierra con el sobre en una sentencia** · 💻 · dep. T8.35 — rojo `a0144628` (contrato de `intake.JobStore.CloseWithSourceText`, la quinta operación, y sus siete casos de suite) · verde `cae02e23` (`intake/postgres`) y `fc466f66` (`intake/memory`) · el arreglo `ef480998` (`fix(conversacion)`: compositor `Compose` sin escribir, `closeWindow` compone y cierra en una sentencia) · `8e02d07b` (comentarios del pipeline) · `83254490` (aserción en P4). Guarda de «la ventana no cambió»: `id` + `updated_at` igual al leído. 14 mutantes del store y 14 del agregador y el compositor, todos muertos; suite `Contrato` de `intake` verde en memoria y en Postgres. ✎ El caso de P4 **no ramifica por binario** (R9.8.b de F9; decisión de Jhoan, 2026-10-10: foco en el binario nuevo); hallazgos 53 y 56 del README
   - **Ficheros**: `internal/modulos/captacion/intake/{store,postgres,memory}.go` y `intakehelpertest/` (operación nueva de `JobStore`, con su caso en la suite); `C/runtime/source_composer.go` (componer separado de escribir) y `C/runtime/aggregator_sweep.go` (`closeWindow`) + tests; el caso de P4 en `test/procesos/`; comentarios de D-F7-9 caducados (`aggregator_sweep.go`, `source_composer.go`, `captacion/pipeline/pipeline_chain.go`).
   - **Hecho cuando**: cierre y sobre en **un** `UPDATE` (sin transacción, sin migración), que solo cierra si la ventana no cambió desde que se leyó; hilo vacío → cierra con sobre NULL, como hoy; `PutSourceText` intacto; D-F9-10 se sigue cumpliendo; mutantes muertos (quitar la guarda, cerrar sin sobre, sobre sin cerrar, orden viejo); suite `Contrato` de `intake` verde en memoria y en Postgres; P4 contra el binario nuevo sin ningún `failed` por «el job no trae literal que analizar»; D-F7-9 marcada arreglada en el README. **Fuera**: el código viejo (el re-análisis es T8.40).
   - **Gate**: `G` · `make test-procesos` (nuevo y viejo) · **Commit**: `fix(conversacion): cierre y sobre de la ventana en un solo acto (D-F7-9)`
 
-- [ ] **T8.40 · El job de re-análisis nace con su sobre** · 💻 · dep. T8.39 — ✎ 2026-10-10 (Jhoan): entra en F8-06b como segunda tarea (hallazgo 1)
+- [x] **T8.40 · El job de re-análisis nace con su sobre** · 💻 · dep. T8.39 — ✎ 2026-10-10 (Jhoan): entra en F8-06b como segunda tarea (hallazgo 1) — rojo `7c5feccb` (`ReanalysisRequest.SourceText`, siete tests rojos por aserción) · verde `b623498f` (el mismo `INSERT` escribe las tres columnas) · el arreglo `1aad38cd` (`fix(captacion)`: el servicio compone antes de abrir; fallo al componer → no se abre job y la petición devuelve el error) · `42a06574` (aserción en P8 y P6). 11 mutantes, todos muertos. `PutSourceText` y `ComposeAtFlush` quedan **sin llamante de producción** en el árbol nuevo: dicho y preguntado, **no borrados** (Jhoan, 2026-10-10; deuda D-35); hallazgos 54 y 55 del README
   - **Ficheros**: `internal/modulos/captacion/intake/{reanalysis,postgres_reanalysis,memory}.go` e `intakehelpertest/` (el alta del job con su sobre, en una sentencia); `internal/modulos/captacion/reanalisis/reanalisis.go` (componer antes de abrir) + tests; el compositor de `C/runtime` (reutiliza el «componer sin escribir» de T8.39); su caso de proceso en `test/procesos/`.
   - **Hecho cuando**: un job de re-análisis nunca es visible en `pending` sin sobre; fallo al componer → no se abre job y la petición lo dice (hoy: job abierto sin literal que el worker mata); mutantes muertos; suite `Contrato` de `intake` verde en memoria y en Postgres; si `PutSourceText` queda sin llamante de producción, dicho y preguntado, no borrado.
   - **Gate**: `G` · `make test-procesos` (nuevo y viejo) · **Commit**: `fix(captacion): el job de re-análisis nace con su sobre (D-F7-9)`
 
-## Bloque 7 · cierre · 💻 · sesión F8-07 · T8.36–T8.38
+## Bloque 7 · cierre · 💻 · sesión F8-07 · T8.36–T8.38, T8.41–T8.43 (✎ 2026-10-10: tres tareas nuevas tras F8-06b)
 Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 entera.
 
 - [ ] **T8.36 · Gates y arranque local del binario nuevo** · 💻 · dep. T8.35, T8.39, T8.40 (✎ D-F8-13) · cumple R8.8.a, R8.8.c
@@ -261,7 +261,24 @@ Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 entera.
 - [ ] **T8.37 · 🕐 Procesos del módulo contra el binario nuevo (= T9.29, 9C de `conversacion`)** · 💻 · dep. T8.36 · cumple R8.8.b — *con D-F9-1 = sí (recomendación); si D-F9-1 = no, se tacha y lo cubre T9.34 tras F8*
   - **Hecho cuando**: T9.29 (9C de `conversacion`, [`../F9-procesos/tareas.md`](../F9-procesos/tareas.md)) pasa: «Entrante a respuesta», «De mensaje a borrador», «Re-análisis», con las aserciones de BD de `diseno.md` §4.2 (D-054.4, 23502, `ON CONFLICT` de la ventana); `make test-procesos` rc=0 y 0 SKIP con `-v`.
   - **Gate**: `make test-procesos > /tmp/p.log 2>&1; echo RC=$? >> /tmp/p.log; tail -1 /tmp/p.log`
-- [ ] **T8.38 · Cerrar F8** · 💻 · dep. T8.36 (y T8.37 si aplica)
+- [ ] **T8.41 · Borrar `PutSourceText` y `ComposeAtFlush` (deuda D-35)** · 💻 · dep. T8.40 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgo 55 del README)
+  - **Ficheros**: `C/runtime/source_composer_flush.go` y su test (`ComposeAtFlush`), `C/runtime/source_composer.go` (`SourceTextWriter`, el campo `jobs` y el argumento del constructor), `internal/modulos/captacion/intake/{store,postgres,memory}.go` y sus tests (`PutSourceText`), `intakehelpertest/` (los casos `PutSourceText_*` y lo que solo ellos usen), `internal/arranque/fase5_captacion.go` y las aserciones de cableado que miran `composer.jobs`.
+  - **Hecho cuando**: ninguna de las dos operaciones existe en el árbol nuevo; `intake.JobStore` vuelve a cuatro operaciones; los tests de cableado se actualizan en el mismo commit **sin debilitarse** (lo que afirmaba la identidad de `composer.jobs` desaparece con el campo, no se relaja); `G` rc=0 con 0 SKIP; suite `Contrato` de `intake` verde en memoria y en Postgres; D-35 marcada cerrada en `deuda.md`. **Fuera**: el código viejo.
+  - **Gate**: `G` · `make test-procesos` (nuevo) · **Commit**: `refactor(captacion): fuera PutSourceText y ComposeAtFlush, sin llamante desde F8-06b (D-35)`
+
+- [ ] **T8.42 · El caso adversario del callback del CRM tolera el corte de conexión** · 💻 · dep. T8.35 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgos 14 y 58 del README)
+  - **Ficheros**: `test/procesos/p6_crm_test.go` (`callback_body_adversarial`, ≈ :270) y sus helpers.
+  - **Antes de tocar**: leer el caso y **confirmar** que el «connection reset by peer» / «broken pipe» es el servidor rechazando el cuerpo adversario mientras el test aún lo envía, y no otra cosa. En F8-06b solo se leyó el mensaje del log. Si no es eso, PARA y dilo.
+  - **Hecho cuando**: el caso acepta como rechazo válido la respuesta de error **o** el corte al enviar, y sigue fallando si el servidor **acepta** el cuerpo; sin tocar el servidor; sin `time.Sleep` ni `t.Skip`; `-run TestP6_CRMBridge -count=10` verde contra los dos binarios.
+  - **Gate**: `make vet-integracion` · `make test-procesos` · **Commit**: `procesos(solicitudes): el callback adversario del CRM tolera el corte de conexión`
+
+- [ ] **T8.43 · Repetir los mutantes que sostienen el arreglo de D-F7-9** · 💻 · dep. T8.41 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgo 57 del README)
+  - **Qué**: en F8-06b, 37 de los 39 mutantes los corrieron los sub-agentes que escribieron el código; el orquestador solo repitió los dos del SQL contra Postgres real. Aquí los repite **quien no escribió el código**, sobre la cabeza integrada y **después de T8.41** (que cambia el compositor).
+  - **Los siete**: en `C/runtime/aggregator_sweep.go` — (1) volver al orden viejo (cerrar y después componer y escribir), (2) cerrar sin sobre, (3) escribir el sobre sin cerrar, (4) quitar la guarda de «la ventana no cambió» (en el gemelo `intake/memory.go`, corriendo los tests de `runtime`); en `captacion/reanalisis/reanalisis.go` — (5) abrir el job y componer después, (6) abrir el job pese al fallo de composición, (7) tragarse el fallo de composición.
+  - **Hecho cuando**: cada uno **compila** y mata al menos un test, con el nombre del test anotado; un mutante que no compila no cuenta como muerto; en serie y por `go test -overlay` sobre copias fuera del repo, nunca editando el checkout; si alguno sobrevive, nace su caso en un commit `test(…)`.
+  - **Gate**: la tabla mutante → test en el hallazgo de cierre · **Commit**: ninguno si todos mueren
+
+- [ ] **T8.38 · Cerrar F8** · 💻 · dep. T8.36, T8.41, T8.42, T8.43 (y T8.37 si aplica)
   - **Ficheros**: `ESTADO.md`, este `README.md` (estado «cerrada», SHA, hallazgos)
   - **Hecho cuando**: los 10 puntos de `reglas.md` §4 escritos con su número en `ESTADO.md`; `origin/dev` al día; la siguiente es F9/F10 (decisión de Jhoan). No se toca `main`.
   - **Commit**: `docs(reorganizacion-modular): F8 cerrada`

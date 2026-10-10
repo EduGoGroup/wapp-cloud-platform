@@ -293,7 +293,8 @@ func p4AnotherDraft(t *testing.T, sc *draftScene, main p4Run) {
 
 // p4Closing es el cierre del proceso, ANTES de parar el servidor: el borrador del recorrido feliz
 // sigue intacto (una revisión, sin líneas propias), el guion atendió todo lo que se le pidió, el
-// núcleo del Edge no anotó errores, ningún texto quedó sin leer y el log del servidor no trae ERROR.
+// núcleo del Edge no anotó errores, ningún texto quedó sin leer, ningún job murió por falta de
+// literal (D-F7-9) y el log del servidor no trae ERROR.
 func p4Closing(t *testing.T, sc *draftScene, main p4Run) {
 	if got := p9Scalar(t, sc.DB, `SELECT status || '|' || (SELECT count(*) FROM public.intake_revisions r WHERE r.intake_id = i.id)::text
 		FROM public.intakes i WHERE id = $1::uuid`, main.intakeID); got != "pending_approval|1" {
@@ -316,5 +317,6 @@ func p4Closing(t *testing.T, sc *draftScene, main p4Run) {
 		t.Errorf("errores del núcleo del Edge: %v", errs)
 	}
 	sc.expectNoPendingText(t, "al cerrar el proceso")
+	requireNoJobWithoutLiteral(t, sc)
 	edgeSinErrores(t, sc.S, nil)
 }

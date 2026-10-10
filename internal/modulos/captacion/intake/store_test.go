@@ -87,6 +87,35 @@ func TestSourceText_Complete_TheThreeOrNothing(t *testing.T) {
 	}
 }
 
+// TestSourceText_Empty_NoneOfTheThree: el sobre está vacío entero solo sin NINGUNA de sus tres
+// piezas; un slice vacío no nil cuenta como ausente. Con Complete parte los sobres en tres: el
+// completo, el vacío y —ni lo uno ni lo otro— el que está a medias.
+func TestSourceText_Empty_NoneOfTheThree(t *testing.T) {
+	cases := []struct {
+		name string
+		env  SourceText
+		want bool
+	}{
+		{"zero value", SourceText{}, true},
+		{"empty non-nil slices", SourceText{Enc: []byte{}, DEK: []byte{}}, true},
+		{"the three", SourceText{Enc: []byte("e"), DEK: []byte("d"), KEKID: "k"}, false},
+		{"only enc", SourceText{Enc: []byte("e")}, false},
+		{"only dek", SourceText{DEK: []byte("d")}, false},
+		{"only kek id", SourceText{KEKID: "k"}, false},
+		{"no enc", SourceText{DEK: []byte("d"), KEKID: "k"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.env.Empty(); got != tc.want {
+				t.Errorf("Empty() = %v, quería %v", got, tc.want)
+			}
+			if tc.env.Empty() && tc.env.Complete() {
+				t.Error("el sobre es a la vez Empty y Complete")
+			}
+		})
+	}
+}
+
 // TestAppendAndOpenJob_CarryNoText: lo que entra por el camino del entrante (Append) y lo que ve
 // el barrido (OpenJob) son la clave, instantes y referencias opacas: NINGUNO lleva texto ni
 // sobre (D-044.26). Se fija por forma: los literales posicionales solo compilan con
@@ -104,20 +133,22 @@ func TestAppendAndOpenJob_CarryNoText(t *testing.T) {
 	}
 }
 
-// TestJobStore_IsFourOperations_AndBothImplementationsSatisfyIt: el puerto son CUATRO operaciones
+// TestJobStore_IsFiveOperations_AndBothImplementationsSatisfyIt: el puerto son CINCO operaciones
 // y ninguna más —su tamaño es lo que impide que el sink lea en línea con el mensaje—, y lo
-// satisfacen el adaptador y el gemelo.
-func TestJobStore_IsFourOperations_AndBothImplementationsSatisfyIt(t *testing.T) {
-	// Una interfaz con exactamente estos cuatro métodos es asignable a JobStore y viceversa:
-	// añadir un quinto al puerto rompe la segunda asignación.
-	type four interface {
+// satisfacen el adaptador y el gemelo. La quinta, CloseWithSourceText, recibe el OpenJob que
+// se leyó y el sobre (D-F7-9, D-F8-13).
+func TestJobStore_IsFiveOperations_AndBothImplementationsSatisfyIt(t *testing.T) {
+	// Una interfaz con exactamente estos cinco métodos es asignable a JobStore y viceversa:
+	// añadir un sexto al puerto rompe la segunda asignación.
+	type five interface {
 		OpenOrAppend(ctx context.Context, a Append) error
 		CloseWindow(ctx context.Context, k WindowKey) (bool, error)
 		ListAggregating(ctx context.Context, limit int) ([]OpenJob, error)
 		PutSourceText(ctx context.Context, k WindowKey, env SourceText) (bool, error)
+		CloseWithSourceText(ctx context.Context, seen OpenJob, env SourceText) (bool, error)
 	}
 	for name, port := range map[string]JobStore{"gemelo": (*MemoryStore)(nil), "adaptador": (*Postgres)(nil)} {
-		var narrow four = port
+		var narrow five = port
 		var back JobStore = narrow
 		if back == nil {
 			t.Errorf("el %s no satisface JobStore", name)

@@ -265,90 +265,27 @@ func TestWithSweepBatch_IsACeilingPerPass(t *testing.T) {
 	}
 }
 
-// TestSweep_ComposesOncePerWindowItClosed: tras cada cierre que hizo ESTA llamada se llama una vez
-// al compositor con la clave de esa ventana; las que no cierran no se componen.
-func TestSweep_ComposesOncePerWindowItClosed(t *testing.T) {
-	rig := newAggregatorRig()
-	agg := rig.aggregator(WithSourceComposer(rig.composer))
-	due, alsoDue, notDue := aggregatorKey("event-1"), aggregatorKey("event-2"), aggregatorKey("event-3")
-	aggregatorObserveAt(rig, agg, due, "wa-1", 0)
-	aggregatorObserveAt(rig, agg, alsoDue, "wa-1", 0)
-	aggregatorObserveAt(rig, agg, notDue, "wa-1", 30)
-
-	if got := aggregatorSweepAt(rig, agg, 45); got != 2 {
-		t.Fatalf("el barrido cerró %d ventanas, quería 2", got)
-	}
-	if got := rig.composer.composed(); !slices.Equal(got, []intake.WindowKey{due, alsoDue}) {
-		t.Errorf("ventanas compuestas = %v, quería las dos cerradas, una vez cada una", got)
-	}
-	if got := agg.Sweep(context.Background()); got != 0 || len(rig.composer.composed()) != 2 {
-		t.Errorf("un barrido sin nada que cerrar compuso de nuevo (cerró %d, composiciones %d)", got, len(rig.composer.composed()))
-	}
-}
-
-// TestSweep_ComposerFailureDoesNotRevertTheClose: si el compositor falla, la ventana cuenta como
-// cerrada, el job queda `pending` con el sobre vacío y el fallo va a Error.
-func TestSweep_ComposerFailureDoesNotRevertTheClose(t *testing.T) {
-	rig := newAggregatorRig()
-	agg := rig.aggregator(WithSourceComposer(rig.composer))
-	boom := errors.New("hilo ilegible")
-	rig.composer.err = boom
-	aggregatorObserveAt(rig, agg, aggregatorKey("event-1"), "wa-1", 0)
-
-	if got := aggregatorSweepAt(rig, agg, 45); got != 1 {
-		t.Fatalf("el barrido cerró %d ventanas, quería 1: el fallo del compositor no revierte el cierre", got)
-	}
-	rig.requireStatus(t, "tras el fallo del compositor", intake.StatusPending)
-	job := rig.jobs.Jobs()[0]
-	if job.SourceText.Complete() {
-		t.Error("quedó un sobre escrito tras un compositor fallido")
-	}
-	rig.requireLine(t, "error", "agregador: la ventana se cerró pero el literal no se pudo componer (T1.4)",
-		map[string]any{"error": boom, "tenant_id": aggregatorTenant, "job_id": job.ID})
-	rig.requireLine(t, "debug", "agregador: ventana cerrada",
-		map[string]any{"tenant_id": aggregatorTenant, "session_id": "session-9", "job_id": job.ID})
-}
-
-// TestWithSourceComposer_DefaultsToAnEmptyComposer es AG-8: sin compositor —o con nil— las
-// ventanas cierran igual y el job queda `pending` SIN texto; nadie escribe el sobre.
-func TestWithSourceComposer_DefaultsToAnEmptyComposer(t *testing.T) {
-	for name, opts := range map[string][]AggregatorOption{
-		"not wired":    nil,
-		"nil ignored":  {WithSourceComposer(nil)},
-		"nil after ok": {WithSourceComposer(&aggregatorComposer{}), WithSourceComposer(nil)},
-	} {
-		rig := newAggregatorRig()
-		agg := rig.aggregator(opts...)
-		aggregatorObserveAt(rig, agg, aggregatorKey("event-1"), "wa-1", 0)
-
-		if got := aggregatorSweepAt(rig, agg, 45); got != 1 {
-			t.Fatalf("%s: el barrido cerró %d ventanas, quería 1", name, got)
-		}
-		if job := rig.jobs.Jobs()[0]; job.Status != intake.StatusPending || job.SourceText.Complete() {
-			t.Errorf("%s: job = (status %q, sobre completo %v), quería pending y sin texto", name, job.Status, job.SourceText.Complete())
-		}
-		if got := rig.jobs.Counters().PutSourceText; got != 0 {
-			t.Errorf("%s: se escribió el sobre %d veces sin compositor", name, got)
-		}
-		if len(rig.log.at("error")) != 0 {
-			t.Errorf("%s: cerrar sin compositor no es un error:\n%s", name, rig.log.dump())
-		}
-	}
-}
-
 // TestSweep_LostRaceIsNotAClose es la otra mitad de AG-6: si el almacén dice que otro cerró antes
-// (false sin error), la ventana no se cuenta, no se compone y no es un error.
+// (false sin error), la ventana no se cuenta y no es un error. Se compuso —una vez: el sobre se
+// arma ANTES de saber quién cierra— pero ese sobre se tira: no se escribe por ninguna otra vía.
 func TestSweep_LostRaceIsNotAClose(t *testing.T) {
 	rig := newAggregatorRig()
 	agg := rig.aggregator(WithSourceComposer(rig.composer))
-	aggregatorObserveAt(rig, agg, aggregatorKey("event-1"), "wa-1", 0)
+	key := aggregatorKey("event-1")
+	aggregatorObserveAt(rig, agg, key, "wa-1", 0)
 	rig.jobs.set(func(j *aggregatorJobs) { j.lostRace = true })
 
 	if got := aggregatorSweepAt(rig, agg, 45); got != 0 {
 		t.Errorf("el barrido contó %d cierres que no hizo él", got)
 	}
-	if got := rig.composer.composed(); len(got) != 0 {
-		t.Errorf("se compuso una ventana que cerró otro: %v (sería un ComposeAtFlush de más por cada barrido tardío)", got)
+	if got := rig.composer.composed(); !slices.Equal(got, []intake.WindowKey{key}) {
+		t.Errorf("ventanas compuestas = %v, quería la vencida, una sola vez", got)
+	}
+	if job := rig.jobs.Jobs()[0]; job.Status != intake.StatusAggregating || !job.SourceText.Empty() {
+		t.Errorf("job = (status %q, sobre vacío %v): quien pierde la carrera no toca la fila", job.Status, job.SourceText.Empty())
+	}
+	if got := rig.jobs.Counters(); got.PutSourceText != 0 || got.Close != 0 {
+		t.Errorf("presupuesto = %+v: el sobre de una carrera perdida no se escribe por otra vía", got)
 	}
 	if len(rig.log.at("error"))+len(rig.log.at("debug")) != 0 {
 		t.Errorf("perder la carrera no se loguea:\n%s", rig.log.dump())
@@ -388,8 +325,13 @@ func TestSweep_StoreFailuresAreLoggedAndSkipped(t *testing.T) {
 		rig.requireStatus(t, "tras el fallo de un cierre", intake.StatusAggregating, intake.StatusPending)
 		rig.requireLine(t, "error", "agregador: no se pudo cerrar la ventana de captación",
 			map[string]any{"error": boom, "tenant_id": aggregatorTenant, "session_id": "session-9", "job_id": rig.jobs.Jobs()[0].ID})
-		if got := rig.composer.composed(); !slices.Equal(got, []intake.WindowKey{healthy}) {
-			t.Errorf("ventanas compuestas = %v, quería solo la que cerró", got)
+		if got := rig.composer.composed(); !slices.Equal(got, []intake.WindowKey{broken, healthy}) {
+			t.Errorf("ventanas compuestas = %v, quería las dos vencidas: se compone antes de cerrar", got)
+		}
+		jobs := rig.jobs.Jobs()
+		if !jobs[0].SourceText.Empty() || !aggregatorSameEnvelope(jobs[1].SourceText, aggregatorEnvelope()) {
+			t.Errorf("sobres = (%+v, %+v), quería ninguno en la que falló y el del compositor en la que cerró",
+				jobs[0].SourceText, jobs[1].SourceText)
 		}
 	})
 }

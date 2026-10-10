@@ -188,21 +188,30 @@ func TestRun_ReturnsAtOnceWithoutAStore(t *testing.T) {
 // TestRun_ContextCancelled_ReturnsWithoutLoggingAtError es D-F9-10: la parada no es un error. Si el
 // contexto se cancela antes de entrar, mientras Run espera, o con una llamada al almacén o al
 // compositor a medias, Run vuelve y el log no tiene NI UNA línea a ERROR. (El control positivo es
-// TestSweep_StoreFailuresAreLoggedAndSkipped y TestSweep_ComposerFailureDoesNotRevertTheClose: con
-// el contexto vivo, esos mismos fallos sí van a ERROR.)
+// TestSweep_StoreFailuresAreLoggedAndSkipped, TestSweep_ComposerFailureDoesNotRevertTheClose y
+// TestSweep_CloseWithEnvelopeFailure_IsAnErrorOnlyWhileTheContextLives: con el contexto vivo, esos
+// mismos fallos sí van a ERROR.)
+//
+// La composición ocurre ANTES del cierre (D-F8-13): una parada que la corta deja la ventana VIVA
+// —el compositor devuelve el error del contexto y el cierre sin sobre que le sigue falla contra una
+// base que, como Postgres, rechaza un contexto cancelado—. La recoge el arranque siguiente.
 func TestRun_ContextCancelled_ReturnsWithoutLoggingAtError(t *testing.T) {
 	sites := []struct {
 		name    string
 		prepare func(rig *aggregatorRig)
+		want    string // estado de la ventana tras la parada
 	}{
-		{"while idle", func(*aggregatorRig) {}},
+		{"while idle", func(*aggregatorRig) {}, intake.StatusPending},
 		{"during the listing", func(rig *aggregatorRig) {
 			rig.jobs.set(func(j *aggregatorJobs) { j.blockList = true })
-		}},
+		}, intake.StatusAggregating},
 		{"during a close", func(rig *aggregatorRig) {
 			rig.jobs.set(func(j *aggregatorJobs) { j.blockClose = true })
-		}},
-		{"during the composition", func(rig *aggregatorRig) { rig.composer.block = true }},
+		}, intake.StatusAggregating},
+		{"during the composition", func(rig *aggregatorRig) {
+			rig.composer.block = true
+			rig.jobs.set(func(j *aggregatorJobs) { j.ctxAware = true })
+		}, intake.StatusAggregating},
 	}
 	for _, site := range sites {
 		t.Run(site.name, func(t *testing.T) {
@@ -219,6 +228,10 @@ func TestRun_ContextCancelled_ReturnsWithoutLoggingAtError(t *testing.T) {
 
 				if got := rig.log.at("error"); len(got) != 0 {
 					t.Errorf("la parada dejó %d líneas a ERROR:\n%s", len(got), rig.log.dump())
+				}
+				rig.requireStatus(t, "tras la parada", site.want)
+				if site.name == "during the composition" && len(rig.composer.composed()) != 1 {
+					t.Errorf("composiciones = %d, quería 1: la parada tenía que cortar la composición", len(rig.composer.composed()))
 				}
 			})
 		})
@@ -247,12 +260,12 @@ func TestRun_ContextCancelled_ReturnsWithoutLoggingAtError(t *testing.T) {
 // forma de tener a Run DENTRO de un barrido el tiempo que haga falta.
 type aggregatorGatedComposer struct{ open chan struct{} }
 
-func (g aggregatorGatedComposer) ComposeAtFlush(ctx context.Context, _ intake.WindowKey) error {
+func (g aggregatorGatedComposer) Compose(ctx context.Context, _ intake.WindowKey) (intake.SourceText, error) {
 	select {
 	case <-g.open:
 	case <-ctx.Done():
 	}
-	return nil
+	return aggregatorEnvelope(), nil
 }
 
 // TestRun_AHintDuringASweepIsNotLost es la promesa del despertador («no se pierde ningún
@@ -274,7 +287,8 @@ func TestRun_AHintDuringASweepIsNotLost(t *testing.T) {
 
 		agg.OnClassified(first, IntentIntakeRequest, 0.9)
 		synctest.Wait() // Run está dentro del barrido, retenido en la composición de la primera
-		rig.requireStatus(t, "con el barrido a medias", intake.StatusPending, intake.StatusAggregating)
+		// La composición va ANTES del cierre (D-F8-13): con ella retenida, la primera sigue viva.
+		rig.requireStatus(t, "con el barrido a medias", intake.StatusAggregating, intake.StatusAggregating)
 
 		agg.OnClassified(second, IntentIntakeRequest, 0.9) // llega con Run ocupado: nadie escucha
 		close(gate.open)

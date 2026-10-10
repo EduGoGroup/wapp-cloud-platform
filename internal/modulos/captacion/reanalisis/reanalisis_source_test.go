@@ -227,7 +227,7 @@ func TestReanalyze_TextThatSanitizesToEmpty_IsLikeNotSendingIt(t *testing.T) {
 		if got := sourceOf(t, b, out.JobID); got != stages.SourceEventThread {
 			t.Errorf("origen = %q; se esperaba %q", got, stages.SourceEventThread)
 		}
-		b.requireSteps(t, stepLevelGate, stepVia, stepIntake, stepLiveJob, stepSource, stepOpenJob, stepComposeEnvel)
+		b.requireSteps(t, stepLevelGate, stepVia, stepIntake, stepLiveJob, stepSource, stepComposeEnvel, stepOpenJob)
 	})
 	t.Run("without thread", func(t *testing.T) {
 		t.Parallel()

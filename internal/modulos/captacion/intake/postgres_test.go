@@ -9,7 +9,8 @@ import (
 	"time"
 )
 
-// Las cuatro sentencias de la cola, escritas APARTE y byte a byte (sangría y saltos de línea
+// Cuatro de las cinco sentencias de la cola (la quinta, la de CloseWithSourceText, está con sus
+// tests en postgres_close_test.go), escritas APARTE y byte a byte (sangría y saltos de línea
 // incluidos): son las del paquete viejo, y un cambio en el SQL de producción tiene que romper
 // aquí. 🔴 Sin Postgres, este texto es lo ÚNICO que custodia las guardas que viven en SQL (el
 // predicado del `ON CONFLICT`, el `status = 'aggregating'` del cierre, la subconsulta y el
@@ -76,7 +77,7 @@ func TestNewPostgres_DoesNotQuery(t *testing.T) {
 }
 
 // TestPostgres_Queue_NilReceiverOrNilDB_IsANoOp: un *Postgres nil, o uno sin base, no tiene dónde
-// escribir: las cuatro operaciones de la cola son un no-op sin error y sin panic.
+// escribir: las cinco operaciones de la cola son un no-op sin error y sin panic.
 func TestPostgres_Queue_NilReceiverOrNilDB_IsANoOp(t *testing.T) {
 	ctx := context.Background()
 	for name, p := range map[string]*Postgres{"nil receiver": nil, "nil db": NewPostgres(nil)} {
@@ -93,13 +94,16 @@ func TestPostgres_Queue_NilReceiverOrNilDB_IsANoOp(t *testing.T) {
 			if got, err := p.ListAggregating(ctx, 10); got != nil || err != nil {
 				t.Errorf("ListAggregating = (%v, %v), quería (nil, nil)", got, err)
 			}
+			if ok, err := p.CloseWithSourceText(ctx, pgSeen, pgEnvelope); ok || err != nil {
+				t.Errorf("CloseWithSourceText = (%v, %v), quería (false, nil)", ok, err)
+			}
 		})
 	}
 }
 
 // TestPostgres_IncompleteKey_RejectedBeforeTheDatabase: una clave a medias no es «una ventana
-// rara», es un INSERT que revienta: las tres escrituras la rechazan en Go, cada una con su
-// texto, sin mandar nada a la base.
+// rara», es un INSERT que revienta: las tres escrituras por tupla la rechazan en Go, cada una con
+// su texto, sin mandar nada a la base. (La cuarta, CloseWithSourceText, en postgres_close_test.go.)
 func TestPostgres_IncompleteKey_RejectedBeforeTheDatabase(t *testing.T) {
 	ctx := context.Background()
 	env := SourceText{Enc: []byte("e"), DEK: []byte("d"), KEKID: "k"}

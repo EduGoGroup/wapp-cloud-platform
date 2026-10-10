@@ -172,16 +172,28 @@ func (j *jobsSpy) OpenReanalysis(ctx context.Context, req intake.ReanalysisReque
 	return id, err
 }
 
+// composedEnvelope es el sobre COMPLETO que devuelve el compositor de mentira por
+// defecto: distinguible, para poder afirmar que el job nace EXACTAMENTE con él.
+func composedEnvelope() intake.SourceText {
+	return intake.SourceText{Enc: []byte("enc-compuesto"), DEK: []byte("dek-compuesta"), KEKID: "kek-1"}
+}
+
+// fakeComposer imita al compositor que NO escribe: devuelve env (o err, con el sobre
+// vacío, como el de verdad) y anota la clave con la que le preguntaron.
 type fakeComposer struct {
+	env  intake.SourceText
 	err  error
 	keys []intake.WindowKey
 	log  *journal
 }
 
-func (f *fakeComposer) ComposeAtFlush(_ context.Context, k intake.WindowKey) error {
+func (f *fakeComposer) Compose(_ context.Context, k intake.WindowKey) (intake.SourceText, error) {
 	f.log.note(stepComposeEnvel)
 	f.keys = append(f.keys, k)
-	return f.err
+	if f.err != nil {
+		return intake.SourceText{}, f.err
+	}
+	return f.env, nil
 }
 
 // fakeFeatures responde por clave y registra TODAS las preguntas.
@@ -263,7 +275,7 @@ func newBench(t *testing.T, tweaks ...func(*bench)) *bench {
 			log:           log,
 			MachineMemory: intakehelpertest.NewMachineMemory(func() time.Time { return fixedNow }),
 		},
-		composer: &fakeComposer{log: log},
+		composer: &fakeComposer{log: log, env: composedEnvelope()},
 		features: &fakeFeatures{log: log, has: map[string]bool{entitlements.FeatureLLMIntake: true}},
 		config:   &fakeConfig{log: log},
 		out:      &bytes.Buffer{},
@@ -308,8 +320,9 @@ func (b *bench) mustAsk(t *testing.T, req reanalisis.Request) reanalisis.Result 
 	return out
 }
 
-// requireNoWrites es la afirmación que comparten TODOS los rechazos: una petición
-// rechazada no deja fila en ninguna de las tres tablas que esta puerta toca.
+// requireNoWrites es la afirmación que comparten TODOS los rechazos de los escalones de
+// lectura: una petición rechazada no deja fila en ninguna de las tablas que esta puerta
+// toca, ni llega a componer el sobre (que ya no escribe, pero lee y cifra el hilo).
 func (b *bench) requireNoWrites(t *testing.T) {
 	t.Helper()
 	if len(b.jobs.opened) != 0 {
@@ -323,8 +336,25 @@ func (b *bench) requireNoWrites(t *testing.T) {
 	}
 	for _, step := range b.log.steps {
 		if step == stepWriteThread || step == stepOpenJob || step == stepComposeEnvel {
-			t.Errorf("un rechazo llegó a un puerto de escritura (%s); pasos: %v", step, b.log.steps)
+			t.Errorf("un rechazo llegó al tramo de escritura (%s); pasos: %v", step, b.log.steps)
 		}
+	}
+}
+
+// requireNoJob afirma que la petición NO abrió ningún job: ni la cola tiene uno vivo para
+// el evento, ni se llegó a pedir la apertura.
+func (b *bench) requireNoJob(t *testing.T) {
+	t.Helper()
+	if len(b.jobs.opened) != 0 {
+		t.Errorf("se abrió un job sin literal: %v", b.jobs.opened)
+	}
+	for _, step := range b.log.steps {
+		if step == stepOpenJob {
+			t.Errorf("se llegó a pedir la apertura del job; pasos: %v", b.log.steps)
+		}
+	}
+	if live, ok, err := b.jobs.MachineMemory.LiveJobOfEvent(context.Background(), tenantID, eventID); err != nil || ok {
+		t.Errorf("job vivo del evento = (%q, %t, %v); no tiene que quedar ninguno", live, ok, err)
 	}
 }
 

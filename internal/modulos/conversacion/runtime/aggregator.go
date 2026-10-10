@@ -112,7 +112,7 @@ type IntentHint struct {
 // 🔴 LO QUE ENTRA A `intake_jobs` SON REFERENCIAS OPACAS Y NUNCA CONTENIDO
 // (D-044.26). Un `wa_message_id` no es PII; el texto sí, y por eso el literal NO
 // viaja a ninguna sentencia SQL desde aquí: el sobre del `source_text` nace NULL y se
-// llena AL FLUSH (T1.4).
+// llena AL FLUSH (T1.4), ya cifrado y en la misma sentencia que cierra la ventana.
 type IncomingRef struct {
 	// Key es la tupla de la ventana: tenant, sesión, contacto y evento VIVO.
 	Key intake.WindowKey
@@ -148,16 +148,18 @@ type AggregationSettings interface {
 	GetTenantSettings(ctx context.Context, tenantID string) (store.TenantSettings, error)
 }
 
-// SourceComposer ES EL PUNTO DE EXTENSIÓN DE T1.4: al cerrar una ventana alguien
-// compone el literal (`source_text`) leyendo el hilo del evento y guarda su sobre. El
-// compositor real es *SourceTextComposer (source_composer.go) y lo cablea el arranque
-// con WithSourceComposer. Lo que vive AQUÍ es el hueco y el MOMENTO en que se llama
-// (ver Sweep).
+// SourceComposer ES EL PUNTO DE EXTENSIÓN DE T1.4: para cerrar una ventana alguien
+// compone el literal (`source_text`) leyendo el hilo del evento y devuelve su sobre YA
+// CIFRADO. El compositor real es *SourceTextComposer (source_composer.go) y lo cablea
+// el arranque con WithSourceComposer. Lo que vive AQUÍ es el hueco y el MOMENTO en que
+// se llama: ANTES del cierre (ver Sweep). Quien guarda el sobre es el agregador, en la
+// misma sentencia que cierra (D-F7-9, D-F8-13).
 type SourceComposer interface {
-	// ComposeAtFlush compone y persiste el `source_text` de la ventana recién
-	// cerrada. Devolver error NO reabre la ventana ni corta nada: el job queda en
-	// `pending` con el sobre vacío.
-	ComposeAtFlush(ctx context.Context, key intake.WindowKey) error
+	// Compose compone y cifra el `source_text` de la ventana que se va a cerrar, SIN
+	// escribirlo. Un sobre vacío con error nil es legítimo (el hilo no tiene mensajes):
+	// la ventana cierra con el sobre a NULL. Devolver error tampoco deja la ventana
+	// abierta: se cierra sin sobre y el fallo se loguea.
+	Compose(ctx context.Context, key intake.WindowKey) (intake.SourceText, error)
 }
 
 // noopSourceComposer es la implementación VACÍA y DOCUMENTADA: el DEFAULT de
@@ -171,7 +173,9 @@ type SourceComposer interface {
 // el sobre vacío. El cable del arranque es la única cosa que lo impide.
 type noopSourceComposer struct{}
 
-func (noopSourceComposer) ComposeAtFlush(context.Context, intake.WindowKey) error { return nil }
+func (noopSourceComposer) Compose(context.Context, intake.WindowKey) (intake.SourceText, error) {
+	return intake.SourceText{}, nil
+}
 
 // AheadRequester PIDE la clasificación que antes llegaba adjunta al mensaje (T1.6-4,
 // D-044.31: el push murió, hoy es pull). Lo satisface el pool de clasificación
@@ -321,7 +325,9 @@ func WithIntentConfidence(threshold float64) AggregatorOption {
 	}
 }
 
-// WithSourceComposer inyecta el compositor del literal (T1.4). nil se ignora.
+// WithSourceComposer inyecta el compositor del literal (T1.4). nil se ignora. El
+// barrido lo llama ANTES de cerrar cada ventana vencida y cierra con el sobre que
+// devuelve, en una sola sentencia (D-F7-9, D-F8-13).
 //
 // AG-8: SIN esta opción el agregador usa un compositor VACÍO y documentado: las
 // ventanas cierran igual y el job queda `pending` con el sobre a NULL (jobs sin

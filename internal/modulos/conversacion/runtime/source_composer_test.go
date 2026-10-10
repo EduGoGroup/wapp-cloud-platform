@@ -312,12 +312,13 @@ func TestComposeSourceText_BothContextClassesShareOneMechanism(t *testing.T) {
 	}
 }
 
-// La forma de lo que se prueba en source_composer_flush_test.go (el compositor cableado): los dos
-// puertos, las opciones, el constructor y ComposeAtFlush.
+// La forma de lo que se prueba en source_composer_compose_test.go y source_composer_flush_test.go
+// (el compositor cableado): los dos puertos, las opciones, el constructor, Compose y ComposeAtFlush.
 var (
 	_ func(ThreadReader, context.Context, string, int) ([]events.ThreadEntry, error)                                            = ThreadReader.ListThread
 	_ func(SourceTextWriter, context.Context, intake.WindowKey, intake.SourceText) (bool, error)                                = SourceTextWriter.PutSourceText
 	_ func(int) SourceTextComposerOption                                                                                        = WithThreadLimit
+	_ func(*SourceTextComposer, context.Context, intake.WindowKey) (intake.SourceText, error)                                   = (*SourceTextComposer).Compose
 	_ func(*SourceTextComposer, context.Context, intake.WindowKey) error                                                        = (*SourceTextComposer).ComposeAtFlush
 	_ func(logger.Logger, ThreadReader, SourceTextWriter, *crypto.FieldCipher, ...SourceTextComposerOption) *SourceTextComposer = NewSourceTextComposer
 	_ int                                                                                                                       = DefaultThreadLimit

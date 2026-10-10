@@ -238,8 +238,10 @@ func cablearVentanaDeCaptacion(c *contenedor) {
 	// latencia que esta ola existe para recortar. Quien pide es el pool de captación, tal
 	// cual (🔀 F8 · conmutar(conversacion): sin aheadBridge).
 	//
-	// 🔴 D-F7-9 NO SE ARREGLA AQUÍ: agregador y compositor se cablean tal cual, como en el
-	// arranque viejo (cierre de ventana y sobre siguen siendo dos actos; es de F8-06b).
+	// ✅ D-F7-9 ARREGLADA (F8-06b, D-F8-13), y el cable es el MISMO de antes: el agregador
+	// compone por `c.intakeComposer` (Compose: lee el hilo y cifra, sin escribir) ANTES de
+	// cerrar, y cierra CON el sobre por `c.intakeJobStore` (CloseWithSourceText), en una
+	// sola sentencia. Cierre de ventana y sobre ya no son dos actos en el binario nuevo.
 	c.intakeAggregator = flowruntime.NewIntakeAggregator(c.log, c.intakeJobStore, c.flowStore, c.entResolver,
 		flowruntime.WithSourceComposer(c.intakeComposer),
 		flowruntime.WithAheadRequester(c.intakeAhead))

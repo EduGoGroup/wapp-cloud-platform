@@ -2,6 +2,7 @@ package intakehelpertest
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,6 +10,13 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 )
+
+// Los casos del SEGUNDO PRODUCTOR de jobs. Sus filas están en reanalysisCases (contrato.go).
+
+// incompleteReanalysisRequestText es el texto con el que OpenReanalysis rechaza una petición
+// incompleta. Observable y LITERAL: el mismo en intake.Postgres y en MachineMemory. Dice QUÉ
+// falta sin volcar la clave de ventana, que lleva el contacto.
+const incompleteReanalysisRequestText = "intake: solicitud de re-análisis incompleta (ventana=%t intake=%t dueño=%t)"
 
 // onEvent devuelve el mutador que cuelga el job de esa clave de ventana (mismo evento).
 func onEvent(k intake.WindowKey) func(*Row) {
@@ -129,12 +137,16 @@ func caseLiveJobBadCall(t *testing.T, m ReanalysisMontaje) {
 }
 
 // caseOpenReanalysisRow: el job del re-análisis nace `pending` —no `aggregating`—, colgado de
-// su solicitud, con las cuatro columnas de su contexto, sin referencias, sin sobre, sin etapa y
-// reclamable ya. Y desde que nace es el job vivo de su evento.
+// su solicitud, con las cuatro columnas de su contexto, sin referencias, sin etapa y reclamable
+// ya. Y desde que nace es el job vivo de su evento. La petición trae el sobre VACÍO ENTERO —el
+// hilo sin mensajes—, que es legítimo: el job nace igual, con las tres columnas del sobre vacías.
 func caseOpenReanalysisRow(t *testing.T, m ReanalysisMontaje) {
 	w := seedWitnesses(t, m.Table)
 	k := newKey(m.TenantA)
 	req := ownerRequest(k)
+	if !req.SourceText.Empty() {
+		t.Fatalf("la petición del caso trae sobre (%+v); quería el vacío entero", req.SourceText)
+	}
 	id, err := m.Store.OpenReanalysis(context.Background(), req)
 	if err != nil || id == "" {
 		t.Fatalf("OpenReanalysis = (%q, %v), quería un id y nil", id, err)
@@ -146,6 +158,9 @@ func caseOpenReanalysisRow(t *testing.T, m ReanalysisMontaje) {
 	}
 	for _, d := range diffRow(got, want) {
 		t.Errorf("el job del re-análisis recién abierto: %s", d)
+	}
+	if !got.SourceText.Empty() {
+		t.Errorf("el sobre del job abierto sin sobre = %+v, quería las tres columnas vacías", got.SourceText)
 	}
 	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
 		t.Errorf("(created_at, updated_at) = (%v, %v), quería las dos puestas", got.CreatedAt, got.UpdatedAt)
@@ -263,6 +278,97 @@ func caseOpenReanalysisIncomplete(t *testing.T, m ReanalysisMontaje) {
 	}
 	if id, ok := liveJob(t, m, k); ok {
 		t.Errorf("una petición rechazada dejó el job %q", id)
+	}
+	w.requireUntouched(t, m.Table)
+}
+
+// caseOpenReanalysisRequestBeforeEnvelope: LA PETICIÓN SE MIRA ANTES QUE EL SOBRE. Con las dos
+// cosas mal —petición incompleta y sobre a medias—, el error es el de la petición, con su texto,
+// y no se abre nada.
+func caseOpenReanalysisRequestBeforeEnvelope(t *testing.T, m ReanalysisMontaje) {
+	w := seedWitnesses(t, m.Table)
+	k := newKey(m.TenantA)
+	withoutEvent, withoutIntake, notOwner := ownerRequest(k), ownerRequest(k), ownerRequest(k)
+	withoutEvent.Key.EventID = ""
+	withoutIntake.IntakeID = ""
+	notOwner.Context.RequestedBy = ""
+	broken := map[string]intake.ReanalysisRequest{
+		"sin evento": withoutEvent, "sin solicitud": withoutIntake, "sin rol": notOwner, "vacía": {},
+	}
+	envelopes := map[string]intake.SourceText{"completo": envelope("stray")}
+	for name, env := range halfEnvelopes() {
+		envelopes[name] = env
+	}
+	for what, req := range broken {
+		want := fmt.Sprintf(incompleteReanalysisRequestText, req.Key.Valid(), req.IntakeID != "", req.Context.IsFromOwner())
+		for name, env := range envelopes {
+			req.SourceText = env
+			id, err := m.Store.OpenReanalysis(context.Background(), req)
+			if id != "" || err == nil || err.Error() != want {
+				t.Errorf("OpenReanalysis con una petición %s y un sobre %s = (%q, %v), quería (\"\", %q)", what, name, id, err, want)
+			}
+		}
+	}
+	if id, ok := liveJob(t, m, k); ok {
+		t.Errorf("una petición rechazada dejó el job %q", id)
+	}
+	w.requireUntouched(t, m.Table)
+}
+
+// caseOpenReanalysisWithEnvelope es LA CARRERA que T8.40 cierra (D-F7-9, D-F8-13): el job NACE
+// con su sobre. Con un sobre completo en la petición, la fila que deja la llamada —leída sin
+// ninguna otra llamada en medio— ya está `pending` y con las TRES columnas exactas: no hay un
+// instante en que el worker pueda reclamarla sin literal. Y el sobre va a ESA fila y solo a ella:
+// una `pending` anterior del mismo evento, que sigue sin sobre, no recibe el texto de otro job.
+func caseOpenReanalysisWithEnvelope(t *testing.T, m ReanalysisMontaje) {
+	w := seedWitnesses(t, m.Table)
+	k := newKey(m.TenantA)
+	older := m.Row(t, seedJob(t, m.Table, m.TenantA, intake.StatusPending, onEvent(k)))
+	if !older.SourceText.Empty() {
+		t.Fatalf("la `pending` anterior se sembró con sobre: %+v", older.SourceText)
+	}
+	req := ownerRequest(k)
+	req.SourceText = envelope("born")
+
+	id, err := m.Store.OpenReanalysis(context.Background(), req)
+	if err != nil || id == "" {
+		t.Fatalf("OpenReanalysis con su sobre = (%q, %v), quería un id y nil", id, err)
+	}
+	got := m.Row(t, id)
+	want := Row{
+		ID: id, Key: k, Status: intake.StatusPending, IntakeID: req.IntakeID, Reanalysis: req.Context,
+		SourceText: envelope("born"),
+		MessageTS:  got.MessageTS, CreatedAt: got.CreatedAt, NextAttemptAt: got.NextAttemptAt,
+	}
+	for _, d := range diffRow(got, want) {
+		t.Errorf("el job del re-análisis recién abierto con su sobre: %s", d)
+	}
+	if !got.SourceText.Complete() {
+		t.Errorf("el job nació con el sobre %+v, quería las tres piezas desde el INSERT", got.SourceText)
+	}
+	if got.NextAttemptAt.After(m.Now(t)) {
+		t.Errorf("next_attempt_at = %v, posterior al reloj (%v): el job tiene que ser reclamable ya", got.NextAttemptAt, m.Now(t))
+	}
+	requireSameRow(t, "la `pending` anterior del mismo evento, sin sobre", m.Row(t, older.ID), older)
+	w.requireUntouched(t, m.Table)
+}
+
+// caseOpenReanalysisHalfEnvelope: COMPLETO O VACÍO ENTERO. Un sobre al que le falta una de sus
+// tres piezas se rechaza con error ANTES de escribir: no se abre ningún job —el evento sigue sin
+// job vivo— y no queda media fila.
+func caseOpenReanalysisHalfEnvelope(t *testing.T, m ReanalysisMontaje) {
+	w := seedWitnesses(t, m.Table)
+	k := newKey(m.TenantA)
+	for name, env := range halfEnvelopes() {
+		req := ownerRequest(k)
+		req.SourceText = env
+		id, err := m.Store.OpenReanalysis(context.Background(), req)
+		if err == nil || id != "" {
+			t.Errorf("OpenReanalysis con un sobre %s = (%q, %v), quería (\"\", error)", name, id, err)
+		}
+		if live, ok := liveJob(t, m, k); ok {
+			t.Errorf("la petición con un sobre %s, rechazada o no, dejó el job %q", name, live)
+		}
 	}
 	w.requireUntouched(t, m.Table)
 }

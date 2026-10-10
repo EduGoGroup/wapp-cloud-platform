@@ -162,15 +162,32 @@ type Jobs interface {
 	OpenReanalysis(ctx context.Context, req intake.ReanalysisRequest) (string, error)
 }
 
-// Composer (antes `Compositor`) lee el hilo, lo compone, lo cifra y lo guarda en el
-// sobre del job. Es el MISMO compositor que corre al cerrar una ventana del pipeline
-// normal (R-08, T-5), y por eso este paquete no escribe un segundo: dos caminos que
-// producen el `source_text` divergirían en el primer rótulo que cambie. La clave es el
-// `intake.WindowKey` NUEVO, la misma del compositor de `conversacion/runtime`, que el
-// arranque pasa SIN adaptador (🔀 F8 · conmutar(conversacion): el que lo cosía al
-// compositor viejo, de F7-04, murió con `bridge_captacion.go`).
+// Composer (antes `Compositor`) lee el hilo, lo compone, lo cifra y DEVUELVE el sobre:
+// NO escribe en `intake_jobs`. Es el MISMO compositor que corre al cerrar una ventana
+// del pipeline normal (R-08, T-5), y por eso este paquete no escribe un segundo: dos
+// caminos que producen el `source_text` divergirían en el primer rótulo que cambie. La
+// clave es el `intake.WindowKey` NUEVO, la misma del compositor de
+// `conversacion/runtime`, que el arranque pasa SIN adaptador (🔀 F8 ·
+// conmutar(conversacion): el que lo cosía al compositor viejo, de F7-04, murió con
+// `bridge_captacion.go`). Lo satisface `*runtime.SourceTextComposer` tal cual.
+//
+// Divergencia deliberada del viejo (D-F7-9, D-F8-13), T8.40: el puerto viejo era
+// `ComposeAtFlush(ctx, key) error`, que componía Y escribía el sobre sobre un job que
+// ya estaba abierto y visible en `pending`. Aquí el sobre se compone ANTES de abrir el
+// job y viaja dentro de `intake.ReanalysisRequest`: el job nace con él.
+//
+// Lo que `Compose` devuelve, y qué hace Reanalyze con cada cosa:
+//   - un sobre COMPLETO y nil: es con el que nace el job;
+//   - un error (no se pudo leer el hilo, o cifrar): NO se abre ningún job y la petición
+//     devuelve ese error envuelto;
+//   - el sobre VACÍO y nil (el hilo no tiene ni un mensaje con texto): el job se abre
+//     igual, SIN sobre, y el worker lo matará al reclamarlo —es lo que hacía el viejo,
+//     cuyo compositor tampoco escribía nada en ese caso—. ⚠️ NO ES ALCANZABLE con el
+//     compositor de producción: el escalón 9 ya rechazó la petición sin material, con
+//     el MISMO criterio (filas `message` con texto) y el MISMO límite del hilo, y el
+//     texto pegado se guarda antes de componer. Por eso no lleva test.
 type Composer interface {
-	ComposeAtFlush(ctx context.Context, key intake.WindowKey) error
+	Compose(ctx context.Context, key intake.WindowKey) (intake.SourceText, error)
 }
 
 // Features resuelve los derechos comerciales del tenant. Lo satisface el resolver de
@@ -208,9 +225,10 @@ type Service struct {
 //
 //   - Las SIETE piezas son obligatorias. Con cualquiera de las seis primeras o `config`
 //     a nil devuelve `(nil, ErrNotWired)`: es preferible no montar la ruta a montarla y
-//     que responda 500 a medio camino. Un servicio sin compositor abriría jobs con el
-//     sobre vacío que el pipeline mataría uno a uno, y nadie lo notaría hasta mirar la
-//     tabla.
+//     que responda 500 a medio camino. Un servicio sin compositor no tendría sobre
+//     que darle al job —que nace con él desde T8.40; Divergencia deliberada del viejo
+//     (D-F7-9, D-F8-13)—: abriría jobs sin literal que el pipeline mataría uno a uno, y
+//     nadie lo notaría hasta mirar la tabla.
 //   - `threadLimit` es cuántas entradas del hilo se piden para decidir si hay material.
 //     🔴 TIENE QUE SER EL MISMO LÍMITE CON EL QUE COMPONE EL COMPOSITOR: la pregunta
 //     «¿hay material?» tiene que mirar exactamente las entradas que se van a componer,
@@ -297,18 +315,27 @@ func invalidThreadLimit(n int) error {
 //     `Thread.AppendPastedMessage` con el texto SANEADO (si falla,
 //     `reanalisis: guardar la transcripción pegada en el hilo del evento %s: %w`).
 //     Un texto repetido no es un error y no cambia el desenlace.
-//     b. el job: `Jobs.OpenReanalysis` con la clave de ventana (tenant de la petición;
-//     sesión, contacto y evento de la SOLICITUD, no del cuerpo), el `IntakeID` y el
-//     contexto `{RequestedBy: owner, Via: efectiva, Source: origen, From: revisión
-//     vigente}`. Su error sale tal cual.
-//     c. el sobre: `Composer.ComposeAtFlush` con ESA MISMA clave.
+//     b. el sobre: `Composer.Compose` con la clave de ventana (tenant de la petición;
+//     sesión, contacto y evento de la SOLICITUD, no del cuerpo). Compone y cifra, NO
+//     escribe. Va DESPUÉS de (a) porque el texto pegado tiene que estar en el hilo
+//     para entrar en el literal. Si falla,
+//     `reanalisis: componer el literal del evento %s: %w`, y NO se abre ningún job.
+//     c. el job: `Jobs.OpenReanalysis` con ESA MISMA clave, el `IntakeID`, el contexto
+//     `{RequestedBy: owner, Via: efectiva, Source: origen, From: revisión vigente}` y
+//     EL SOBRE de (b): el job nace con su literal, en una sola sentencia. Su error
+//     sale tal cual.
+//
+// Divergencia deliberada del viejo (D-F7-9, D-F8-13), T8.40: el viejo hacía (c) antes
+// que (b) —abría el job `pending` y SIN sobre, y después `ComposeAtFlush` lo escribía—.
+// Entre las dos sentencias el worker podía reclamar el job, matarlo por «no trae
+// literal que analizar», y el dueño que pidió el re-análisis no veía pasar nada.
 //
 // Devuelve `Result{IntakeID, RevisionNo: vigente+1, JobID, Via: efectiva,
 // Status: StatusInProgress}`.
 //
 // 🔴 LA LÍNEA DEL 10 ES LA QUE IMPORTA, Y ES LA RAZÓN DEL ORDEN. Los NUEVE escalones
 // anteriores son puras lecturas: una petición que acaba en error antes del 10 no ha
-// tocado una sola fila (ni texto pegado, ni job, ni sobre). Si la fuente se comprobara
+// tocado una sola fila (ni texto pegado, ni job) ni ha compuesto nada. Si la fuente se comprobara
 // DESPUÉS de abrir el job, cada 422 dejaría un `intake_job` en `pending` que ningún
 // worker puede completar. Y el gate va delante de la solicitud y de la fuente porque lo
 // contrario es una fuga de existencia: a quien no tiene `llm_intake` se le confirmaría
@@ -326,21 +353,29 @@ func invalidThreadLimit(n int) error {
 // base no puede producir (un restore parcial, un `UPDATE` a mano), que tiene que salir
 // por un error con nombre y no por un 500.
 //
-// 🔴 LOS TRES PASOS DEL 10 NO SON TRANSACCIONALES, a propósito: son tres sentencias en
-// tres tablas, y envolverlas exigiría que este paquete manejara el `*sql.DB` de los
-// tres stores. Lo que se paga es benigno: si falla la apertura del job, la fila del
-// texto pegado queda escrita y SIRVE —el siguiente re-análisis la leerá—; si falla la
-// composición, la petición NO falla (el job YA existe: un error le diría al dueño que
-// no pasó nada mientras la cola tiene trabajo) y deja el `Error`
-// `reanalisis: el job quedó abierto pero SIN literal; el worker lo matará al
-// reclamarlo` con `tenant_id`, `intake_id`, `event_id`, `job_id` y `error`.
+// 🔴 LOS TRES PASOS DEL 10 NO SON TRANSACCIONALES, a propósito: son escrituras en dos
+// tablas con una lectura cifrada en medio, y envolverlas exigiría que este paquete
+// manejara el `*sql.DB` de los stores. Lo que se paga es benigno, y lo que NO se paga
+// es lo que importa:
+//
+//   - si falla la composición (b) o la apertura (c), la fila del texto pegado queda
+//     escrita y SIRVE —el siguiente re-análisis la leerá, y el dedupe impide que se
+//     duplique—; NO queda ningún job, y la petición devuelve el error: el dueño sabe
+//     que no pasó nada y puede reintentar. No se deja un log propio del fallo: como
+//     con los demás fallos de infraestructura del servicio (leer el hilo, la
+//     configuración…), el error sale envuelto y quien lo registra es la cara HTTP;
+//   - 🔴 ya NO puede existir un job abierto y sin literal por culpa de este servicio.
+//     El `Error` del viejo —`reanalisis: el job quedó abierto pero SIN literal; el
+//     worker lo matará al reclamarlo`— DESAPARECE con la carrera que avisaba.
+//     Divergencia deliberada del viejo (D-F7-9, D-F8-13).
 //
 // # EL LOG LLEVA IDENTIFICADORES Y NÚMEROS, NUNCA CONTENIDO (REQ-10c, ADR-0034)
 //
 // Al terminar, el `Info` `reanalisis: job abierto a petición del dueño` con
 // `tenant_id`, `intake_id`, `event_id`, `job_id`, `via`, `source`, `reanalyzed_from`,
 // `status_intake` y `runas_pegadas`. Ni el texto pegado, ni el literal del hilo, ni un
-// trozo de ninguno de los dos salen por ningún log de este paquete.
+// trozo de ninguno de los dos salen por ningún log de este paquete, ni por el error de
+// la composición, que solo lleva el id del evento y la causa.
 func (s *Service) Reanalyze(ctx context.Context, req Request) (Result, error) {
 	if s == nil {
 		return Result{}, ErrNotWired
@@ -376,6 +411,18 @@ func (s *Service) Reanalyze(ctx context.Context, req Request) (Result, error) {
 		ContactID: target.ContactID,
 		EventID:   target.EventID,
 	}
+
+	// EL SOBRE, ANTES QUE EL JOB. Divergencia deliberada del viejo (D-F7-9, D-F8-13):
+	// se compone y se cifra primero —después del texto pegado, que tiene que estar ya
+	// en el hilo— y el job NACE con él. Si esto falla no se abre nada: un job sin
+	// literal solo serviría para que el worker lo matara.
+	env, err := s.composer.Compose(ctx, key)
+	if err != nil {
+		return Result{}, fmt.Errorf("reanalisis: componer el literal del evento %s: %w", target.EventID, err)
+	}
+
+	// Un sobre VACÍO (hilo sin mensajes) abre el job igual, sin literal, como el viejo;
+	// no es alcanzable con el compositor de producción (ver Composer).
 	jobID, err := s.jobs.OpenReanalysis(ctx, intake.ReanalysisRequest{
 		Key:      key,
 		IntakeID: req.IntakeID,
@@ -385,22 +432,10 @@ func (s *Service) Reanalyze(ctx context.Context, req Request) (Result, error) {
 			Source:      source,
 			From:        target.LastRevisionNo,
 		},
+		SourceText: env,
 	})
 	if err != nil {
 		return Result{}, err
-	}
-
-	// EL SOBRE. `ComposeAtFlush` rellena EXACTAMENTE el job que se acaba de abrir:
-	// `PutSourceText` elige la fila `pending` más recientemente tocada de esta tupla
-	// cuyo sobre esté vacío, y esa es la de arriba (ver intake/reanalysis.go).
-	//
-	// Un fallo aquí NO tumba la petición y NO se traga: se avisa con todo lo que hace
-	// falta para encontrar el job, y el worker lo matará con su causa escrita cuando
-	// lo reclame sin literal.
-	if cerr := s.composer.ComposeAtFlush(ctx, key); cerr != nil {
-		s.log.Error("reanalisis: el job quedó abierto pero SIN literal; el worker lo matará al reclamarlo",
-			"tenant_id", req.TenantID, "intake_id", req.IntakeID, "event_id", target.EventID,
-			"job_id", jobID, "error", cerr.Error())
 	}
 
 	// `source` es vocabulario cerrado y `runas_pegadas` es un tamaño.

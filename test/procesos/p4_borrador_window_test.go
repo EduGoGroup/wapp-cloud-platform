@@ -84,6 +84,7 @@ func TestP4_WindowRules(t *testing.T) {
 		if errs := sc.Edge.Errores(); len(errs) != 0 {
 			t.Errorf("errores del núcleo del Edge: %v", errs)
 		}
+		requireNoJobWithoutLiteral(t, sc)
 		edgeSinErrores(t, sc.S, nil)
 	})
 }

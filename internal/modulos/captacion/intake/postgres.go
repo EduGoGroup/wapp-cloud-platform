@@ -195,6 +195,81 @@ func (p *Postgres) PutSourceText(ctx context.Context, k WindowKey, env SourceTex
 	return n > 0, nil
 }
 
+// closeWithSourceTextSQL cierra la ventana Y le guarda su sobre, en una sola sentencia.
+//
+// ✎ Divergencia deliberada del viejo (D-F7-9, D-F8-13). El viejo son closeWindowSQL y
+// después putSourceTextSQL: entre las dos la fila está en `pending` SIN sobre, que es
+// exactamente lo que reclama el worker. Aquí `status` y las tres columnas del sobre
+// cambian en el MISMO UPDATE, así que ningún reclamo puede ver la fila cerrada y vacía.
+//
+// # LAS TRES GUARDAS, Y EL ACCIDENTE QUE EVITA CADA UNA
+//
+//   - `id = $1::uuid` y no la tupla: una tupla puede tener varias filas (el índice único
+//     de la 0072 es PARCIAL), y quien llama es el barrido, que acaba de leer la fila con
+//     listAggregatingSQL y sí conoce su id. Es lo que ahorra la subconsulta y los dos
+//     ORDER BY de putSourceTextSQL, y lo que hace imposible que el sobre caiga en otra
+//     `pending` de la misma tupla.
+//   - `status = 'aggregating'`: la idempotencia de closeWindowSQL. Un segundo cierre —o
+//     uno que llega después del adelanto por intent— afecta 0 filas.
+//   - `updated_at = $2`: SOLO SE CIERRA LO QUE SE LEYÓ. `$2` es el `updated_at` que dio
+//     listAggregatingSQL; cada mensaje que entra lo mueve (el `DO UPDATE … updated_at =
+//     now()` de openOrAppendSQL). Si entró uno después de la lectura, el sobre que se
+//     trae se compuso sin él: la sentencia afecta 0 filas, la ventana sigue viva y el
+//     siguiente barrido la cierra con el literal entero. Es un bloqueo optimista con la
+//     marca que la tabla ya tiene; no hace falta ni una columna de versión ni una
+//     transacción. La comparación es por igualdad exacta y es segura: la columna guarda
+//     microsegundos y el driver los lee y los devuelve sin redondear.
+//
+// Las tres columnas del sobre van en la misma sentencia y con el mismo valor de verdad:
+// las tres con contenido o las tres NULL (el hilo sin mensajes). Lo decide el método,
+// que no deja pasar un sobre a medias.
+const closeWithSourceTextSQL = `
+UPDATE public.intake_jobs
+   SET status             = 'pending',
+       source_text_enc    = $3,
+       source_text_dek    = $4,
+       source_text_kek_id = $5,
+       updated_at         = now()
+ WHERE id = $1::uuid
+   AND status = 'aggregating'
+   AND updated_at = $2
+`
+
+// CloseWithSourceText implementa JobStore: el cierre y el sobre en UNA sentencia, solo
+// si la fila sigue `aggregating` con el `updated_at` que se leyó (D-F7-9, D-F8-13).
+// Un *Postgres nil, o sin base, es un no-op (false, nil) como sus hermanas.
+func (p *Postgres) CloseWithSourceText(ctx context.Context, seen OpenJob, env SourceText) (bool, error) {
+	if p == nil || p.db == nil {
+		return false, nil
+	}
+	// La ventana se mira ANTES que el sobre, como en PutSourceText: con las dos cosas
+	// mal, el error es el de la ventana.
+	if seen.ID == "" || !seen.Key.Valid() {
+		return false, fmt.Errorf("intake: ventana incompleta al cerrar con el literal")
+	}
+	// COMPLETO O VACÍO ENTERO. Vacío es el hilo sin mensajes y viaja como tres NULL —no
+	// como un bytea de longitud cero ni un kek_id "", que dejarían una fila que parece
+	// tener sobre—. A medias es una fila indescifrable: se rechaza antes de tocar la
+	// base, con el mismo texto que PutSourceText, que dice qué falta sin citar el contenido.
+	var enc, dek, kekID any
+	switch {
+	case env.Complete():
+		enc, dek, kekID = env.Enc, env.DEK, env.KEKID
+	case !env.Empty():
+		return false, fmt.Errorf("intake: sobre del literal incompleto (enc=%d dek=%d kek_id=%t): son las tres o ninguna",
+			len(env.Enc), len(env.DEK), env.KEKID != "")
+	}
+	res, err := p.db.ExecContext(ctx, closeWithSourceTextSQL, seen.ID, seen.LastActivity, enc, dek, kekID)
+	if err != nil {
+		return false, fmt.Errorf("intake: cerrar la ventana con su literal: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("intake: contar filas cerradas con su literal: %w", err)
+	}
+	return n > 0, nil
+}
+
 // listAggregatingSQL alimenta el BARRIDO, que corre fuera del camino del entrante.
 // `ORDER BY created_at` deja las más viejas primero: si el `limit` recorta, recorta
 // por la cola y las que llevan más rato esperando salen igual.

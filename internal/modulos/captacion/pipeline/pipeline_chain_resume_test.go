@@ -34,9 +34,11 @@ func TestEnvelope_IsOpenedWithItsThreePieces(t *testing.T) {
 
 // TestEnvelope_Incomplete_FailsTheJobWithoutRetry (D-F7-9): el job cuyo sobre no está
 // entero muere en el acto, sin reintento, sin descifrar y sin llamar al modelo, con el
-// texto del worker. 🔴 Es también lo que le pasa al job reclamado ENTRE el cierre de la
-// ventana y la escritura del sobre: esa carrera se porta TAL CUAL y la arregla F8. Este
-// test FIJA la conducta; no la celebra.
+// texto del worker. Es la conducta correcta para el sobre que nunca llegará (hilo sin
+// mensajes, composición fallida). La carrera que la disparaba sin motivo —el job de una
+// VENTANA reclamado entre el cierre y la escritura del sobre— ya no existe en el binario
+// nuevo (F8-06b, D-F8-13: `CloseWithSourceText`), y la del job de RE-ANÁLISIS tampoco:
+// desde T8.40 nace con su sobre. Este test FIJA la conducta; no la celebra.
 func TestEnvelope_Incomplete_FailsTheJobWithoutRetry(t *testing.T) {
 	cases := map[string]intake.SourceText{
 		"no envelope at all": {},

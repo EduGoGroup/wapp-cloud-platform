@@ -602,6 +602,77 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     (D-F7-9 sigue sin arreglar: la carrera cierre → sobre puede asomar, hallazgo 62 de F7; se arregla en F8-06b); (h) los
     mutantes de esta sesión son los declarados por los sub-agentes, no repetidos por el orquestador; (i) las cabeceras de
     `05`, `04` y la documentación de la pieza (`contratos.md`, `arquitectura.md` del repo) no se tocaron.
+52. **(F8-06b, línea base) Los procesos contra el binario nuevo, por primera vez con el runtime, el agregador y el
+    compositor nuevos: verdes a la primera.** Antes de tocar nada, sobre `1b6bb209`: `BINARIO=nuevo make test-procesos` →
+    `RC=0 · PASS=1283 · FAIL=0 · SKIP=0`; 0 apariciones de «no trae literal que analizar»; ningún proceso nota D-F8-14,
+    D-F8-15 ni D-F8-16. Resuelve los puntos (f) y (g) del hallazgo 51 **en lo que un proceso puede ver**; el resto del 51
+    —(a)–(e), (h), (i): identidad en ejecución, arranque real, Edge real, `ci-docker`— sigue siendo de F8-07. Matiz: mientras
+    corría, un sub-agente empezó a escribir en el checkout el contrato rojo (un método nuevo que nadie llama); no cambia
+    conducta. Contra el viejo no se midió línea base.
+53. **(F8-06b, T8.39) El diseño que quedó, y por qué la guarda es `id` + `updated_at`.** No hay columna de versión, y un
+    mensaje que entra en una ventana viva solo mueve `source_refs` y `updated_at` (`OpenOrAppend`); el barrido ya tiene las
+    dos cosas en el `OpenJob` de `ListAggregating`. La quinta operación de `intake.JobStore`, `CloseWithSourceText(ctx, seen,
+    env)`, es **un** `UPDATE` que cierra y escribe el sobre `WHERE id = $1 AND status = 'aggregating' AND updated_at = $2`:
+    si un mensaje entró mientras se componía, devuelve `(false, nil)`, no toca la fila y la recoge el siguiente barrido. El
+    sobre va completo o vacío entero (vacío → las tres columnas a NULL; `SourceText.Empty()` es nuevo); a medias es error
+    antes de la base. Ni migración ni transacción. El compositor gana `Compose` (lee, compone y cifra, **sin escribir**);
+    `ComposeAtFlush` se muda a `source_composer_flush.go` (E-13) como `Compose` + `PutSourceText`, con la conducta intacta.
+    **Con duda mandó el viejo** en dos cosas: fallo al componer o cifrar → se cierra sin sobre con `CloseWindow` (que así
+    conserva su llamante) y el mismo ERROR literal; hilo vacío → cierra con el sobre a NULL. D-F9-10 intacto. Los cuatro
+    tests de cableado pasan sin tocarse, y `ComposeAtFlush_DoesNotOverwrite/window_not_pending` (hallazgo 35) no cambió.
+54. **(F8-06b, T8.40) El job de re-análisis nace con su sobre, y un cambio observable.** `ReanalysisRequest` gana
+    `SourceText` y el mismo `INSERT` de `OpenReanalysis` escribe las tres columnas (a medias → error, después de la petición
+    incompleta). El puerto `reanalisis.Composer` pasa a `Compose`; el servicio persiste el texto pegado, compone y **después**
+    abre. 🟡 **Cambia lo que ve el dueño cuando falla la composición**: antes, 200 y un job sin literal que el worker mataba;
+    ahora no se abre job y la petición devuelve `reanalisis: componer el literal del evento <id>: <causa>`, que la cara saca
+    como 500 «no se pudo pedir el re-análisis de la solicitud» (es lo que pedía T8.40). Desaparece el ERROR «el job quedó
+    abierto pero SIN literal». ✎ Cómo lo muestra la consola del cliente **no se miró**: deuda **D-36** de `deuda.md`
+    (Jhoan, 2026-10-10: sesión aparte al terminar el plan, para todos los cambios que afectan a consumidores). El sobre vacío tras componer no es alcanzable aquí (`sourceOfMaterial` usa el mismo criterio
+    que el compositor): documentado en el puerto, sin test.
+55. **(F8-06b, lo que queda sin llamante) 🟡 `PutSourceText` y `ComposeAtFlush` ya no los llama nadie en producción.** Tras
+    T8.40 quedan: `(*SourceTextComposer).ComposeAtFlush`, `intake.JobStore.PutSourceText` con sus dos implementaciones, la
+    interfaz `runtime.SourceTextWriter` y el campo `SourceTextComposer.jobs` (que `fase5_captacion.go` sigue cableando y los
+    tests de cableado siguen afirmando), más sus tests y casos de suite. **Decisión de Jhoan (2026-10-10, al planificar): se
+    dejan y se anota**; deuda **D-35** de `deuda.md`. ✎ **Decidido después (Jhoan, 2026-10-10): se borran en F8-07**, en su
+    propio commit. `CloseWindow` sí conserva llamante. De paso, el hallazgo 1 (literal
+    perdido o marca cruzada por la subconsulta de `PutSourceText`) queda **sin vía** en el árbol nuevo.
+56. **(F8-06b, caso de proceso) 🟡 Una aserción igual para los dos binarios, sin ramificar; la ficha decía otra cosa.**
+    `requireNoJobWithoutLiteral` (`test/procesos/p4_borrador_helpers_test.go`) exige 0 filas `failed` de `intake_jobs` del
+    tenant con «no trae literal que analizar», en el cierre de `TestP4_MessageToDraft`, `TestP4_WindowRules`,
+    `TestP8_Reanalysis` y `TestP6_CRMBridge` (no en `TestP4_AheadClassification`). La ficha de F8-06b pedía «distinguir
+    binario (o tolerar el viejo), como ya hacen los procesos con otras divergencias deliberadas»: **ningún proceso
+    ramifica** y R9.8.b de F9 lo prohíbe. **Decisión de Jhoan (2026-10-10)**: foco en el binario nuevo —el viejo está
+    congelado, UAT no está activo y el código viejo se borra al acabar el plan—; si el viejo se pone rojo por esa aserción,
+    es el fallo conocido que conserva (igual que ya lo hacía por la línea ERROR, hallazgo 14).
+57. **(F8-06b, mutantes) 39, ninguno sobrevive.** En serie, por `go test -overlay` sobre copias fuera del repo. Store, 14 (7
+    en el gemelo, 7 en el adaptador): en el adaptador, cuatro solo los mata el test del literal del SQL con el driver falso,
+    así que dos se repitieron contra el **Postgres real** (la suite por overlay): sin `AND updated_at = $2` cae
+    `CloseWithSourceText_MessageArrivedAfterTheRead_FalseAndUntouchedUntilReread`; sin `AND status = 'aggregating'` cae
+    `CloseWithSourceText_AlreadyClosedOrUnknownID_FalseAndNothingTouched`. Agregador y compositor, 14: los cuatro pedidos
+    (quitar la guarda, cerrar sin sobre, sobre sin cerrar, orden viejo) y diez más; «quitar la guarda» lo mata **un solo**
+    test, `TestSweep_AMessageDuringTheCompositionKeepsTheWindowOpen`. Re-análisis, 11. Salvo los dos contra Postgres real,
+    son los declarados por los sub-agentes, no repetidos por el orquestador. ✎ **Jhoan (2026-10-10)**: los siete que
+    sostienen el arreglo se repiten en F8-07 (T8.43), por quien no escribió el código.
+58. **(F8-06b, gates) Verdes sobre `42a06574`, con una intermitencia ajena por el camino.** `GOWORK=off make ci-local`
+    `GATE_RC=0` (239 `ok`, lint `0 issues.`); `PENDIENTES=0 · ROJOS=0`; 0 `--- SKIP` (4.475 PASS de primer nivel);
+    `make test-procesos` nuevo y viejo `RC=0 · PASS=1293 · FAIL=0 · SKIP=0`, sin la carrera en ninguno. Tras T8.39 (sobre
+    `83254490`) la primera pasada contra el nuevo dio `RC=1 · PASS=1288 · FAIL=2`: `TestP6_CRMBridge/callback_body_adversarial`,
+    `p6_crm_test.go:270`, «write: connection reset by peer» — la intermitencia del callback del CRM del hallazgo 14 (allí
+    «broken pipe»), ajena al cambio; repetida sola, `RC=0 · PASS=1290`. **Sin correr**: `make ci-docker`, la integración
+    vieja, el arranque real y el e2e de TX.24 (F8-07). La carrera no se reprodujo a propósito bajo carga. ✎ **Jhoan
+    (2026-10-10): se da por bueno sin test de estrés**: con una sola sentencia no queda instante en que la fila esté
+    `pending` sin sobre; el argumento es de construcción, no de estadística.
+59. **(F8-06b, método y costes)** Tres sub-agentes en serie, rojo y verde con el mismo (reanudado), ninguno commitea.
+    (a) El rojo de un cambio a una operación que ya existe es **por aserción**, no por `panic` (como en D-F8-15), y los casos
+    de suite nuevos viven en una tabla aparte hasta el verde, porque la suite corre sin etiqueta. (b) Coste del orden nuevo:
+    una lectura del hilo y un cifrado por cada intento que no llega a cerrar (carrera perdida, ventana cambiada, cierre
+    fallido); ese sobre se tira. (c) Con el contexto cancelado y el compositor fallando por la parada se intenta el
+    `CloseWindow` igualmente; en producción el `UPDATE` falla con el contexto cancelado, la ventana queda `aggregating` y la
+    recoge `RecoverAtBoot`, sin ERROR. (d) El doble `aggregatorJobs` hace `ctxAware` también a los cierres. (e) Un
+    `golangci-lint` a mano necesita `GOTOOLCHAIN=go1.26.5` delante (el `Makefile` lo exporta). (f) **Residual conocido, no
+    cambiado**: el hilo y la cola no se escriben en un solo acto, así que un mensaje ya en el hilo cuya fila aún no movió
+    `OpenOrAppend` puede entrar en el sobre y abrir después otra ventana; pasaba igual con el orden viejo y no es D-F7-9. ✎ Deuda **D-37** de `deuda.md` (Jhoan, 2026-10-10: post-migración;
+    deducido leyendo, sin verificar el orden real de las dos escrituras).
 
 ## Orden de lectura
 
@@ -624,8 +695,8 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-04b ✅ | `runtime` (1b): el verde del soporte | complejo | T8.26 | **9** de los 12 de soporte verdes (✎ 2026-10-10, D-F8-12: `welcome`, `thread` y `send` pasan a F8-05), mutantes de `keyedmutex` y `streak` muertos, `pendiente` del runtime solo en los 11 del núcleo y en `welcome.go` (2026-10-10, rama `reorg/f8-04b-runtime-soporte`, `83565b4e` … `6216d1df`, PR #66 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `d80e7f56`, sin squash) |
 | F8-05 ✅ | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo y `welcome`, `thread` y `send` verdes (✎ 2026-10-10, D-F8-12: 14, no 11), mutantes muertos, `pendiente` del runtime = 0 (2026-10-10, rama `reorg/f8-05-runtime-nucleo`, `46b6a1ec` … `f5fd0374` y tres arreglos decididos después (`c44c212f`, `6eb31a3d`, `a9da0105`), PR #67 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash) |
 | F8-06 ✅ | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo (2026-10-10, rama `reorg/f8-06-cara-http-y-conmutar`, `5ba7f419` … `fe6305b9`; hallazgos 47–51) |
-| F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39, T8.40 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; el job de re-análisis nace con su sobre; caso de P4 verde contra el binario nuevo |
-| F8-07 | cierre | — | T8.36–T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
+| F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39, T8.40 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; el job de re-análisis nace con su sobre; caso de P4 verde contra el binario nuevo. ✎ **hecha** (2026-10-10; `a0144628` … `42a06574`; hallazgos 52–59) |
+| F8-07 | cierre | — | T8.36–T8.38, T8.41–T8.43 (✎ 2026-10-10) | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
 
 Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (medido en el código viejo):
 `admin` importa `runtime` (`handlers.go:24,306,308`), así que no puede nacer antes que sus contratos y va con la cara
@@ -654,6 +725,9 @@ Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (med
   divergencia deliberada del viejo: va en su propio commit y con su caso en el proceso P4 de F9.
   ✎ **2026-10-10 (D-F8-13, Jhoan)**: F8-05 lo portó tal cual; el arreglo va en la sesión **F8-06b** (T8.39), después de
   conmutar. Diseño decidido: componer primero y cerrar guardando el sobre en **una sola sentencia**; `PutSourceText` no se toca.
+  ✎ **ARREGLADA en F8-06b (2026-10-10)**: la ventana, `ef480998` (el agregador compone antes y cierra con
+  `CloseWithSourceText`, que solo cierra si la ventana no cambió); el re-análisis, `1aad38cd` (el job nace con su sobre en
+  el mismo `INSERT`). El binario viejo conserva el fallo hasta F10. Hallazgos 53, 54 y 57.
 
 ## Contradicciones encontradas (medidas contra el código)
 

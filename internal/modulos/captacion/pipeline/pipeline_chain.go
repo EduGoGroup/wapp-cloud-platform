@@ -142,9 +142,12 @@ func (w *Worker) releaseUnpunished(ctx context.Context, job intake.ClaimedJob, r
 // por los que puede no haber texto, porque tienen desenlaces distintos:
 //
 //   - el sobre viene INCOMPLETO ⇒ el compositor del flush no llegó a escribirlo. El job es
-//     inválido y no hay reintento que lo arregle. 🔴 D-F7-9: también cae aquí el job
-//     reclamado ENTRE el cierre de la ventana y la escritura del sobre (la carrera
-//     `CloseWindow` → `PutSourceText`); se porta tal cual y la causa la arregla F8;
+//     inválido y no hay reintento que lo arregle: es el sobre que NUNCA llegará (hilo sin
+//     mensajes, composición fallida). D-F7-9: la carrera de la VENTANA —el job reclamado
+//     entre `CloseWindow` y `PutSourceText`— ya no existe en el binario nuevo (F8-06b,
+//     D-F8-13: el agregador cierra con el sobre en una sentencia, `CloseWithSourceText`).
+//     Tampoco la del job de RE-ANÁLISIS, que desde T8.40 nace con su sobre en el mismo
+//     INSERT. Lo que cae aquí es solo el sobre que de verdad no existe;
 //   - el sobre está entero pero NO DESCIFRA ⇒ la KEK no desenvuelve. Eso SÍ puede ser
 //     transitorio (KMS caído) y se trata como infraestructura.
 //

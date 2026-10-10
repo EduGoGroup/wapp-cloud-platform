@@ -39,13 +39,26 @@ func (s *MachineMemory) LiveJobOfEvent(_ context.Context, tenantID, eventID stri
 }
 
 // OpenReanalysis implementa ReanalysisStore: inserta el job del re-análisis en `pending`, con su
-// solicitud y su contexto, sin referencias ni sobre, y devuelve su id. `message_ts` se copia
-// del job MÁS ANTIGUO de ese tenant y ese evento que lo tenga, y si no hay ninguno es el reloj.
-// No es idempotente. Una petición incompleta es un error y no escribe nada.
+// solicitud, su contexto y EL SOBRE DE LA PETICIÓN (una copia), sin referencias, y devuelve su id.
+// La fila nace con su sobre en el mismo acto: Divergencia deliberada del viejo (D-F7-9, D-F8-13),
+// T8.40. `message_ts` se copia del job MÁS ANTIGUO de ese tenant y ese evento que lo tenga, y si
+// no hay ninguno es el reloj. No es idempotente.
+//
+// Se rechaza sin escribir nada, y en este orden: la petición incompleta, y después el sobre A
+// MEDIAS (ni completo ni vacío entero), cada una con el MISMO texto que intake.Postgres. Con el
+// sobre vacío entero el job nace sin sobre.
 func (s *MachineMemory) OpenReanalysis(_ context.Context, req intake.ReanalysisRequest) (string, error) {
 	if !req.Valid() {
 		return "", fmt.Errorf("intake: solicitud de re-análisis incompleta (ventana=%t intake=%t dueño=%t)",
 			req.Key.Valid(), req.IntakeID != "", req.Context.IsFromOwner())
+	}
+	var env intake.SourceText
+	switch in := req.SourceText; {
+	case in.Complete():
+		env = intake.SourceText{Enc: append([]byte(nil), in.Enc...), DEK: append([]byte(nil), in.DEK...), KEKID: in.KEKID}
+	case !in.Empty():
+		return "", fmt.Errorf("intake: sobre del literal incompleto (enc=%d dek=%d kek_id=%t): son las tres o ninguna",
+			len(in.Enc), len(in.DEK), in.KEKID != "")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -72,8 +85,9 @@ func (s *MachineMemory) OpenReanalysis(_ context.Context, req intake.ReanalysisR
 	row := &Row{
 		ID: fmt.Sprintf("job-%03d", s.seq), Key: req.Key, Status: intake.StatusPending,
 		MessageTS: messageTS, IntakeID: req.IntakeID, Reanalysis: reanalysis,
-		Artifacts: map[string]json.RawMessage{},
-		CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+		SourceText: env,
+		Artifacts:  map[string]json.RawMessage{},
+		CreatedAt:  now, UpdatedAt: now, NextAttemptAt: now,
 	}
 	s.rows = append(s.rows, row)
 	return row.ID, nil
