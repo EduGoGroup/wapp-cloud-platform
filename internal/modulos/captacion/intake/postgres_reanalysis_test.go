@@ -9,7 +9,8 @@ import (
 
 // Las dos sentencias del segundo productor, escritas APARTE y byte a byte: son las del paquete
 // viejo. 🔴 Sin Postgres, este texto es lo ÚNICO que custodia lo que vive en SQL —que el job
-// nace `'pending'`, que hereda `message_ts` del primer job del evento, que nace sin sobre y
+// nace `'pending'`, que hereda `message_ts` del primer job del evento, que NACE CON SU SOBRE en
+// el mismo INSERT (`$10, $11, $12`; T8.40, D-F7-9, D-F8-13) y no en una segunda sentencia, y
 // que la pregunta es por `event_id` y no por `intake_id`—: su conducta la prueba
 // intakehelpertest.ContratoReanalysis contra Postgres real, en los procesos de F9.
 const (
@@ -24,7 +25,8 @@ SELECT id::text
 	wantOpenReanalysisSQL = `
 INSERT INTO public.intake_jobs
        (tenant_id, session_id, contact_id, event_id, status, message_ts, source_refs,
-        intake_id, requested_by, reanalysis_via, reanalysis_source, reanalyzed_from)
+        intake_id, requested_by, reanalysis_via, reanalysis_source, reanalyzed_from,
+        source_text_enc, source_text_dek, source_text_kek_id)
 VALUES ($1, $2, $3, $4::uuid, 'pending',
         COALESCE((SELECT j0.message_ts
                     FROM public.intake_jobs j0
@@ -33,16 +35,21 @@ VALUES ($1, $2, $3, $4::uuid, 'pending',
                    ORDER BY j0.created_at
                    LIMIT 1), now()),
         '[]'::jsonb,
-        $5::uuid, $6, $7, $8, $9)
+        $5::uuid, $6, $7, $8, $9,
+        $10, $11, $12)
 RETURNING id::text
 `
 )
 
-// pgRequest es una petición de re-análisis completa.
+// pgBornEnvelope es el sobre completo con el que nace el job.
+var pgBornEnvelope = SourceText{Enc: []byte("enc-bytes"), DEK: []byte("dek-bytes"), KEKID: "k1"}
+
+// pgRequest es una petición de re-análisis completa, con su sobre.
 func pgRequest() ReanalysisRequest {
 	return ReanalysisRequest{
 		Key: pgKey, IntakeID: pgIntakeID,
-		Context: Reanalysis{RequestedBy: RequestedByOwner, Via: "api", Source: "both", From: 3},
+		Context:    Reanalysis{RequestedBy: RequestedByOwner, Via: "api", Source: "both", From: 3},
+		SourceText: pgBornEnvelope,
 	}
 }
 
@@ -177,10 +184,12 @@ func TestPostgres_OpenReanalysis_IncompleteRequest_ComesBeforeTheEnvelope(t *tes
 	fake.requireUntouched(t)
 }
 
-// TestPostgres_OpenReanalysis_InsertsOneRowAndReturnsItsID: UNA sentencia, la literal, con la
-// clave, la solicitud y las cuatro columnas del contexto; devuelve el id que da la base. Una
-// revisión de origen 0 —no había ninguna— viaja como NULL, no como la revisión cero.
-func TestPostgres_OpenReanalysis_InsertsOneRowAndReturnsItsID(t *testing.T) {
+// TestPostgres_OpenReanalysis_InsertsOneRowWithItsEnvelopeAndReturnsItsID: UNA sentencia, la
+// literal, sin ninguna otra antes ni después, con los DOCE argumentos: la clave, la solicitud, las
+// cuatro columnas del contexto y, al final, las tres piezas del sobre tal como llegan. Devuelve el
+// id que da la base. Una revisión de origen 0 —no había ninguna— viaja como NULL, no como la
+// revisión cero.
+func TestPostgres_OpenReanalysis_InsertsOneRowWithItsEnvelopeAndReturnsItsID(t *testing.T) {
 	for from, wantFrom := range map[int]driver.Value{3: 3, 1: 1, 0: nil, -2: nil} {
 		store, fake := newFakePostgres(t)
 		fake.script(fakeReply{rows: [][]driver.Value{{pgJobID}}})
@@ -195,11 +204,67 @@ func TestPostgres_OpenReanalysis_InsertsOneRowAndReturnsItsID(t *testing.T) {
 		want := []driver.Value{
 			pgKey.TenantID, pgKey.SessionID, pgKey.ContactID, pgKey.EventID,
 			pgIntakeID, "owner", "api", "both", wantFrom,
+			[]byte("enc-bytes"), []byte("dek-bytes"), "k1",
 		}
 		if !reflect.DeepEqual(stmt.args, want) {
-			t.Errorf("argumentos con From=%d = %#v, quería %#v", from, stmt.args, want)
+			t.Errorf("argumentos con From=%d = %#v, quería los doce %#v", from, stmt.args, want)
 		}
 	}
+}
+
+// TestPostgres_OpenReanalysis_EmptyEnvelope_SendsThreeNulls: el sobre vacío entero —el hilo sin
+// mensajes— abre el job igual, con la MISMA sentencia, y sus tres argumentos viajan como NULL: ni
+// un bytea de longitud cero ni un kek_id "", que dejarían una fila que parece tener sobre.
+func TestPostgres_OpenReanalysis_EmptyEnvelope_SendsThreeNulls(t *testing.T) {
+	cases := map[string]SourceText{
+		"zero value":           {},
+		"empty non-nil slices": {Enc: []byte{}, DEK: []byte{}},
+	}
+	for name, env := range cases {
+		t.Run(name, func(t *testing.T) {
+			store, fake := newFakePostgres(t)
+			fake.script(fakeReply{rows: [][]driver.Value{{pgJobID}}})
+			req := pgRequest()
+			req.SourceText = env
+			id, err := store.OpenReanalysis(context.Background(), req)
+			if id != pgJobID || err != nil {
+				t.Fatalf("OpenReanalysis con el sobre vacío = (%q, %v), quería (%q, nil)", id, err, pgJobID)
+			}
+			stmt := fake.requireOnly(t, fakeQuery)
+			requireSQL(t, stmt, wantOpenReanalysisSQL)
+			if len(stmt.args) != 12 {
+				t.Fatalf("argumentos = %#v, quería 12 (los nueve de la petición y las tres piezas del sobre)", stmt.args)
+			}
+			for i, column := range []string{"source_text_enc", "source_text_dek", "source_text_kek_id"} {
+				if stmt.args[9+i] != nil {
+					t.Errorf("%s viaja como %#v, quería NULL", column, stmt.args[9+i])
+				}
+			}
+		})
+	}
+}
+
+// TestPostgres_OpenReanalysis_HalfEnvelope_SaysWhatIsMissing: el sobre a medias se rechaza antes
+// de tocar la base, con el mismo texto que PutSourceText y CloseWithSourceText: dice QUÉ falta sin
+// citar el contenido. No se abre ningún job.
+func TestPostgres_OpenReanalysis_HalfEnvelope_SaysWhatIsMissing(t *testing.T) {
+	cases := map[string]SourceText{
+		"intake: sobre del literal incompleto (enc=0 dek=3 kek_id=true): son las tres o ninguna":  {DEK: []byte("dek"), KEKID: "k1"},
+		"intake: sobre del literal incompleto (enc=7 dek=0 kek_id=true): son las tres o ninguna":  {Enc: []byte("secreto"), KEKID: "k1"},
+		"intake: sobre del literal incompleto (enc=7 dek=3 kek_id=false): son las tres o ninguna": {Enc: []byte("secreto"), DEK: []byte("dek")},
+		"intake: sobre del literal incompleto (enc=0 dek=0 kek_id=true): son las tres o ninguna":  {KEKID: "k1"},
+	}
+	// Un solo store para los cuatro: ninguno puede haber mandado nada a la base.
+	store, fake := newFakePostgres(t)
+	for want, env := range cases {
+		req := pgRequest()
+		req.SourceText = env
+		id, err := store.OpenReanalysis(context.Background(), req)
+		if id != "" || err == nil || err.Error() != want {
+			t.Errorf("OpenReanalysis = (%q, %v), quería (\"\", %q)", id, err, want)
+		}
+	}
+	fake.requireUntouched(t)
 }
 
 // TestPostgres_OpenReanalysis_DatabaseFailure_IsWrapped: el fallo de la base —o una inserción

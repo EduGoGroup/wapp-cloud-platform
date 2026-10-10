@@ -31,9 +31,7 @@
 //     incompleta): los casos de la cola.
 //   - queue_close_contrato.go: los de su quinta operación, CloseWithSourceText.
 //   - machine_contrato.go y machine_transitions_contrato.go: los de la máquina.
-//   - reanalysis_contrato.go: los del segundo productor. Mientras están en rojo, los del job que
-//     nace con su sobre (T8.40) tienen entrada propia, ContratoReanalysisEnvelope; en el verde
-//     pasan a la tabla del segundo productor.
+//   - reanalysis_contrato.go: los del segundo productor.
 //
 // Y el doble: machine_memory.go (PipelineStore) y reanalysis_memory.go (ReanalysisStore).
 //
@@ -346,6 +344,8 @@ func reanalysisCases() []contractCase[ReanalysisMontaje] {
 		{"LiveJobOfEvent_SeveralLive_TheNewestWins", caseLiveJobNewest},
 		{"LiveJobOfEvent_MissingTenantOrEvent_Error", caseLiveJobBadCall},
 		{"OpenReanalysis_EmptyEnvelope_IsBornPendingWithItsContextAndNoEnvelope", caseOpenReanalysisRow},
+		{"OpenReanalysis_FullEnvelope_IsBornPendingWithTheThreeInTheSameCall", caseOpenReanalysisWithEnvelope},
+		{"OpenReanalysis_HalfEnvelope_ErrorAndNothingWritten", caseOpenReanalysisHalfEnvelope},
 		{"OpenReanalysis_InheritsTheMessageTSOfTheFirstJobOfTheEvent", caseOpenReanalysisInheritsTS},
 		{"OpenReanalysis_NoPreviousJob_MessageTSIsNowAndFromZeroIsNull", caseOpenReanalysisWithoutHistory},
 		{"OpenReanalysis_IsNotIdempotent_TwoCallsTwoJobs", caseOpenReanalysisTwice},

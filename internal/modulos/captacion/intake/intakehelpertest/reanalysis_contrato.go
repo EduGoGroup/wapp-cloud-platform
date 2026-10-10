@@ -12,13 +12,6 @@ import (
 )
 
 // Los casos del SEGUNDO PRODUCTOR de jobs. Sus filas están en reanalysisCases (contrato.go).
-//
-// 🔧 EN ROJO, DOS VIVEN APARTE (T8.40; D-F7-9, D-F8-13). Los casos del job que NACE CON SU SOBRE
-// —caseOpenReanalysisWithEnvelope y caseOpenReanalysisHalfEnvelope— fallan contra las dos
-// implementaciones mientras OpenReanalysis no escriba el sobre de la petición, y ContratoReanalysis
-// corre sin etiqueta. Por eso tienen su tabla (reanalysisEnvelopeCases) y su entrada
-// (ContratoReanalysisEnvelope), al final del fichero. En el VERDE sus filas se mudan a
-// reanalysisCases, y la tabla y la entrada DESAPARECEN: la suite vuelve a ser una.
 
 // incompleteReanalysisRequestText es el texto con el que OpenReanalysis rechaza una petición
 // incompleta. Observable y LITERAL: el mismo en intake.Postgres y en MachineMemory. Dice QUÉ
@@ -378,32 +371,4 @@ func caseOpenReanalysisHalfEnvelope(t *testing.T, m ReanalysisMontaje) {
 		}
 	}
 	w.requireUntouched(t, m.Table)
-}
-
-// reanalysisEnvelopeCases es la tabla PROVISIONAL de los casos en rojo (ver la cabecera).
-func reanalysisEnvelopeCases() []contractCase[ReanalysisMontaje] {
-	return []contractCase[ReanalysisMontaje]{
-		{"OpenReanalysis_FullEnvelope_IsBornPendingWithTheThreeInTheSameCall", caseOpenReanalysisWithEnvelope},
-		{"OpenReanalysis_HalfEnvelope_ErrorAndNothingWritten", caseOpenReanalysisHalfEnvelope},
-	}
-}
-
-// ContratoReanalysisEnvelope ejecuta las promesas del job que nace con su sobre contra la
-// implementación que devuelve nuevo: es ContratoReanalysis para esos casos, con sus mismas
-// reglas. PROVISIONAL: existe solo mientras están en rojo (ver la cabecera del fichero).
-func ContratoReanalysisEnvelope(t *testing.T, nuevo func(t *testing.T) ReanalysisMontaje) {
-	t.Helper()
-	if nuevo == nil {
-		t.Fatal("intakehelpertest.ContratoReanalysisEnvelope: nuevo es nil; hace falta una función que devuelva un ReanalysisMontaje")
-	}
-	for _, c := range reanalysisEnvelopeCases() {
-		t.Run(c.name, func(t *testing.T) {
-			m := nuevo(t)
-			if m.Store == nil {
-				t.Fatal("ReanalysisMontaje.Store es nil")
-			}
-			validateTable(t, m.Table)
-			c.run(t, m)
-		})
-	}
 }
