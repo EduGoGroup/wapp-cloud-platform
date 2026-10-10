@@ -73,7 +73,7 @@ func TestProjector_BuyerData_WithoutOpenIntakeIsAnError(t *testing.T) {
 	cases := map[string]func(r *rig){
 		"no intake at all": func(*rig) {},
 		"intake already closed": func(r *rig) {
-			r.project(t, meta(), closedEffect(line("PAN", 1, 2.0)))
+			r.project(t, meta(), closedEffect(t, line("PAN", 1, 2.0)))
 		},
 		"open intake of another contact": func(r *rig) {
 			other := meta()
@@ -169,7 +169,7 @@ func TestProjector_BuyerData_LastFieldAndCloseOfTheSameTurn(t *testing.T) {
 
 // cart_cancelled y cart_expired llevan la solicitud abierta a su estado conservando el
 // total; sin solicitud abierta son un no-op sin error (H29: el efecto sigue al estado).
-func TestProjector_Transitions(t *testing.T) { //nolint:gocyclo // una aserción por promesa del contrato, en secuencia; partirlo no lo aclara
+func TestProjector_Transitions(t *testing.T) {
 	cases := []struct {
 		effect string
 		status string
@@ -178,51 +178,59 @@ func TestProjector_Transitions(t *testing.T) { //nolint:gocyclo // una aserción
 		{cart.EffectCartExpired, "expired"}, // sin productor vivo: solo un replay histórico
 	}
 	for _, tc := range cases {
-		t.Run(tc.effect, func(t *testing.T) {
-			r := newRig()
-			seed := store.Intake{ID: "abierta", TenantID: tenantID, ContactID: contactID, SessionID: sessionID,
-				Status: "open", Total: 7.5, EventID: eventID}
-			if err := r.repo.MemoryRepository.UpsertIntake(context.Background(), seed); err != nil {
-				t.Fatalf("sembrar: %v", err)
-			}
-			if err := r.repo.MemoryRepository.ReplaceIntakeItems(context.Background(), "abierta", []store.IntakeItem{{SKU: "PAN", Label: "Pan", Qty: 3, UnitPrice: 2.5}}); err != nil {
-				t.Fatalf("sembrar líneas: %v", err)
-			}
-			r.project(t, meta(), modules.Effect{Kind: kindEvent, Name: tc.effect, Payload: map[string]any{}})
-			got := r.onlyIntake(t)
-			if got.ID != "abierta" || got.Status != tc.status || got.Total != 7.5 || got.EventID != eventID {
-				t.Errorf("solicitud = %+v, quiero la misma en %q con su total y su evento", got, tc.status)
-			}
-			if lines := r.lines(t, "abierta"); len(lines) != 1 {
-				t.Errorf("líneas = %+v: la transición no toca las líneas", lines)
-			}
-			if !reflect.DeepEqual(r.repo.calls, []string{"GetOpenIntake", "MarkIntakeStatus"}) {
-				t.Errorf("llamadas = %v", r.repo.calls)
-			}
-			if r.shipping.calls != 0 || len(r.revisions.Revisions("abierta")) != 0 {
-				t.Error("una transición no escribe revisión ni pide envío")
-			}
+		t.Run(tc.effect, func(t *testing.T) { assertTransition(t, tc.effect, tc.status) })
+	}
+	t.Run("store errors propagate", assertTransitionStoreErrors)
+}
 
-			// Segunda vez: ya no hay abierta ⇒ no-op.
-			r.repo.calls = nil
-			r.project(t, meta(), modules.Effect{Name: tc.effect})
-			if !reflect.DeepEqual(r.repo.calls, []string{"GetOpenIntake"}) || r.onlyIntake(t).Status != tc.status {
-				t.Errorf("la segunda vez debía ser un no-op: llamadas %v", r.repo.calls)
-			}
-		})
+// assertTransition es el cuerpo de cada caso de TestProjector_Transitions: la abierta
+// pasa a `status` conservando total, evento y líneas, y la segunda vez es un no-op.
+// Sin t.Helper(): un fallo debe señalar la línea de la aserción.
+func assertTransition(t *testing.T, effect, status string) {
+	r := newRig()
+	seed := store.Intake{ID: "abierta", TenantID: tenantID, ContactID: contactID, SessionID: sessionID,
+		Status: "open", Total: 7.5, EventID: eventID}
+	if err := r.repo.MemoryRepository.UpsertIntake(context.Background(), seed); err != nil {
+		t.Fatalf("sembrar: %v", err)
+	}
+	if err := r.repo.MemoryRepository.ReplaceIntakeItems(context.Background(), "abierta", []store.IntakeItem{{SKU: "PAN", Label: "Pan", Qty: 3, UnitPrice: 2.5}}); err != nil {
+		t.Fatalf("sembrar líneas: %v", err)
+	}
+	r.project(t, meta(), modules.Effect{Kind: kindEvent, Name: effect, Payload: map[string]any{}})
+	got := r.onlyIntake(t)
+	if got.ID != "abierta" || got.Status != status || got.Total != 7.5 || got.EventID != eventID {
+		t.Errorf("solicitud = %+v, quiero la misma en %q con su total y su evento", got, status)
+	}
+	if lines := r.lines(t, "abierta"); len(lines) != 1 {
+		t.Errorf("líneas = %+v: la transición no toca las líneas", lines)
+	}
+	if !reflect.DeepEqual(r.repo.calls, []string{"GetOpenIntake", "MarkIntakeStatus"}) {
+		t.Errorf("llamadas = %v", r.repo.calls)
+	}
+	if r.shipping.calls != 0 || len(r.revisions.Revisions("abierta")) != 0 {
+		t.Error("una transición no escribe revisión ni pide envío")
 	}
 
-	t.Run("store errors propagate", func(t *testing.T) {
-		boom := errors.New("pg caído")
-		for _, method := range []string{"GetOpenIntake", "MarkIntakeStatus"} {
-			r := newRig()
-			r.project(t, meta(), snapshotEffect(cart.EffectItemAdded, line("PAN", 1, 2)))
-			r.repo.fail[method] = boom
-			if err := r.p.Project(context.Background(), meta(), modules.Effect{Name: cart.EffectCartCancelled}); !errors.Is(err, boom) {
-				t.Errorf("%s: Project = %v, quiero el error del almacén", method, err)
-			}
+	// Segunda vez: ya no hay abierta ⇒ no-op.
+	r.repo.calls = nil
+	r.project(t, meta(), modules.Effect{Name: effect})
+	if !reflect.DeepEqual(r.repo.calls, []string{"GetOpenIntake"}) || r.onlyIntake(t).Status != status {
+		t.Errorf("la segunda vez debía ser un no-op: llamadas %v", r.repo.calls)
+	}
+}
+
+// assertTransitionStoreErrors: el error del almacén, en cualquiera de las dos
+// llamadas de la transición, sale de Project tal cual.
+func assertTransitionStoreErrors(t *testing.T) {
+	boom := errors.New("pg caído")
+	for _, method := range []string{"GetOpenIntake", "MarkIntakeStatus"} {
+		r := newRig()
+		r.project(t, meta(), snapshotEffect(cart.EffectItemAdded, line("PAN", 1, 2)))
+		r.repo.fail[method] = boom
+		if err := r.p.Project(context.Background(), meta(), modules.Effect{Name: cart.EffectCartCancelled}); !errors.Is(err, boom) {
+			t.Errorf("%s: Project = %v, quiero el error del almacén", method, err)
 		}
-	})
+	}
 }
 
 // H29 de punta a punta: cancelar DENTRO del flujo declara cart_cancelled, y ese efecto
