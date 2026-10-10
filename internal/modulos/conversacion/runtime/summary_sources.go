@@ -7,7 +7,6 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // SummaryStore es lo que el adaptador del resumen necesita del almacén de flujos, y
@@ -29,8 +28,8 @@ type SummaryStore interface {
 // dos, no nil, y leen del mismo almacén `s`. No valida `s` ni lo consulta al
 // construir: un almacén nil se descubre al leer.
 //
-// Los dos lectores son adaptadores no exportados (nacen en el verde); lo que prometen
-// se promete aquí, que es la única puerta por la que se llega a ellos.
+// Los dos lectores son adaptadores no exportados (intakeLines y surveyAnswers); lo que
+// prometen se promete aquí, que es la única puerta por la que se llega a ellos.
 //
 // # Lines · OpenIntakeLines(ctx, tenantID, sessionID, contactID)
 //
@@ -82,5 +81,78 @@ type SummaryStore interface {
 // filas se fijan los dos a mano, sobre la misma base: un evento fechado con un reloj y
 // filas fechadas con otro miden el desfase de los relojes y no la cota.
 func NewSummarySources(s SummaryStore) events.SummarySources {
-	panic(pendiente.Implementar("runtime.NewSummarySources"))
+	return events.SummarySources{
+		Lines:   intakeLines{store: s},
+		Answers: surveyAnswers{store: s},
+	}
+}
+
+// intakeLines lee las líneas YA DECIDIDAS del pedido abierto de una conversación.
+type intakeLines struct{ store SummaryStore }
+
+// OpenIntakeLines resuelve la solicitud abierta del contacto y devuelve sus líneas.
+//
+// El filtro por SESIÓN no es opcional y es lo primero que se pierde al copiar esto
+// (REQ-18): GetOpenIntake resuelve por (tenant, contacto) SIN sesión —una solicitud
+// abierta por contacto, design.md §3.4— mientras que un evento es de (tenant, SESIÓN,
+// contacto). Sin la comparación, dos sesiones del mismo tenant hablando con la misma
+// persona se resumirían el mismo pedido, y el resumen del evento de una acabaría
+// enseñando lo que la otra armó.
+//
+// Sin solicitud abierta, o con una de otra sesión, devuelve nil SIN error: no es un
+// fallo, es que no hay nada que resumir, y quien llama ya distingue ese caso.
+func (a intakeLines) OpenIntakeLines(ctx context.Context, tenantID, sessionID, contactID string) ([]events.SummaryLine, error) {
+	in, found, err := a.store.GetOpenIntake(ctx, tenantID, contactID)
+	if err != nil || !found {
+		return nil, err
+	}
+	if in.SessionID != sessionID {
+		return nil, nil
+	}
+	items, err := a.store.ListIntakeItems(ctx, in.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]events.SummaryLine, 0, len(items))
+	for _, it := range items {
+		out = append(out, events.SummaryLine{
+			SKU:           it.SKU,
+			Label:         it.Label,
+			Qty:           it.Qty,
+			UnitPrice:     it.UnitPrice,
+			Customization: it.Customization,
+		})
+	}
+	return out, nil
+}
+
+// surveyAnswers lee las respuestas YA DADAS de la encuesta de un evento.
+type surveyAnswers struct{ store SummaryStore }
+
+// SurveyAnswers devuelve las respuestas de ESTA pasada de la encuesta.
+//
+// La cota por fecha es el FALLBACK DEL LEGADO, no un adorno: survey_results se
+// diseñó dos planes antes de que los eventos existieran y no tenía session_id ni
+// event_id. Desde la 0054 (Plan 043 · Ola 4.5, D-043.21) la tabla SÍ tiene
+// `event_id` —lo escribe el proyector del módulo survey al declarar a su padre—,
+// pero las filas anteriores a esa migración lo llevan NULL, así que la consulta por
+// (tenant, contacto, flujo) devolvería también lo que la misma persona respondió el
+// mes pasado. Para separar tandas cubriendo TAMBIÉN el legado se usa el nacimiento
+// del evento —que es TARDÍO, y por tanto posterior a cualquier pasada anterior—: se
+// descarta lo escrito ANTES de que este evento existiera. El resto del porqué (el
+// mismo reloj para las dos marcas, la limitación acotada del legado) está en el
+// contrato de NewSummarySources.
+func (a surveyAnswers) SurveyAnswers(ctx context.Context, ev events.Event) ([]events.SummaryAnswer, error) {
+	rows, err := a.store.ListResults(ctx, ev.TenantID, ev.ContactID, ev.FlowID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]events.SummaryAnswer, 0, len(rows))
+	for _, r := range rows {
+		if r.CreatedAt.Before(ev.CreatedAt) {
+			continue
+		}
+		out = append(out, events.SummaryAnswer{QuestionID: r.QuestionID, AnswerCode: r.AnswerCode})
+	}
+	return out, nil
 }
