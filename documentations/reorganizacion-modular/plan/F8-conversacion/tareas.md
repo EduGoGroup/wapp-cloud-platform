@@ -2,8 +2,8 @@
 
 > Formato de [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md) §3. Skills:
 > `reconstruir-modulo` (la fase), `contrato-tdd` (cada fichero), `validar-antes-de-cerrar` (cada
-> gate), `procesos-testcontainers` (T8.37). `C` = `internal/modulos/conversacion`. **Las siete sesiones
-> son 💻**: commits en **la rama de la sesión** (partida de `dev`), push de esa rama y PR a `dev` sin squash (regla 6
+> gate), `procesos-testcontainers` (T8.37). `C` = `internal/modulos/conversacion`. **Las ocho sesiones** (✎ 2026-10-10, D-F8-11: eran siete; F8-04 se parte en F8-04 y F8-04b)
+> **son 💻**: commits en **la rama de la sesión** (partida de `dev`), push de esa rama y PR a `dev` sin squash (regla 6
 > del `CLAUDE.md`; ✎ F8-01: aquí decía «commits en `dev`, sin PR»). Donde una tarea diga «`dev` empujado», léase «rama empujada y PR abierto». Rojo y verde siguen siendo commits distintos. Todo gate se lee **sin pipe**:
 >
 > `G`: `GOWORK=off make ci-local > /tmp/g.log 2>&1; echo GATE_RC=$? >> /tmp/g.log; tail -1 /tmp/g.log` → `GATE_RC=0`
@@ -159,8 +159,11 @@ Para cuando: `events` (7) y `cart` (14) verdes; `eventshelpertest` con doble y s
   - **Hecho cuando**: test golden verde **sin** `-update`; `orden_consulta_ast_test.go` sin `//go:build pendiente` y verde; mutación local del orden → rojo (se deshace sin commitear); las tres cosas del cierre; `dev` empujado.
   - **Gate**: `G` · **Commit**: `verde(conversacion): <fichero>`
 
-## Bloque 4 · `runtime` (1): contratos de los 23 y soporte · 💻 · sesión F8-04 · T8.18–T8.21, T8.26
-Para cuando: los 23 contratos de `runtime` en rojo, `runtimehelpertest` en verde, candado de rachas escrito; los 12 de soporte verdes; `G`, `V` rc=0. Nivel **complejo**: esquema completo E-2…E-9.
+> ✎ **2026-10-10 (D-F8-11, Jhoan; hallazgo 29 del README)**: el bloque 4 («`runtime` (1): contratos de los 23 y soporte», sesión
+> F8-04, T8.18–T8.21 y T8.26) se parte en **4a** y **4b**, una sesión cada uno. Las tareas no cambian de texto ni de número.
+
+## Bloque 4a · `runtime` (1a): los contratos de los 23 · 💻 · sesión F8-04 · T8.18–T8.21
+Para cuando: los 23 contratos de `runtime` en rojo (12 de soporte + 11 de núcleo), `runtimehelpertest` en verde con sus dobles y sus suites `Contrato`, candado de rachas escrito tras `pendiente`; D-F8-4 en `fronteras_test.go` y lista blanca de `conversacion` completa; `make test-pendiente` cuenta solo `runtime`; `G`, `V` rc=0. **Ningún verde de `runtime`.** Nivel **complejo**: esquema completo E-2…E-9.
 (Los contratos de los 23 van antes que cualquier verde: `send.go`, `thread.go` y `welcome.go` cuelgan de `*Runtime`.)
 
 - [ ] **T8.18 · rojo(conversacion): runtime — soporte (12) y `runtimehelpertest`** · 💻 · dep. T8.12, T8.16 · cumple R8.2.a–f
@@ -178,6 +181,9 @@ Para cuando: los 23 contratos de `runtime` en rojo, `runtimehelpertest` en verde
 - [ ] **T8.21 · Cierre de la pasada de contratos** · 💻 · dep. T8.3–T8.20 (menos T8.13) · cumple R8.2.g
   - **Hecho cuando**: `make test-pendiente` = `grep -rn 'pendiente.Implementar' --include='*.go' C | wc -l` (anotar N: solo queda el runtime); `G` rc=0; D-F8-4 aplicado en `fronteras_test.go` (regla «`events` sin clasificador») y lista blanca de `conversacion` **completa** (`arquitectura.md` §3; las aristas se fueron añadiendo al nacer cada import, aquí se comprueban).
   - **Gate**: `validar-antes-de-cerrar` · **Commit**: `rojo(conversacion): fronteras del módulo`
+## Bloque 4b · `runtime` (1b): el verde del soporte · 💻 · sesión F8-04b · T8.26
+Para cuando: los 12 de soporte verdes, mutantes de `keyedmutex.go` y `streak.go` muertos, suites contra Postgres de `self_numbers` y `tenant_resolver` verdes; `pendiente.Implementar` de `runtime` solo en los 11 del núcleo; `G` rc=0. Depende de F8-04 integrada en `dev`. Nivel **complejo**: esquema completo E-2…E-9.
+
 - [ ] **T8.26 · verde(conversacion): runtime — soporte (12)** · 💻 · dep. T8.21
   - **Hecho cuando**: `go test -race` rc=0 por commit; un test por promesa del contrato; mutantes en `keyedmutex.go` y `streak.go` (estado y concurrencia); la verdad de `self_numbers.go` y `tenant_resolver.go` la da la suite contra Postgres (P4) y F9; `streak.go` con reloj inyectado (T-7); las tres cosas del cierre; `dev` empujado.
   - **Gate**: `G` · **Commit**: `verde(conversacion): <fichero>`

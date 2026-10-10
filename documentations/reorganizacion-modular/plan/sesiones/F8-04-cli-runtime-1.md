@@ -1,20 +1,25 @@
-# F8-04 · F8 · `runtime` (1): contratos de los 23 y soporte · 💻 CLI
+# F8-04 · F8 · `runtime` (1a): los contratos de los 23 · 💻 CLI
+
+> ✎ **2026-10-10 (D-F8-11, Jhoan)**: esta sesión era «contratos de los 23 y soporte» (T8.18–T8.21 y T8.26). Se parte en dos
+> antes de lanzarla: aquí quedan **solo los contratos**; el verde de los 12 de soporte (T8.26) es
+> [`F8-04b`](F8-04b-cli-runtime-1-soporte.md). El fichero conserva su nombre. Motivo: hallazgo 29 del
+> [README de F8](../F8-conversacion/README.md).
 
 | | |
 |---|---|
-| Fase · bloque | [F8 · conversacion](../F8-conversacion/README.md) · 4 · `runtime` (1): contratos de los 23 y soporte |
+| Fase · bloque | [F8 · conversacion](../F8-conversacion/README.md) · 4a · `runtime` (1a): los contratos de los 23 |
 | Entorno | 💻 solo local |
 | Nivel (E-12) | complejo (estado en memoria y concurrencia): esquema completo E-2…E-9 |
 | Duración objetivo | 45–90 min |
-| Tareas | T8.18–T8.21, T8.26 |
+| Tareas | T8.18–T8.21 |
 | Depende de | F8-03 |
-| Decisiones | D-F8-4 (regla «`events` sin clasificador»), D-F8-5 (lista blanca) |
-| Se para cuando | los 23 contratos de `runtime` en rojo y `runtimehelpertest` verde; candado de rachas escrito; lista blanca de `conversacion` completa; los 12 de soporte verdes con `go test -race` rc=0; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión |
+| Decisiones | D-F8-4 (regla «`events` sin clasificador»), D-F8-5 (lista blanca), D-F8-11 (F8-04 en dos sesiones) |
+| Se para cuando | los 23 contratos de `runtime` en rojo (12 de soporte + 11 de núcleo); `runtimehelpertest` verde con sus dobles y sus suites `Contrato` (contra el doble y contra Postgres para `self_numbers` y `tenant_resolver`); candado de rachas escrito tras `pendiente`; D-F8-4 en `fronteras_test.go` y lista blanca de `conversacion` completa; `make vet-pendiente` rc=0; `make test-pendiente` cuenta solo `runtime`; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión. **Ningún verde de `runtime`** |
 
 ## Antes de pegar el prompt (Jhoan)
 
 - [ ] La sesión anterior (F8-03) está integrada y empujada en `dev`, **con sus dos mitades**: la primera ya lo está (PR #62, merge `8b841c8d`); la segunda (T8.25, el verde de `cart`), PR #63 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash desde `reorg/f8-03b-cart-verde`.
-- [ ] Decisiones rellenas en [`../DECISIONES.md`](../DECISIONES.md): D-F8-4 (regla «`events` sin clasificador»), D-F8-5 (lista blanca).
+- [ ] Decisiones rellenas en [`../DECISIONES.md`](../DECISIONES.md): D-F8-4 (regla «`events` sin clasificador»), D-F8-5 (lista blanca), D-F8-11 (F8-04 en dos sesiones).
 - [ ] `go1.26.5` y `golangci-lint v2.12.2` disponibles (`make toolchain`).
 - [ ] Arrancar: `cd /Volumes/Projects/source/wApp/cloud/wapp-cloud-platform && claude`.
 
@@ -28,23 +33,24 @@ documentations/reorganizacion-modular/plan/sesiones/PROTOCOLO-CLI.md
 
 Tu encargo (y solo este):
 - Fase: F8 · conversacion → documentations/reorganizacion-modular/plan/F8-conversacion/
-- Bloque: 4 · `runtime` (1): contratos de los 23 y soporte
-- Tareas: T8.18–T8.21 y T8.26 de plan/F8-conversacion/tareas.md
-- Te paras cuando: los 23 contratos de `runtime` están en rojo y `runtimehelpertest` en verde; el candado de rachas está escrito; la lista blanca de `conversacion` está completa; los 12 de soporte están verdes con `go test -race` rc=0; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión.
-- Decisiones: D-F8-4 (regla «`events` sin clasificador»), D-F8-5 (lista blanca) en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
+- Bloque: 4a · `runtime` (1a): los contratos de los 23
+- Tareas: T8.18–T8.21 de plan/F8-conversacion/tareas.md
+- Te paras cuando: los 23 contratos de `runtime` están en rojo (12 de soporte + 11 de núcleo); `runtimehelpertest` está en verde con sus dobles y sus suites `Contrato` (contra el doble y contra Postgres para `self_numbers` y `tenant_resolver`); el candado de rachas está escrito tras `pendiente`; D-F8-4 está aplicado en `fronteras_test.go` y la lista blanca de `conversacion` está completa; `make vet-pendiente` rc=0; `make test-pendiente` cuenta solo `runtime`; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión. Ningún verde de `runtime` en esta sesión.
+- Decisiones: D-F8-4 (regla «`events` sin clasificador»), D-F8-5 (lista blanca), D-F8-11 (F8-04 en dos sesiones) en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, contrato-tdd, validar-antes-de-cerrar.
 
 - Base: F8-03 integrada en `dev` con sus dos mitades (la primera, PR #62, merge `8b841c8d`; la segunda, PR #63, integrado el 2026-10-10: compruébalo con `git log origin/dev` y, si no está, PARA y dilo). Trabaja en TU rama partida de `origin/dev`, nunca en `dev` (regla 6 del `CLAUDE.md`).
 
 Lo que F8-03 te deja dicho (léelo antes de empezar): hallazgos 21–28 del README de F8.
-- 🔴 Hallazgo 28: el lint del repo solo compila con la etiqueta `integracion` y NO mira los tests que llevan `//go:build pendiente`; sus avisos aparecen de golpe al pasar a verde (17 en `cart`). Córrelo sin etiqueta sobre los tests ANTES del verde. Y los avisos se ARREGLAN, no se silencian: ningún `//nolint` nuevo, ni en producción ni en tests (decisión de Jhoan, 2026-10-10; deuda D-31). Si uno no se puede arreglar sin cambiar lo que se prueba, PARA y dilo. Díselo así a cada sub-agente.
+- 🔴 Hallazgo 28: el lint del repo solo compila con la etiqueta `integracion` y NO mira los tests que llevan `//go:build pendiente`; sus avisos aparecen de golpe al pasar a verde (17 en `cart`). Córrelo sin etiqueta sobre los tests ANTES del verde. Y los avisos se ARREGLAN, no se silencian: ningún `//nolint` nuevo, ni en producción ni en tests (decisión de Jhoan, 2026-10-10; deuda D-31). Si uno no se puede arreglar sin cambiar lo que se prueba, PARA y dilo. Díselo así a cada sub-agente. Y como esta sesión es TODA de rojo (aquí no hay verde que destape los avisos), el lint se corre sobre los tests etiquetados ANTES de cerrarla, pasándole la etiqueta a mano (`make lint` no la admite; la etiqueta se SUMA a la `integracion` del `.golangci.yml`): `GOTOOLCHAIN=go1.26.5 GOLANGCI_LINT_CACHE=.bin/lint-cache GOWORK=off .bin/golangci-lint run --timeout=5m --build-tags pendiente ./internal/modulos/conversacion/...; echo rc=$?` → 0 issues.
 - Hallazgo 25: `cart/projection.go` dice del dispatcher cosas que no se afirmaron en su contrato («loguea sin abortar», y que ya no es cierto desde D-054.4): se comprueba al portar `runtime`.
 - Hallazgos 26 y 27: un bloque con dos complejos no cabe en una sesión (para en un punto limpio y se relanza); ficheros cuyos tests comparten una constante van verdes en el mismo commit, y se dice.
 - `pendiente.Implementar` en producción de `conversacion` es 0 al empezar; el `grep` da 4, las del texto del candado `cart/orden_consulta_ast_test.go`.
 
 No hay rama web que integrar ni traspaso que cerrar: creas TU rama desde `dev` (`git checkout -b <rama> dev`) y trabajas en ella, nunca sobre `dev` (regla 6 del `CLAUDE.md`).
-Orden: primero los contratos de los 23 (T8.18–T8.21), después el verde de los 12 de soporte (T8.26): `send.go`, `thread.go` y `welcome.go` cuelgan de `*Runtime`.
-Reloj siempre inyectado; prohibido `time.Sleep`. Mutantes donde haya estado o concurrencia (`keyedmutex`, `streak`).
+Orden: T8.18 (los 12 de soporte y `runtimehelpertest`), T8.19 (los 11 del núcleo), T8.20 (el candado de rachas) y T8.21 (el cierre de la pasada de contratos). Los contratos de los 23 van antes que cualquier verde: `send.go`, `thread.go` y `welcome.go` cuelgan de `*Runtime`.
+El verde de los 12 de soporte (T8.26) NO va en esta sesión: es F8-04b. Aquí todo es ROJO, salvo `runtimehelpertest`, que nace verde.
+Reloj siempre inyectado, también en los contratos y en los tests en rojo; prohibido `time.Sleep`. Los mutantes son del verde (F8-04b y F8-05).
 
 Nivel de ceremonia: el del inventario aprobado (`05` E-12). Sin umbral de cobertura: un test por promesa del contrato; mutantes en lo complejo.
 
@@ -54,7 +60,7 @@ No empieces la sesión siguiente.
 
 ## Al terminar debe existir
 
-- En [`../F8-conversacion/tareas.md`](../F8-conversacion/tareas.md): T8.18–T8.21, T8.26 `[x]` con SHA.
+- En [`../F8-conversacion/tareas.md`](../F8-conversacion/tareas.md): T8.18–T8.21 `[x]` con SHA (T8.26 sigue `[ ]`: es de F8-04b).
 - Un bloque de la sesión en `ESTADO.md` de la reorganización.
 - Los hallazgos nuevos en el [README de la fase](../F8-conversacion/README.md).
 - Un PR con `--base dev` desde la rama de la sesión (push de la rama, rc sin pipe), con «integrar SIN squash»; nada commiteado directamente en `dev` (regla 6 del `CLAUDE.md`).

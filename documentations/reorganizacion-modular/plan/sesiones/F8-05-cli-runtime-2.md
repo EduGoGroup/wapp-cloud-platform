@@ -7,13 +7,13 @@
 | Nivel (E-12) | complejo, con mutantes |
 | Duración objetivo | 45–90 min |
 | Tareas | T8.27–T8.28 |
-| Depende de | F8-04 |
+| Depende de | F8-04b |
 | Decisiones | ninguna pendiente |
 | Se para cuando | los 11 del núcleo verdes; mutantes muertos; `streak_invariante_test.go` sin etiqueta, verde y mutado; `pendiente` de `runtime` = 0; `go test -race` y `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión |
 
 ## Antes de pegar el prompt (Jhoan)
 
-- [ ] La sesión anterior (F8-04) está integrada y empujada en `dev`.
+- [ ] La sesión anterior (F8-04b) está integrada y empujada en `dev`.
 - [ ] Decisiones rellenas en [`../DECISIONES.md`](../DECISIONES.md): ninguna pendiente.
 - [ ] `go1.26.5` y `golangci-lint v2.12.2` disponibles (`make toolchain`).
 - [ ] Arrancar: `cd /Volumes/Projects/source/wApp/cloud/wapp-cloud-platform && claude`.
