@@ -13,7 +13,7 @@
 > (eran 81: las 66 pendientes se reagruparon en 41 de tamaño medio, 45–90 min).
 > La norma de fondo sigue siendo `05`: si el plan choca con ella, manda `05` y el plan se corrige.
 >
-> **Siguiente paso** (al 2026-10-10, con F8-01, F8-02, F8-03 y F8-04 hechas): [`sesiones/F8-04b`](sesiones/F8-04b-cli-runtime-1-soporte.md), el verde de los 12 de soporte de `runtime` (T8.26), con el PR de F8-04 (`reorg/f8-04-runtime-contratos`: los contratos de los 23, T8.18–T8.21) integrado en `dev`. ✎ 2026-10-10 (D-F8-11, Jhoan): F8-04 se parte en dos sesiones antes de lanzarla. `events` y `cart` ya están verdes; la segunda mitad de F8-03 (T8.25) va por PR a `dev` desde `reorg/f8-03b-cart-verde`.
+> **Siguiente paso** (al 2026-10-10, con F8-01, F8-02, F8-03 y F8-04 hechas): [`sesiones/F8-04b`](sesiones/F8-04b-cli-runtime-1-soporte.md), el verde de los 12 de soporte de `runtime` (T8.26), con el PR #65 de F8-04 (`reorg/f8-04-runtime-contratos`: los contratos de los 23, T8.18–T8.21) integrado en `dev`. ✎ 2026-10-10 (D-F8-11, Jhoan): F8-04 se parte en dos sesiones antes de lanzarla. `events` y `cart` ya están verdes; la segunda mitad de F8-03 (T8.25) va por PR a `dev` desde `reorg/f8-03b-cart-verde`.
 > Después, la tabla de [`sesiones/README.md`](sesiones/README.md), en orden: es ella la que dice cuál toca.
 
 ## Cómo está escrito (a lo *spec-driven*, estilo Kiro)
