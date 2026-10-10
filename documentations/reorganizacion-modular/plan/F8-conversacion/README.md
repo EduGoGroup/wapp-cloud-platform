@@ -520,6 +520,88 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     uno en su *worktree* (≈ 23 y ≈ 26 min), que devolvieron un commit solo de tests cada uno, integrado con `cherry-pick`.
     🟡 Lo que costó: un sub-agente lanzó `pkill -f runtime.test` para matar su propia ejecución colgada, con otros midiendo en
     la máquina (no hubo daño que se viera); y los mutantes fueron lo más largo, con diferencia.
+47. **(F8-06, método) Cupo en un bloque: ≈ 60 min de pared (≈ 14:55–15:55), con hasta cuatro sub-agentes a la vez.** Lo que
+    lo hizo posible: (a) rojo y verde con **el mismo** sub-agente, reanudado tras el commit del rojo (conserva lo leído);
+    (b) ningún sub-agente commitea: devuelve, y el orquestador hace un commit por fichero con rutas explícitas; (c) a los
+    agentes que comparten paquete (`apipublica`), la regla de nombres escrita en todos los prompts —todo símbolo nuevo lleva
+    el tema de su fichero— y el único auxiliar compartido (`tenantContentBytes`) con dueño, nombre y firma fijados de
+    antemano: encajaron sin hablarse; (d) el plan de la conmutación lo midió antes un agente de solo lectura (tabla de
+    sustitución con `fichero:línea`), y el ensayo en seco (T8.30) fue en un *worktree* propio mientras los verdes seguían en
+    el checkout principal; después se trajo como un solo diff. Desvíos: el rojo de `apipublica` son **dos** commits y no
+    uno (`flows.go` esperaba al contrato de `admin`); un agente cambió la palabra «independientes» de dos comentarios de
+    `tenantcontent.go` para que el `grep pendiente` del gate diera vacío (uno era comentario portado: ya no es literal en
+    esa palabra); y `make test-pendiente` se corrió con el *worktree* del ensayo aún sin borrar (dio `0 · 0`; se borró
+    después). El «rc=0 por commit» **no** se midió en un *worktree* para los ocho verdes de `apipublica`: lo simularon los
+    agentes para `admin` y el catálogo; el resto, solo por lectura de dependencias.
+48. **(F8-06, `admin`) 15 exportados, no 16, y dos desvíos de forma.** La cifra de T8.13 contaba `Register`, que no se
+    reconstruye (D-F8-2, deuda D-7); tampoco su test `TestRegister_RoutesBothEndpoints`. `triggers.go` nace partido en tres
+    (`triggers`, `triggers_list`, `triggers_delete`; E-13) y los tres van en un commit porque el contrato de rojo los tenía
+    en un fichero. `durableContent` vive en `triggers.go` y no en `durable_flow.go` como en el viejo: allí quedaba sin uso
+    (lint `unused`). El comentario de paquete pasa a `doc.go`. Rarezas del viejo portadas y fijadas con caso: el prefijo
+    duplicado del 400 («definición de flujo inválida: definición de flujo inválida: …», y lo mismo con `contact_ref`);
+    `Types()` leído una sola vez, al construir `DefinitionHandler`; los tres handlers de disparadores no miran el método;
+    `flow_id` y `session_id` de start viajan sin recortar; el listado pregunta al checker con el tenant de la fila y no con
+    el del token; la baja lista siempre antes de borrar; D-16 (`writeJSON`) tal cual. Antes de portar, los tests del rojo se
+    corrieron contra la lógica **vieja** con `go test -overlay`: 173 PASS. Mutantes: 22 válidos, 22 muertos. Las
+    referencias `fichero:línea` de los comentarios portados no se reverificaron contra el árbol nuevo.
+49. **(F8-06, `apipublica`) Los ocho ficheros, sus 19 rutas y lo que el verde corrigió del rojo.** `flows.go` monta **siete**
+    (I1–I4 sin condición; I11–I13 solo si `Triggers != nil`), `media.go` una, `tenantcontent.go` cinco, los tres del
+    catálogo I14–I17 (con `Content`, `ContentVersions` y `Entitlements`), y los dos de eventos I18 e I19 (cada uno con su
+    puerto y `Entitlements`). Decisiones de forma: **un solo `CatalogImportDeps`** para los tres `Mount…` del catálogo (la
+    condición de I16–I17 no puede divergir de la de I14) con su auxiliar `catalogImportMountable`; un puerto de lectura de
+    un método para el import en vez del almacén de cuatro; `MediaDeps` del viejo partido en una `Deps` por fichero; I4
+    **no** usa `admin.StartHandler` (el viejo tiene handler propio, con el `flow_id` en la ruta). `catalogimport.go` nace
+    partido en dos (`_apply`). Corregido del rojo, y eran los tests o el contrato, no la conducta: (a) los errores de I1 e
+    I11–I13 salen en **texto plano** (`http.Error` de `admin`), no como `{"error":…}`; el 401 y el 403 de la cadena sí son
+    JSON; (b) el GET por ref de contenido devuelve el blob compactado y con `<`, `>`, `&`: el literal del
+    test estaba en claro. Los cinco supuestos del catálogo que el rojo no pudo ejecutar (dorados del diff, hoja
+    `" catalogo "`, celda de moneda, comilla suelta del CSV, aviso por `_jugo`) se compararon **byte a byte** con la cara
+    vieja lanzando la misma petición a las dos: ninguno desmentido. Mutantes (declarados por los sub-agentes): media,
+    contenido y eventos 63 válidos, 61 muertos, 2 equivalentes; catálogo 67, 61 y 6 equivalentes o inalcanzables; `flows`
+    39, 38 y 1 equivalente; tres supervivientes reales cerrados con caso (el borde `'9'` del saneo del nombre, el margen del
+    sobre multipart, el BOM ante cabecera entrecomillada). Sin test, por inalcanzables desde fuera: tres 400 defensivos de
+    la planilla, dos 500 de serialización, el techo de 32 MiB descomprimido del XLSX y la rama «store nil ⇒ 500», que no se
+    porta (la ruta solo se monta con los puertos). Rarezas portadas: `content.write` se exige también en `mode=validate`;
+    el 403 del gate de feature deja auditoría `failure` (va por dentro de `AuditMiddleware`) y el de permiso no; reaplicar
+    el mismo documento no es un no-op; `stale` acepta todo lo de `strconv.ParseBool`; el cancel llama a
+    `CancelEventForTenant` aunque el evento ya sea terminal; media sin techo de cuerpo.
+50. **(F8-06, conmutación) Nada necesitó adaptador; lo que la spec decía mal y lo que no listaba.** `go build ./...` dio rc=0 a
+    la primera en el ensayo: todos los tipos nuevos encajan tal cual (la tabla de sustitución era exacta). 🟡 Contradicciones
+    de la spec, medidas: (a) [`reglas.md`](reglas.md) §4.6 y [`arquitectura.md`](arquitectura.md) §5 decían «`FaseActual`
+    sigue existiendo y no cambia»; TX.24 dice `FaseActual = 8`, y con 7 falla el candado de mudanzas en las 19 rutas: mandó
+    TX.24 (`internal/arranque/mudanzas.go`); (b) los `grep … → vacío` de T8.31 y T8.34 no pueden dar vacío: casan las
+    cabeceras «Porta internal/flujos/…» (151 líneas en `internal/modulos`); se midió por línea de import y con
+    `go list -deps` (0); (c) `tareas.md` no listaba: `internal/candados/filesize.go` y `filesize_test.go` (techo de
+    `bridge_contact_test.go`), `internal/modulos/un_fichero_un_test_test.go` (testigo `bridge_contact.go`), el helper
+    `sameInstance`, que vivía en `bridge_contact_test.go` y usan seis tests que sobreviven (pasa a
+    `gateway_wiring_test.go`), y las cabeceras de 8 ficheros de producción y 10 de test que decían «cablea paquetes
+    VIEJOS». `DBTimeout` ya no viaja a la cara de conversación: ningún handler I1–I19 lo leía. En `Capas` no hubo que tocar
+    nada (`conversacion → edge` ya estaba). **Tests de cableado**: de «el adaptador envuelve a X» a identidad directa; se
+    borraron solo las aserciones cuyo objeto murió (los tipos adaptador, `depsDeLaAPIPublica`, las dos segundas instancias,
+    `exigeViejoANil`) y ocho tests cambian de nombre porque mentía (`OnlyTheBridgeImports…` → `NoBootFileImports…`); la
+    lista completa, en el mensaje de `fe6305b9` y en el PR. El candado nuevo (`conversacion_cableado_test.go` y
+    `conversacion_cableado_ast_test.go`, 18 tests) afirma por reflexión, sobre el perfil «minimo» y sin accesores nuevos,
+    que los sinks y la política de reanudación están puestos de verdad (D-F8-16): 22 mutaciones de la producción, todas
+    cazadas. Dos cosas de método: un `Mount…` con cuerpo `panic(pendiente…)` hace que staticcheck dé por muerto lo que
+    sigue (SA4006 en `http.go` y en los tests): el rojo de la cara no puede convivir montado, que es justo lo que pide «aún
+    sin montar»; y el lint con `--tests=false` saca tres `unused` en ficheros ajenos (`sqlStageArray`, `untrackSession`,
+    `inferenceReasons`: solo los usan sus tests), que `make lint` no ve: **no medido contra la base**, queda anotado.
+51. **(F8-06, T8.35) 🔴 Lo que la conmutación deja sin comprobar: lo que F8-07 tiene que refutar.** Esta sesión **no** corrió
+    `make test-procesos`, `make ci-docker`, las suites contra Postgres, la integración vieja ni un arranque real de
+    `cmd/server-modular`; el e2e de TX.24 tampoco. Lo afirmado es estático o sobre el perfil «minimo», sin BD: (a) **la
+    identidad de `entResolver`, `kp` y `gw` en ejecución**: hoy la prueban la reflexión y el conteo de constructores, no un
+    proceso; el guard anti-self-loop con un `kp` equivocado no da ni un error (T-3): hay que verlo bloquear con BD real;
+    (b) **el barrido del agregador con BD real** (T-4): hoy solo consta por AST que `Run` se lanza una vez en la fase de
+    fondo; falta ver una ventana abrirse y cerrarse, y `RecoverAtBoot`; (c) **el golden en un Edge real** y una
+    conversación entera por el binario nuevo (R8.8.a); (d) **el receptor de los hooks** (`gw.OnIncoming`, `OnHeartbeat`,
+    `OnWarmup`, `OnEdgeReady`), de J19 y de la fuente del gauge: un valor de método no se compara por receptor; consta por
+    AST y por «no es nil»; (e) **que el mux de detrás esté vacío en ejecución**: un `ServeMux` no se enumera; lo cubren «nadie
+    lo toca» (AST) y «las 73 filas resuelven en la nueva»; (f) **las tres divergencias deliberadas** (D-F8-14, D-F8-15,
+    D-F8-16): ningún proceso corrió, así que no se sabe si alguno las nota; si lo hace, es un hallazgo; (g) los procesos
+    P4–P8 contra el binario nuevo, que por primera vez ejercitan el runtime, el agregador y el compositor **nuevos**
+    (D-F7-9 sigue sin arreglar: la carrera cierre → sobre puede asomar, hallazgo 62 de F7; se arregla en F8-06b); (h) los
+    mutantes de esta sesión son los declarados por los sub-agentes, no repetidos por el orquestador; (i) las cabeceras de
+    `05`, `04` y la documentación de la pieza (`contratos.md`, `arquitectura.md` del repo) no se tocaron.
 
 ## Orden de lectura
 
@@ -541,7 +623,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-04 ✅ | `runtime` (1a): los contratos de los 23 | complejo | T8.18–T8.21 | 23 contratos en rojo, `runtimehelpertest` verde, candado de rachas escrito, lista blanca de `conversacion` completa; ningún verde de `runtime` (✎ 2026-10-10, D-F8-11: antes llevaba también T8.26) (2026-10-10, rama `reorg/f8-04-runtime-contratos`, `cf327ca5` … `de6a5411`, PR #65 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `cbebf10c`, sin squash) |
 | F8-04b ✅ | `runtime` (1b): el verde del soporte | complejo | T8.26 | **9** de los 12 de soporte verdes (✎ 2026-10-10, D-F8-12: `welcome`, `thread` y `send` pasan a F8-05), mutantes de `keyedmutex` y `streak` muertos, `pendiente` del runtime solo en los 11 del núcleo y en `welcome.go` (2026-10-10, rama `reorg/f8-04b-runtime-soporte`, `83565b4e` … `6216d1df`, PR #66 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `d80e7f56`, sin squash) |
 | F8-05 ✅ | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo y `welcome`, `thread` y `send` verdes (✎ 2026-10-10, D-F8-12: 14, no 11), mutantes muertos, `pendiente` del runtime = 0 (2026-10-10, rama `reorg/f8-05-runtime-nucleo`, `46b6a1ec` … `f5fd0374` y tres arreglos decididos después (`c44c212f`, `6eb31a3d`, `a9da0105`), PR #67 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash) |
-| F8-06 | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo |
+| F8-06 ✅ | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo (2026-10-10, rama `reorg/f8-06-cara-http-y-conmutar`, `5ba7f419` … `fe6305b9`; hallazgos 47–51) |
 | F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39, T8.40 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; el job de re-análisis nace con su sobre; caso de P4 verde contra el binario nuevo |
 | F8-07 | cierre | — | T8.36–T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
 
