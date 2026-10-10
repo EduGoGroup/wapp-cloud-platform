@@ -382,7 +382,12 @@ func construirPuertasDelDueno(c *contenedor) error {
 	//                       compositores serían dos `source_text` que divergen en el
 	//                       primer rótulo que cambie. Desde F8 es el de
 	//                       conversacion/runtime y entra TAL CUAL: su ComposeAtFlush ya
-	//                       nombra el WindowKey nuevo (composerBridge murió; T-3, T-5);
+	//                       nombra el WindowKey nuevo (composerBridge murió; T-3, T-5).
+	//                       Desde F8-06b el agregador ya NO usa ComposeAtFlush sino
+	//                       Compose (compone antes de cerrar y cierra con el sobre,
+	//                       D-F8-13); esta puerta es su único llamante, y aquí abrir el
+	//                       job y ponerle el sobre siguen siendo dos actos (pendiente
+	//                       de T8.40);
 	//   · entResolver     → el MISMO resolver CACHEADO que gatea el resto del carril.
 	//                       Un segundo sería una segunda caché y una segunda verdad
 	//                       sobre el plan del tenant;

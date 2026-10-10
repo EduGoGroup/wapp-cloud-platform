@@ -11,7 +11,8 @@ import (
 )
 
 // Trozo de aggregator.go (E-13): el barrido. Sweep y RecoverAtBoot, los dos plazos de la
-// ventana híbrida, el cierre con su compositor y la parada sin ERROR (D-F9-10).
+// ventana híbrida, el cierre CON su sobre —se compone antes y se cierra en una sentencia
+// (D-F7-9, D-F8-13)— y la parada sin ERROR (D-F9-10).
 
 // RecoverAtBoot es la RECUPERACIÓN DEL REINICIO (T1.1, AG-6): las ventanas que
 // vencieron mientras no había proceso pasan a `pending`. Es literalmente UN Sweep, y
@@ -74,10 +75,12 @@ func (s *IntakeAggregator) RecoverAtBoot(ctx context.Context) int {
 //
 // # AG-6 · Cierre idempotente, sin estado en memoria
 //
-// Quien cierra es jobs.CloseWindow, cuyo guard de estado hace que dos barridos
-// solapados —o dos procesos— no puedan producir dos jobs. Si CloseWindow contesta
-// false sin error (otro llegó antes), la ventana NO se cuenta, NO se compone y no es
-// un error. Un segundo Sweep sin que nada cambie devuelve 0 y no toca ninguna fila.
+// Quien cierra es jobs.CloseWithSourceText, cuyo guard de estado hace que dos barridos
+// solapados —o dos procesos— no puedan producir dos jobs. Si contesta false sin error
+// —otro llegó antes, o la ventana CAMBIÓ mientras se componía (entró un mensaje)—, la
+// ventana NO se cuenta y no es un error: si sigue viva, la recoge el barrido siguiente.
+// Un segundo Sweep sin que nada cambie devuelve 0 y no toca ninguna fila (una ventana ya
+// cerrada no sale en ListAggregating, así que tampoco se vuelve a componer).
 //
 // # Las pistas
 //
@@ -86,22 +89,23 @@ func (s *IntakeAggregator) RecoverAtBoot(ctx context.Context) int {
 // `batch` dejó fuera se pierde y esa ventana cierra por su reloj. Si listar falla, las
 // pistas NO se consumen.
 //
-// # El compositor (T1.4, AG-8)
+// # El compositor (T1.4, AG-8): PRIMERO el sobre, DESPUÉS el cierre, en una sentencia
 //
-// Tras CADA cierre que hizo esta llamada, y solo entonces, llama UNA vez a
-// ComposeAtFlush(ctx, Key). Su fallo NO revierte el cierre: la ventana cuenta como
-// cerrada y el job queda `pending` con el sobre vacío.
+// Por CADA ventana vencida, y solo por esas, llama UNA vez a compose.Compose(ctx, Key)
+// ANTES de cerrarla, y cierra con el sobre que devuelve (jobs.CloseWithSourceText): la
+// transición `aggregating → pending` y las tres columnas del sobre son UNA sentencia.
+// Un sobre vacío (hilo sin mensajes, o sin compositor cableado) cierra igual, con el
+// sobre a NULL. Si el compositor FALLA, la ventana se cierra SIN sobre con el
+// jobs.CloseWindow de siempre: cuenta como cerrada y el job queda `pending` con el sobre
+// vacío, como en el viejo.
 //
-// ⚠️ DEUDA CONOCIDA, D-F7-9 (hallazgo 17 de F7). Lo que el viejo promete HOY sobre
-// ese orden es exactamente esto y nada más: PRIMERO la transición `aggregating →
-// pending` (aggregator.go:892), DESPUÉS la composición y la escritura del sobre
-// (aggregator.go:906 → source_composer.go:347-377), en sentencias separadas y SIN
-// atomicidad; el fallo de la segunda no deshace la primera. NO promete que el job sea
-// invisible para el worker hasta tener sobre: en ese hueco el worker puede reclamar un
-// job `pending` sin `source_text`. Este contrato NO arregla ni promete otra cosa: que
-// cierre y sobre sean un solo acto, o que el sobre preceda a la visibilidad, sigue
-// pendiente: el verde (F8-05) portó el orden del viejo TAL CUAL, y el arreglo irá en su
-// propio commit, con su caso en el proceso P4 (toca la guarda de PutSourceText).
+// ✅ D-F7-9 (hallazgo 17 de F7) ARREGLADA en el binario nuevo (F8-06b, D-F8-13). El viejo
+// hace PRIMERO la transición (aggregator.go:892) y DESPUÉS compone y escribe el sobre
+// (aggregator.go:906 → source_composer.go:347-377), en sentencias separadas: en ese hueco
+// el worker puede reclamar un job `pending` sin `source_text` y lo deja `failed`. Aquí
+// ese hueco no existe: una ventana cuyo compositor devolvió sobre nunca es visible
+// cerrada y sin él. Lo fija el proceso P4 (ningún job `failed` por falta de literal). El
+// viejo conserva la carrera hasta su borrado en F10. Ver closeWindow.
 //
 // # Logs
 //
@@ -111,7 +115,9 @@ func (s *IntakeAggregator) RecoverAtBoot(ctx context.Context) int {
 //     "error", "tenant_id", "session_id" y "job_id"; esa ventana no cuenta y la pasada
 //     sigue con las demás.
 //   - el compositor falla: Error "agregador: la ventana se cerró pero el literal no se
-//     pudo componer (T1.4)", con "error", "tenant_id" y "job_id".
+//     pudo componer (T1.4)", con "error", "tenant_id" y "job_id" — solo si la ventana
+//     se cerró (sin sobre) en esta llamada.
+//   - el cierre contesta false sin error: nada, en ningún nivel.
 //   - cada ventana cerrada: Debug "agregador: ventana cerrada", con "tenant_id",
 //     "session_id" y "job_id".
 //
@@ -285,29 +291,57 @@ func (s *IntakeAggregator) deadlinesFor(ctx context.Context, tenantID string) wi
 	return windowDeadlines{silence: cfg.AggregationWindow, ceiling: cfg.AggregationMax}
 }
 
-// closeWindow ejecuta la transición y, si de verdad la hizo ESTA llamada, invoca el
-// punto de extensión de T1.4. Devuelve si cerró.
+// closeWindow compone el sobre de la ventana y la cierra CON él. Devuelve si la cerró
+// ESTA llamada.
 //
-// ⚠️ D-F7-9 se porta TAL CUAL: primero el cierre, después el sobre, sin atomicidad.
-// Y aquí NO se toca `seen` (AG-5, trampa T-10): ver el final de aggregator_observe.go.
+// Divergencia deliberada del viejo (D-F7-9, D-F8-13): el viejo CIERRA y luego COMPONE
+// (dos sentencias: CloseWindow y, después, PutSourceText), y entre las dos el job es
+// visible para el worker `pending` y sin sobre. Aquí se compone ANTES —leer el hilo y
+// cifrar no tocan `intake_jobs`— y se cierra con el sobre en UNA sentencia
+// (CloseWithSourceText), y SOLO si la ventana no cambió desde que el barrido la leyó: si
+// entró un mensaje mientras se componía, el sobre ya no la representa, el store contesta
+// false y la ventana sigue viva para el barrido siguiente, que la compone entera.
+//
+// Lo que se CONSERVA del viejo, a propósito (con duda manda el viejo):
+//
+//   - el compositor FALLA ⇒ la ventana se cierra igual, SIN sobre, por el CloseWindow de
+//     siempre, y el fallo va a Error con el mismo literal: un hilo ilegible no puede
+//     dejar una ventana en `aggregating` para siempre. El worker dejará ese job `failed`
+//     por falta de literal, que aquí es la verdad y no una carrera;
+//   - el hilo no tiene mensajes (sobre vacío, error nil) ⇒ cierra con el sobre a NULL.
+//
+// D-F9-10 sigue intacta: con el ctx cancelado ninguna de las ramas loguea a ERROR
+// (logSweepError). Y aquí NO se toca `seen` (AG-5, trampa T-10): ver el final de
+// aggregator_observe.go.
 func (s *IntakeAggregator) closeWindow(ctx context.Context, job intake.OpenJob) bool {
-	closed, err := s.jobs.CloseWindow(ctx, job.Key)
+	// EL PUNTO DE EXTENSIÓN DE T1.4, y el único sitio desde donde se llama. Va ANTES
+	// de la transición: lo que se cierra ya lleva su sobre.
+	env, cerr := s.compose.Compose(ctx, job.Key)
+
+	var (
+		closed bool
+		err    error
+	)
+	if cerr == nil {
+		closed, err = s.jobs.CloseWithSourceText(ctx, job, env)
+	} else {
+		closed, err = s.jobs.CloseWindow(ctx, job.Key)
+	}
 	if err != nil {
 		s.logSweepError(ctx, "agregador: no se pudo cerrar la ventana de captación",
 			"error", err, "tenant_id", job.Key.TenantID, "session_id", job.Key.SessionID, "job_id", job.ID)
 		return false
 	}
 	if !closed {
-		// Otro barrido (u otro proceso) llegó antes. No es un error y no se
-		// reintenta: el guard de estado ya garantizó que hay UN job y no dos.
+		// Otro barrido (u otro proceso) llegó antes, o la ventana cambió mientras se
+		// componía. No es un error y no se reintenta aquí: el guard del store ya
+		// garantizó que hay UN job y no dos, y una ventana que sigue viva sale en el
+		// siguiente ListAggregating. No se loguea nada, en ningún nivel.
 		return false
 	}
-	// EL PUNTO DE EXTENSIÓN DE T1.4, y el único sitio desde donde se llama. Va
-	// DESPUÉS de la transición y su fallo NO la revierte: el job queda `pending` con
-	// el sobre a NULL, que es una forma legítima en la 0072.
-	if err := s.compose.ComposeAtFlush(ctx, job.Key); err != nil {
+	if cerr != nil {
 		s.logSweepError(ctx, "agregador: la ventana se cerró pero el literal no se pudo componer (T1.4)",
-			"error", err, "tenant_id", job.Key.TenantID, "job_id", job.ID)
+			"error", cerr, "tenant_id", job.Key.TenantID, "job_id", job.ID)
 	}
 	s.log.Debug("agregador: ventana cerrada",
 		"tenant_id", job.Key.TenantID, "session_id", job.Key.SessionID, "job_id", job.ID)

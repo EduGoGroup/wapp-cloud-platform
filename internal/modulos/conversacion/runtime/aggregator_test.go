@@ -120,7 +120,8 @@ func (s *aggregatorSettings) setDeadlines(tenantID string, silence, ceiling time
 
 // aggregatorJobs es el gemelo en memoria de captacion/intake con lo que el gemelo no trae: fallos
 // de listar y de cerrar, la carrera perdida (otro cerró antes) y llamadas que se quedan colgadas
-// hasta que el contexto se cancela (para la parada de Run).
+// hasta que el contexto se cancela (para la parada de Run). Los dos cierres —CloseWindow y
+// CloseWithSourceText— comparten los mismos fallos: closeFault.
 type aggregatorJobs struct {
 	*intake.MemoryStore
 	mu         sync.Mutex
@@ -149,21 +150,33 @@ func (j *aggregatorJobs) ListAggregating(ctx context.Context, limit int) ([]inta
 	return j.MemoryStore.ListAggregating(ctx, limit)
 }
 
-func (j *aggregatorJobs) CloseWindow(ctx context.Context, k intake.WindowKey) (bool, error) {
+// closeFault aplica los fallos inyectados de un cierre. skip dice que la llamada NO llega al gemelo.
+func (j *aggregatorJobs) closeFault(ctx context.Context, k intake.WindowKey) (skip bool, err error) {
 	j.mu.Lock()
-	block, lost, err := j.blockClose, j.lostRace, j.closeErr[k]
+	block, lost, aware, failure := j.blockClose, j.lostRace, j.ctxAware, j.closeErr[k]
 	j.mu.Unlock()
 	if block {
 		<-ctx.Done()
-		return false, ctx.Err()
+		return true, ctx.Err()
 	}
-	if err != nil {
+	if aware && ctx.Err() != nil { // como Postgres: con el ctx cancelado, falla
+		return true, ctx.Err()
+	}
+	return failure != nil || lost, failure
+}
+
+func (j *aggregatorJobs) CloseWindow(ctx context.Context, k intake.WindowKey) (bool, error) {
+	if skip, err := j.closeFault(ctx, k); skip {
 		return false, err
 	}
-	if lost {
-		return false, nil
-	}
 	return j.MemoryStore.CloseWindow(ctx, k)
+}
+
+func (j *aggregatorJobs) CloseWithSourceText(ctx context.Context, seen intake.OpenJob, env intake.SourceText) (bool, error) {
+	if skip, err := j.closeFault(ctx, seen.Key); skip {
+		return false, err
+	}
+	return j.MemoryStore.CloseWithSourceText(ctx, seen, env)
 }
 
 func (j *aggregatorJobs) set(change func(j *aggregatorJobs)) {
@@ -172,24 +185,42 @@ func (j *aggregatorJobs) set(change func(j *aggregatorJobs)) {
 	change(j)
 }
 
-// aggregatorComposer apunta las ventanas que se le pide componer.
-type aggregatorComposer struct {
-	mu    sync.Mutex
-	err   error
-	block bool
-	keys  []intake.WindowKey
+// aggregatorEnvelope es el sobre que devuelve el compositor de los tests si no se le dice otro.
+func aggregatorEnvelope() intake.SourceText {
+	return intake.SourceText{Enc: []byte("enc"), DEK: []byte("dek"), KEKID: "kek"}
 }
 
-func (c *aggregatorComposer) ComposeAtFlush(ctx context.Context, key intake.WindowKey) error {
+// aggregatorComposer apunta las ventanas que se le pide componer y devuelve un sobre: el de
+// aggregatorEnvelope, o `env` si se fija, o ninguno si `empty`. `during` corre DENTRO de Compose,
+// es decir, antes de que el agregador cierre: es donde un test mira la fila o mete un mensaje.
+type aggregatorComposer struct {
+	mu     sync.Mutex
+	err    error
+	block  bool
+	empty  bool
+	env    *intake.SourceText
+	during func(key intake.WindowKey)
+	keys   []intake.WindowKey
+}
+
+func (c *aggregatorComposer) Compose(ctx context.Context, key intake.WindowKey) (intake.SourceText, error) {
 	c.mu.Lock()
 	c.keys = append(c.keys, key)
-	block, err := c.block, c.err
+	block, err, empty, env, during := c.block, c.err, c.empty, c.env, c.during
 	c.mu.Unlock()
-	if block {
-		<-ctx.Done()
-		return ctx.Err()
+	if during != nil {
+		during(key)
 	}
-	return err
+	switch {
+	case block:
+		<-ctx.Done()
+		return intake.SourceText{}, ctx.Err()
+	case err != nil || empty:
+		return intake.SourceText{}, err
+	case env != nil:
+		return *env, nil
+	}
+	return aggregatorEnvelope(), nil
 }
 
 func (c *aggregatorComposer) composed() []intake.WindowKey {

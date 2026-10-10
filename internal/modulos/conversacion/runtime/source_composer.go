@@ -148,7 +148,7 @@ type Composed struct {
 
 // Empty dice si no hay nada que valga la pena cifrar: true si y solo si Messages es
 // 0. Se mide por MENSAJES, no por longitud del texto: un Composed con contexto y sin
-// mensajes tiene Text no vacío y aun así está Empty (ver ComposeAtFlush).
+// mensajes tiene Text no vacío y aun así está Empty (ver Compose).
 func (c Composed) Empty() bool {
 	return c.Messages == 0
 }
@@ -301,8 +301,10 @@ type SourceTextWriter interface {
 // compositor va a componer. Es la misma constante o son dos verdades.
 const DefaultThreadLimit = 200
 
-// SourceTextComposer implementa SourceComposer (aggregator.go): lee el hilo, compone,
-// cifra y guarda.
+// SourceTextComposer implementa SourceComposer (aggregator.go): lee el hilo, compone y
+// cifra (Compose). Guardar el sobre ya no es suyo en el cierre de una ventana —lo guarda
+// el agregador, en la misma sentencia que cierra—; sí lo es en ComposeAtFlush
+// (source_composer_flush.go), que hoy solo usa el re-análisis.
 type SourceTextComposer struct {
 	log    logger.Logger
 	thread ThreadReader
@@ -335,9 +337,11 @@ func WithThreadLimit(n int) SourceTextComposerOption {
 // comprador (keyring versionado del Plan 012). Un segundo cipher sería una segunda
 // rotación que gestionar.
 //
-// Con CUALQUIER dependencia a nil (log, thread, jobs o cipher) el compositor es un
-// no-op seguro (ver ComposeAtFlush): el job se queda en `pending` con el sobre a
-// NULL, que es una forma legítima en la 0072. No lee ni escribe nada al construir.
+// Con log, thread o cipher a nil el compositor es un no-op seguro (ver Compose y
+// ComposeAtFlush): el job se queda en `pending` con el sobre a NULL, que es una forma
+// legítima en la 0072. Con jobs a nil, ComposeAtFlush es un no-op también, pero Compose
+// funciona igual: no escribe y por tanto no lo necesita. No lee ni escribe nada al
+// construir.
 func NewSourceTextComposer(log logger.Logger, thread ThreadReader, jobs SourceTextWriter,
 	cipher *crypto.FieldCipher, opts ...SourceTextComposerOption) *SourceTextComposer {
 	c := &SourceTextComposer{log: log, thread: thread, jobs: jobs, cipher: cipher, limit: DefaultThreadLimit}
@@ -347,103 +351,102 @@ func NewSourceTextComposer(log logger.Logger, thread ThreadReader, jobs SourceTe
 	return c
 }
 
-// ComposeAtFlush implementa SourceComposer. El agregador la llama UNA vez por
-// ventana, DESPUÉS de que la transición `aggregating → pending` haya tenido éxito y
-// FUERA del camino del entrante. Devolver error NO reabre la ventana ni corta nada:
-// el llamante lo LOGUEA y el job se queda en `pending` con el sobre vacío.
+// Compose implementa SourceComposer: lee el hilo, compone y cifra, y DEVUELVE el sobre
+// SIN ESCRIBIRLO. El agregador la llama UNA vez por ventana vencida, ANTES de cerrarla y
+// FUERA del camino del entrante, y cierra con ese sobre en una sola sentencia
+// (intake.JobStore.CloseWithSourceText): la ventana nunca es visible cerrada y sin su
+// sobre (D-F7-9 arreglada en F8-06b, D-F8-13). Aquí no se toca `intake_jobs`.
 //
 // Los pasos, en orden, todos con el ctx recibido:
 //
-//  1. No-op: sobre un receptor nil, o un compositor construido con log, thread, jobs o
-//     cipher a nil, devuelve nil sin leer, escribir ni loguear.
+//  1. No-op: sobre un receptor nil, o un compositor construido con log, thread o cipher
+//     a nil, devuelve el sobre vacío y nil sin leer ni loguear. 🔴 `jobs` NO se mira:
+//     Compose no escribe.
 //  2. Clave incompleta (intake.WindowKey.Valid() == false): devuelve el error de texto
 //     "compositor: clave de ventana incompleta", sin leer el hilo.
 //  3. Lee el hilo UNA vez: ListThread(ctx, key.EventID, límite). Si falla, devuelve
-//     "compositor: leer el hilo del evento <event_id>: <error>" (envuelve el error) y
-//     no escribe nada.
-//  4. Compone con ComposeSourceText. 🔴 Con CERO MENSAJES no se escribe NADA, ni
-//     siquiera si hubo contexto: un `source_text` hecho SOLO de contexto es un prompt
-//     donde lo único que hay son productos que listamos NOSOTROS y ninguna frase del
-//     cliente que los contradiga (el accidente que D-044.24 describe). Devuelve nil y
-//     deja UN aviso en Warn —no es una avería: el tenant no tiene el hilo escrito, o
-//     la ventana se abrió con media sin texto—, de mensaje literal
+//     "compositor: leer el hilo del evento <event_id>: <error>" (envuelve el error).
+//  4. Compone con ComposeSourceText. 🔴 Con CERO MENSAJES devuelve el sobre VACÍO
+//     (intake.SourceText.Empty) y nil, ni siquiera si hubo contexto: un `source_text`
+//     hecho SOLO de contexto es un prompt donde lo único que hay son productos que
+//     listamos NOSOTROS y ninguna frase del cliente que los contradiga (el accidente que
+//     D-044.24 describe). Deja UN aviso en Warn —no es una avería: el tenant no tiene el
+//     hilo escrito, o la ventana se abrió con media sin texto—, de mensaje literal
 //     "compositor: la ventana cerró sin una sola línea del hilo; el sobre se queda vacío"
-//     y claves "tenant_id", "session_id", "event_id" y "entradas_de_contexto".
+//     y claves "tenant_id", "session_id", "event_id" y "entradas_de_contexto". (El texto
+//     dice «cerró» y se copia literal del viejo; hoy se emite justo antes del cierre.)
 //  5. Cifra Composed.Text ENTERO (contexto y mensajes) con el cipher. Si falla,
 //     devuelve "compositor: cifrar el literal de la ventana del evento <event_id>:
-//     <error>" (envuelve el error) y no escribe nada.
-//  6. Guarda el sobre de TRES piezas —intake.SourceText{Enc, DEK, KEKID}, las que
-//     devolvió el cipher— con PutSourceText(ctx, key, sobre), UNA vez. Descifrarlo con
-//     el mismo keyring devuelve exactamente Composed.Text. Si falla, devuelve
-//     "compositor: guardar el literal de la ventana del evento <event_id>: <error>"
-//     (envuelve el error).
-//  7. Si PutSourceText contesta false sin error (la fila ya tenía sobre, o la ventana
-//     no está en `pending`), NO es un error —es idempotencia— y devuelve nil, dejando
-//     en Debug "compositor: la ventana ya tenía literal; no se sobrescribe" con las
-//     claves "tenant_id" y "event_id".
-//  8. Si escribió, devuelve nil y deja en Debug "compositor: literal compuesto y
+//     <error>" (envuelve el error).
+//  6. Devuelve el sobre de TRES piezas —intake.SourceText{Enc, DEK, KEKID}, las que
+//     devolvió el cipher— y nil, y deja en Debug "compositor: literal compuesto y
 //     cifrado" con las claves "tenant_id", "session_id", "event_id", "mensajes"
 //     (Composed.Messages), "contexto" (Composed.ContextEntries) y "bytes" (el largo en
-//     bytes de Composed.Text).
+//     bytes de Composed.Text). Descifrarlo con el mismo keyring devuelve exactamente
+//     Composed.Text.
+//
+// Con error, el sobre devuelto es SIEMPRE el vacío: nunca uno a medias.
 //
 // 🔴 NINGUNA línea de log, en ningún nivel, y NINGÚN error llevan contenido del hilo
 // (REQ-10c): solo identificadores y números.
-//
-// ⚠️ DEUDA CONOCIDA, D-F7-9 (no se arregla ni se promete aquí; el verde de F8-05 lo
-// portó tal cual, y el arreglo sigue pendiente, en su propio commit): este método corre DESPUÉS del cierre, en una segunda sentencia y sin
-// atomicidad con él, y PutSourceText exige que la fila esté ya en `pending`. Entre las
-// dos, el job es visible para el worker SIN sobre. Ver IntakeAggregator.Sweep.
-func (c *SourceTextComposer) ComposeAtFlush(ctx context.Context, key intake.WindowKey) error {
-	if c == nil || c.log == nil || c.thread == nil || c.jobs == nil || c.cipher == nil {
-		return nil
+func (c *SourceTextComposer) Compose(ctx context.Context, key intake.WindowKey) (intake.SourceText, error) {
+	if c == nil || c.log == nil || c.thread == nil || c.cipher == nil {
+		return intake.SourceText{}, nil
 	}
+	env, composed, err := c.seal(ctx, key)
+	if err != nil || composed.Empty() {
+		return intake.SourceText{}, err
+	}
+	c.logSealed(key, composed)
+	return env, nil
+}
+
+// seal es el núcleo que comparten Compose y ComposeAtFlush: los pasos 2 a 5 de Compose
+// (clave, lectura del hilo, composición, aviso del hilo sin mensajes y cifrado). No
+// escribe en `intake_jobs` y NO deja el Debug del literal compuesto: devuelve el
+// Composed para que cada llamante lo registre en su momento —Compose al devolver el
+// sobre, ComposeAtFlush solo si de verdad lo escribió, como hacía el viejo—.
+//
+// Con cero mensajes devuelve el sobre vacío, el Composed (Empty) y nil, tras el Warn.
+// Quien llama ya comprobó las dependencias: aquí log, thread y cipher no son nil.
+func (c *SourceTextComposer) seal(ctx context.Context, key intake.WindowKey) (intake.SourceText, Composed, error) {
 	if !key.Valid() {
-		return fmt.Errorf("compositor: clave de ventana incompleta")
+		return intake.SourceText{}, Composed{}, fmt.Errorf("compositor: clave de ventana incompleta")
 	}
 
 	entries, err := c.thread.ListThread(ctx, key.EventID, c.limit)
 	if err != nil {
-		return fmt.Errorf("compositor: leer el hilo del evento %s: %w", key.EventID, err)
+		return intake.SourceText{}, Composed{}, fmt.Errorf("compositor: leer el hilo del evento %s: %w", key.EventID, err)
 	}
 
 	composed := ComposeSourceText(entries)
 	if composed.Empty() {
-		// 🔴 CERO MENSAJES ⇒ NO SE ESCRIBE NADA, ni siquiera si hubo contexto, y esto
-		// es una decisión y no un atajo (ver el paso 4 del contrato). El sobre se queda
-		// NULL —forma legítima en la 0072— y el worker verá un job sin literal. Es Warn
-		// y no Error: no hay nada roto.
+		// 🔴 CERO MENSAJES ⇒ NO HAY SOBRE, ni siquiera si hubo contexto, y esto es una
+		// decisión y no un atajo (ver el paso 4 de Compose). El sobre se queda NULL
+		// —forma legítima en la 0072— y el worker verá un job sin literal. Es Warn y no
+		// Error: no hay nada roto.
 		c.log.Warn("compositor: la ventana cerró sin una sola línea del hilo; el sobre se queda vacío",
 			"tenant_id", key.TenantID, "session_id", key.SessionID, "event_id", key.EventID,
 			"entradas_de_contexto", composed.ContextEntries)
-		return nil
+		return intake.SourceText{}, composed, nil
 	}
 
 	// EL CIFRADO, y es lo último que toca el literal. A partir de aquí solo viajan
 	// bytes. El error de Encrypt no se enriquece con nada del texto.
 	enc, dek, kekID, err := c.cipher.Encrypt(composed.Text)
 	if err != nil {
-		return fmt.Errorf("compositor: cifrar el literal de la ventana del evento %s: %w", key.EventID, err)
+		return intake.SourceText{}, Composed{}, fmt.Errorf("compositor: cifrar el literal de la ventana del evento %s: %w", key.EventID, err)
 	}
+	return intake.SourceText{Enc: enc, DEK: dek, KEKID: kekID}, composed, nil
+}
 
-	written, err := c.jobs.PutSourceText(ctx, key, intake.SourceText{Enc: enc, DEK: dek, KEKID: kekID})
-	if err != nil {
-		return fmt.Errorf("compositor: guardar el literal de la ventana del evento %s: %w", key.EventID, err)
-	}
-	if !written {
-		// No había dónde escribir: la fila ya tenía sobre, o la ventana no está en
-		// `pending`. No es un error —es idempotencia— pero se dice, porque si pasa
-		// siempre significa que alguien está componiendo dos veces.
-		c.log.Debug("compositor: la ventana ya tenía literal; no se sobrescribe",
-			"tenant_id", key.TenantID, "event_id", key.EventID)
-		return nil
-	}
-
-	// EL LOG LLEVA NÚMEROS, NUNCA CONTENIDO (REQ-10c). `bytes` es un tamaño, no un
-	// texto; `mensajes` y `contexto` son los contadores de Composed.
+// logSealed deja el Debug del literal compuesto. EL LOG LLEVA NÚMEROS, NUNCA CONTENIDO
+// (REQ-10c): `bytes` es un tamaño, no un texto; `mensajes` y `contexto` son los
+// contadores de Composed.
+func (c *SourceTextComposer) logSealed(key intake.WindowKey, composed Composed) {
 	c.log.Debug("compositor: literal compuesto y cifrado",
 		"tenant_id", key.TenantID, "session_id", key.SessionID, "event_id", key.EventID,
 		"mensajes", composed.Messages, "contexto", composed.ContextEntries, "bytes", len(composed.Text))
-	return nil
 }
 
 // El compositor satisface el hueco que declara el agregador, comprobado en
