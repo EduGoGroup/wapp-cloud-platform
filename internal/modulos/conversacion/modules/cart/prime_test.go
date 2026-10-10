@@ -1,9 +1,8 @@
-//go:build pendiente
-
 package cart_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
@@ -275,4 +274,18 @@ func TestPrime_VariantsAndCombo(t *testing.T) { //nolint:gocyclo // una aserció
 			t.Errorf("handled = %v, estado = %+v; quiero el Café de Bebidas", handled, st)
 		}
 	})
+}
+
+// WithLogger: Prime, el otro camino de entrada al nodo, también avisa de los campos
+// descartados (viene de cart_test.go: usa su logCapture y su brokenCatalog).
+func TestWithLogger_PrimeWarnsAboutDiscardedFields(t *testing.T) {
+	capture := &logCapture{}
+	m := cart.New(cart.WithLogger(capture))
+	vars := map[string]any{modules.VarIntentParams: map[string]string{"producto": "alfajor"}}
+	if _, handled := m.Prime(model.Node{}, model.Content{Raw: rawFromJSON(t, brokenCatalog)}, vars); !handled {
+		t.Fatal("handled = false, quiero true: el alfajor casa")
+	}
+	if len(capture.warns) != 1 || !strings.Contains(capture.warns[0], "tags") {
+		t.Errorf("avisos = %q, quiero uno sobre tags", capture.warns)
+	}
 }

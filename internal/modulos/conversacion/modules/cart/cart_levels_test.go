@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package cart_test
 
 import (
