@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package turnoacotado_test
 
 // prompt_test.go — EL TEXTO QUE VIAJA AL MODELO, visto desde fuera.

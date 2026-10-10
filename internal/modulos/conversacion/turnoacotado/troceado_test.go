@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package turnoacotado_test
 
 // troceado_test.go — EL CONTADOR DE LLAMADAS Y LOS DOS FRENOS.

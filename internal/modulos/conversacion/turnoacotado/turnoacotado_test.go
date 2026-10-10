@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package turnoacotado_test
 
 // turnoacotado_test.go — EL RESOLUTOR, PROBADO SIN RED.

@@ -42,12 +42,24 @@ package turnoacotado
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+
+	"github.com/EduGoGroup/wapp-shared/llm"
 )
+
+// maxQuantity acota lo que se acepta como respuesta a una pregunta de cantidad.
+//
+// No es la regla de negocio —esa es de stepQuantity, que exige >= 1— sino una guarda
+// contra un modelo que devuelva un número absurdo: cuatro dígitos es más de lo que
+// nadie pide por WhatsApp, y coincide con el maxDigitosCantidad que el carrito ya
+// aplica al otro lado. Los dos topes existen a propósito (ver los tres «no» de la
+// cabecera): este evita gastar un turno en algo que el módulo va a rechazar igual.
+const maxQuantity = 9999
 
 // ErrUnknownClass (`ErrClaseDesconocida` en el viejo) indica que llegó una Query de
 // una clase que este resolutor no sabe preguntar. Es un fallo de PROGRAMACIÓN —el
@@ -78,7 +90,9 @@ type Turner interface {
 // No implementa la interfaz por nombre —no importa el paquete engine— sino por
 // FORMA, que es lo que el docstring de aquel puerto promete. Es inmutable tras
 // construirse y seguro para uso concurrente: no guarda estado de llamada.
-type Resolver struct{}
+type Resolver struct {
+	turner Turner
+}
 
 // ErrNoTurner (`ErrSinTurnero` en el viejo) indica que el Resolver se construyó sin
 // con quién preguntar. Es un fallo de ARRANQUE y por eso New lo devuelve al
@@ -90,7 +104,10 @@ var ErrNoTurner = errors.New("turnoacotado: el resolutor necesita un turnero (el
 // New construye el resolutor sobre el selector de vía. Con t nil devuelve
 // (nil, ErrNoTurner); con cualquier otro, (el resolutor, nil).
 func New(t Turner) (*Resolver, error) {
-	panic(pendiente.Implementar("turnoacotado.New"))
+	if t == nil {
+		return nil, ErrNoTurner
+	}
+	return &Resolver{turner: t}, nil
 }
 
 // ResolveQuery (`ResolverConsulta` en el viejo) interpreta lo que el cliente
@@ -137,5 +154,125 @@ func New(t Turner) (*Resolver, error) {
 //     dígitos decimales (cantidad), con Reason vacío. El `reason` del modelo no se
 //     mira nunca, y ningún texto del modelo ni del cliente sale en el Verdict.
 func (r *Resolver) ResolveQuery(ctx context.Context, tenantID, sessionID string, q modules.Query) (modules.Verdict, error) {
-	panic(pendiente.Implementar("turnoacotado.Resolver.ResolveQuery"))
+	switch q.Class {
+	case modules.QueryClassQuantity:
+	case modules.QueryClassOption:
+		if len(q.Options) == 0 {
+			// Sin catálogo que ofrecer no hay nada que elegir, y preguntarlo gastaría una
+			// plaza del Ollama del cliente para no poder usar la respuesta. El carrito ya
+			// no pregunta en este caso (cart/consulta.go); esto es la red de abajo.
+			return modules.Verdict{Reason: modules.QueryReasonInconclusive}, nil
+		}
+	default:
+		return modules.Verdict{}, ErrUnknownClass
+	}
+
+	if len(q.Chunks) > 0 {
+		// La consulta viene YA TROCEADA por el módulo (T3.5-3): una llamada chica por
+		// trozo, con tope y presupuesto propios. Es la MISMA pregunta de elección de
+		// abajo repetida N veces, no otro camino — ver troceado.go.
+		return r.resolveChunks(ctx, tenantID, sessionID, q)
+	}
+
+	text, schema := prompt(q)
+	raw, err := r.turner.Turno(ctx, tenantID, sessionID, llmvia.TurnoRequest{Prompt: text, Formato: schema})
+	if err != nil {
+		if errors.Is(err, llmvia.ErrViaSinTurnoAcotado) {
+			// El tenant está en vía API: para él NO EXISTE este escalón, y eso no es una
+			// avería de nadie. Se devuelve el motivo que lo dice —el mismo que usa el
+			// engine cuando no hay resolutor cableado— en vez de un error, para que no
+			// escriba un aviso de degradación al dueño ni cuente como caída a Nivel A.
+			// ⚠️ El desenlace que el engine observará es `no_concluyente` y no
+			// `sin_resolutor`, porque el engine solo distingue el segundo por su propio
+			// campo nil; el MOTIVO que el módulo recibe sí es el exacto.
+			return modules.Verdict{Reason: modules.QueryReasonNoResolver}, nil
+		}
+		return modules.Verdict{}, err
+	}
+	return verdictOf(q, raw), nil
+}
+
+// modelReply (`salida` en el viejo) es la respuesta del modelo tal como la fuerza el
+// JSON Schema.
+//
+// Value ES UN PUNTERO Y NO UN int porque un int de Go no distingue la clave AUSENTE
+// del valor 0, y aquí las dos cosas se originan en sucesos distintos: ausente (o
+// null) es «el modelo dijo que no supo», que es el caso normal; 0 es un value que el
+// modelo se inventó.
+//
+// ⚠️ HONESTIDAD SOBRE LO QUE ESTO COMPRA HOY: NADA OBSERVABLE, y se comprobó por
+// mutación (cambiar el puntero por un int y tratar el ausente como 0 deja la suite
+// EN VERDE). El motivo es que la validación de rango de abajo rechaza el 0 por su
+// cuenta en las dos clases, así que los dos caminos acaban en el mismo veredicto no
+// concluyente. Se conserva el puntero porque es la decodificación CORRECTA —la
+// distinción existe en el JSON y perderla al leerlo es perderla para siempre— y
+// porque el día que alguien admita un 0 legítimo en alguna clase, con un int el
+// defecto sería silencioso y con esto no.
+type modelReply struct {
+	Usable bool `json:"usable"`
+	Value  *int `json:"value"`
+	//nolint:unused // Se decodifica a propósito y NO se lee: ver el ⚠️ de verdictOf().
+	Reason string `json:"reason"`
+}
+
+// verdictOf (`veredicto` en el viejo) traduce la salida CRUDA del modelo a un Verdict
+// ya validado en Go.
+//
+// ⚠️ `Reason` SE DECODIFICA Y NO SE USA, y es deliberado. Medido: el motivo que el
+// modelo elige sale mal a menudo —dice `no_entendido` donde cualquiera diría
+// `fuera_de_rango`— MIENTRAS `usable` y `value` son correctos. Es telemetría del
+// modelo, no la decisión: colgar lógica de él sería tomar decisiones de negocio con
+// el campo peor calibrado de la respuesta. Se deja en el struct para que quien lea
+// esto vea que existe y por qué no se mira.
+func verdictOf(q modules.Query, raw string) modules.Verdict {
+	inconclusive := modules.Verdict{Reason: modules.QueryReasonInconclusive}
+
+	// Aislar el JSON con el MISMO ExtractJSON que usan las dos vías del pipeline: es
+	// quien sabe de vallas de Markdown, de ecos del esquema y de prosa previa. Un
+	// fallo aquí es llm.ErrLLMQuality —el modelo respondió y su salida no era
+	// interpretable— y eso NO es una degradación de la vía: no se propaga como error,
+	// se degrada. Es la misma primera rama que motivoDe aplica en llmvia/notify.go.
+	clean, err := llm.ExtractJSON(raw)
+	if err != nil {
+		return inconclusive
+	}
+	var reply modelReply
+	if err := json.Unmarshal(clean, &reply); err != nil {
+		return inconclusive
+	}
+	if !reply.Usable || reply.Value == nil {
+		return inconclusive
+	}
+	v := *reply.Value
+
+	// ════════════════════════════════════════════════════════════════════════
+	// 🔴 EL RANGO SE VALIDA AQUÍ, Y ESTO HACE IRRELEVANTE UN FALLO CONOCIDO
+	// ════════════════════════════════════════════════════════════════════════
+	//
+	// Con un menú de 4 opciones, el modelo medido responde `usable:true, value:5`
+	// ante «quiero 5». Se intentó cerrarlo desde el prompt y no se cierra: el LLM no
+	// es la última palabra sobre el rango, el código sí. Un value fuera de las
+	// Options que la propia Query trae es un veredicto NO resuelto, y el carrito
+	// repromptea como el día antes de esta tarea.
+	//
+	// 🔬 Y NO ES «defensa por si acaso»: con estas dos líneas quitadas, la mutación no
+	// devuelve el artículo equivocado — ENTRA EN PÁNICO (`index out of range [4] with
+	// length 4`, y `[-1]` con el value negativo). O sea que sin esto, el fallo conocido
+	// del modelo tumba la goroutine que atiende el mensaje de una persona.
+	if q.Class == modules.QueryClassQuantity {
+		if v < 1 || v > maxQuantity {
+			return inconclusive
+		}
+		// La cantidad viaja en DÍGITOS porque eso es lo que la sub-máquina del carrito
+		// entiende (stepQuantity hace su propio Atoi). El Verdict no tiene un campo
+		// numérico a propósito: su único hueco es un código del catálogo.
+		return modules.Verdict{Code: strconv.Itoa(v)}
+	}
+	if v < 1 || v > len(q.Options) {
+		return inconclusive
+	}
+	// El modelo eligió una POSICIÓN de la lista que se le enseñó; el carrito entiende
+	// CÓDIGOS. La traducción es esta línea y es la razón por la que al modelo nunca
+	// se le enseñan los códigos: no tendría cómo saber que «Volver» es `volver`.
+	return modules.Verdict{Code: q.Options[v-1].Code}
 }

@@ -94,7 +94,14 @@
 
 package turnoacotado
 
-import "time"
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
+)
 
 // MaxCallsPerTurn (`MaxLlamadasPorTurno` en el viejo) es el tope de inferencias que
 // un turno interactivo puede gastar troceando. Ver la aritmética completa en la
@@ -118,3 +125,67 @@ const ChunkingBudget = 20 * time.Second
 // probable que muera a que conteste, y una llamada que muere igualmente ocupó la
 // plaza única mientras vivía.
 const FloorPerCall = 5 * time.Second
+
+// resolveChunks (`resolverTrozos` en el viejo) hace UNA llamada por trozo, en orden,
+// hasta que se acaba el tope o el presupuesto. Devuelve SIEMPRE un veredicto alineado
+// por posición con q.Chunks: los que no se llegaron a preguntar quedan en cadena
+// vacía, que es exactamente lo que el módulo espera leer.
+func (r *Resolver) resolveChunks(ctx context.Context, tenantID, sessionID string, q modules.Query) (modules.Verdict, error) {
+	ctx, cancel := context.WithTimeout(ctx, ChunkingBudget)
+	defer cancel()
+
+	codes := make([]string, len(q.Chunks))
+	for i, chunk := range q.Chunks {
+		if i >= MaxCallsPerTurn || !fitsOneMore(ctx) {
+			break
+		}
+		// La sub-consulta es una consulta de ELECCIÓN normal y corriente: mismas
+		// opciones, mismo nivel, y como Text el trozo en vez del turno entero. Que sea
+		// el MISMO tipo no es comodidad: hace que prompt() y verdictOf() —las dos
+		// funciones medidas de T3.5-2— se reusen verbatim, sin una rama «cuando viene de
+		// un troceado» que sería el sitio por donde las dos formas empezarían a divergir.
+		sub := modules.Query{Class: modules.QueryClassOption, Level: q.Level, Text: chunk, Options: q.Options}
+		text, schema := prompt(sub)
+		raw, err := r.turner.Turno(ctx, tenantID, sessionID, llmvia.TurnoRequest{Prompt: text, Formato: schema})
+		if err != nil {
+			return stopOnError(err, codes)
+		}
+		codes[i] = verdictOf(sub, raw).Code
+	}
+	return modules.Verdict{Codes: codes}, nil
+}
+
+// fitsOneMore (`cabeUnaMas` en el viejo) informa si queda presupuesto para arrancar
+// otra llamada. Sin deadline —que aquí no puede pasar, porque el propio resolveChunks
+// acaba de poner uno— se responde que sí: la ausencia de reloj no puede ser el motivo
+// de no preguntar.
+func fitsOneMore(ctx context.Context) bool {
+	dl, ok := ctx.Deadline()
+	return !ok || time.Until(dl) >= FloorPerCall
+}
+
+// stopOnError (`paradaPorError` en el viejo) decide qué hacer cuando la vía falla a
+// mitad del troceado.
+//
+// La regla es la de la cabecera: lo ya resuelto NO se tira. Si hay al menos un código,
+// se devuelve el veredicto PARCIAL con Reason=fallo y sin error, para que el engine lo
+// aplique en vez de descartarlo. Si no hay ninguno, el troceado se comporta EXACTAMENTE
+// como el turno de un solo texto —error hacia arriba, desenlace de fallo, aviso al
+// dueño— porque entonces no hay nada que salvar y sí una avería que contar.
+//
+// ⚠️ El aviso al dueño del ADR-0044 §5 no se pierde en el caso parcial: lo escribe el
+// decorador que envuelve al selector (llmvia/notify.go) en el momento del fallo, no
+// este return. Aquí solo se decide qué ve el módulo.
+func stopOnError(err error, codes []string) (modules.Verdict, error) {
+	if errors.Is(err, llmvia.ErrViaSinTurnoAcotado) {
+		// Tenant en vía API: para él este escalón no existe y no es una avería de nadie
+		// (mismo trato que en ResolveQuery). Se corta en la primera llamada, así que
+		// aquí nunca hay nada parcial que conservar.
+		return modules.Verdict{Reason: modules.QueryReasonNoResolver}, nil
+	}
+	v := modules.Verdict{Codes: codes, Reason: modules.QueryReasonFailure}
+	if !v.ResolvedAny() {
+		return modules.Verdict{}, err
+	}
+	return v, nil
+}
