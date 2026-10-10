@@ -45,10 +45,14 @@ package events
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/google/uuid"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // Store es el almacén Postgres del evento conversacional y de su historial.
@@ -63,9 +67,11 @@ import (
 //     entrada de texto literal y cifra SIEMPRE (no admite variante sin cifrar);
 //     AppendSummary solo acepta estructura ya serializada (json.RawMessage), que es
 //     el nivel 1 en claro del ADR-0034 y no un cajón de prosa.
-//
-// En el rojo no lleva campos. El verde le pone tres: el *sql.DB, el *crypto.FieldCipher y el reloj.
-type Store struct{}
+type Store struct {
+	db     *sql.DB
+	cipher *crypto.FieldCipher
+	now    func() time.Time
+}
 
 // Option configura el Store en la construcción.
 type Option func(*Store)
@@ -76,7 +82,11 @@ type Option func(*Store)
 //
 // Un now nil se ignora: el store conserva el reloj que tenía.
 func WithClock(now func() time.Time) Option {
-	panic(pendiente.Implementar("events.WithClock"))
+	return func(s *Store) {
+		if now != nil {
+			s.now = now
+		}
+	}
 }
 
 // NewStore construye el store sobre el pool dado. cipher es obligatorio para
@@ -87,8 +97,51 @@ func WithClock(now func() time.Time) Option {
 // lecturas del hilo, ListThread y ListPastedByOwner, devuelven nil sin error). Las opciones se
 // aplican en orden.
 func NewStore(db *sql.DB, cipher *crypto.FieldCipher, opts ...Option) *Store {
-	panic(pendiente.Implementar("events.NewStore"))
+	s := &Store{db: db, cipher: cipher, now: time.Now}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
+
+// eventColumns es la lista de columnas que scanEvent espera, en orden.
+const eventColumns = `id, tenant_id, session_id, contact_id, kind, history_id, status,
+	       flow_id, flow_version, created_at, last_activity_at, closed_at`
+
+// scanner abstrae *sql.Row y *sql.Rows para compartir scanEvent.
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+// eventDest son los destinos de scan de un Event EN EL ORDEN de eventColumns. Es
+// la única lista de campos del paquete: scanEvent y scanRescuable la comparten, y
+// así una columna nueva no puede quedar leída en un sitio y olvidada en el otro.
+func eventDest(ev *Event, closedAt *sql.NullTime) []any {
+	return []any{&ev.ID, &ev.TenantID, &ev.SessionID, &ev.ContactID, &ev.Kind,
+		&ev.HistoryID, &ev.Status, &ev.FlowID, &ev.FlowVersion,
+		&ev.CreatedAt, &ev.LastActivityAt, closedAt}
+}
+
+// scanEvent lee una fila de conversation_events en un Event, traduciendo el
+// nullable (closed_at) a su cero de Go.
+func scanEvent(sc scanner) (Event, error) {
+	var (
+		ev       Event
+		closedAt sql.NullTime
+	)
+	if err := sc.Scan(eventDest(&ev, &closedAt)...); err != nil {
+		return Event{}, err
+	}
+	ev.ClosedAt = closedAt.Time
+	return ev, nil
+}
+
+const insertEventSQL = `
+INSERT INTO public.conversation_events
+       (tenant_id, session_id, contact_id, kind, history_id, status,
+        flow_id, flow_version, created_at, last_activity_at)
+VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $8, $8)
+RETURNING ` + eventColumns
 
 // CreateEvent inserta un evento VIVO y devuelve la fila tal como quedó.
 //
@@ -114,8 +167,27 @@ func NewStore(db *sql.DB, cipher *crypto.FieldCipher, opts ...Option) *Store {
 //     envueltas (errors.Is casa con ErrAliveExists);
 //   - "events: insertar evento: %w" ante cualquier otro fallo.
 func (s *Store) CreateEvent(ctx context.Context, in NewEvent) (Event, error) {
-	panic(pendiente.Implementar("events.Store.CreateEvent"))
+	born := s.now().UTC()
+	row := s.db.QueryRowContext(ctx, insertEventSQL,
+		in.TenantID, in.SessionID, in.ContactID, in.Kind, HistoryID(in.Kind, born),
+		in.FlowID, in.FlowVersion, born)
+
+	ev, err := scanEvent(row)
+	if err != nil {
+		if postgres.IsUniqueViolation(err) {
+			return Event{}, fmt.Errorf("%w (tenant=%s sesión=%s tipo=%s): %w",
+				ErrAliveExists, in.TenantID, in.SessionID, in.Kind, err)
+		}
+		return Event{}, fmt.Errorf("events: insertar evento: %w", err)
+	}
+	return ev, nil
 }
+
+const selectAliveByKindSQL = `
+SELECT ` + eventColumns + `
+  FROM public.conversation_events
+ WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3 AND kind = $4
+   AND status = 'open'`
 
 // GetAliveByKind devuelve el evento VIVO de ese tipo en la conversación. El
 // segundo retorno dice si lo había: no haberlo es normal (E-6, el saludo no crea
@@ -129,8 +201,33 @@ func (s *Store) CreateEvent(ctx context.Context, in NewEvent) (Event, error) {
 // Textos de error (literales, con el error de origen envuelto en %w):
 //   - "events: leer evento vivo de tipo %q: %w".
 func (s *Store) GetAliveByKind(ctx context.Context, tenantID, sessionID, contactID, kind string) (Event, bool, error) {
-	panic(pendiente.Implementar("events.Store.GetAliveByKind"))
+	row := s.db.QueryRowContext(ctx, selectAliveByKindSQL, tenantID, sessionID, contactID, kind)
+	ev, err := scanEvent(row)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Event{}, false, nil
+	case err != nil:
+		return Event{}, false, fmt.Errorf("events: leer evento vivo de tipo %q: %w", kind, err)
+	}
+	return ev, true, nil
 }
+
+const selectAliveSQL = `
+SELECT ` + eventColumns + `
+  FROM public.conversation_events
+ WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
+   AND status = 'open'
+ ORDER BY created_at, id`
+
+// selectEventForTenantSQL lee UN evento por id ACOTADO AL TENANT. El `AND
+// tenant_id` no es una optimización: es el aislamiento (INV-8) escrito en el SQL,
+// donde no se puede olvidar. Leer por id y comparar el tenant en Go dejaría una
+// ventana en la que la fila ajena YA está en memoria y un refactor descuidado la
+// devuelve.
+const selectEventForTenantSQL = `
+SELECT ` + eventColumns + `
+  FROM public.conversation_events
+ WHERE id = $1 AND tenant_id = $2`
 
 // GetEventForTenant devuelve el evento id SI Y SOLO SI pertenece al tenant
 // (T4.2). Cualquier ausencia —id inexistente, id de otro tenant, id que ni
@@ -150,7 +247,18 @@ func (s *Store) GetAliveByKind(ctx context.Context, tenantID, sessionID, contact
 //   - "%w (id=%s)": ErrEventNotFound, sin fila para (id, tenant);
 //   - "events: leer el evento del tenant: %w".
 func (s *Store) GetEventForTenant(ctx context.Context, tenantID, eventID string) (Event, error) {
-	panic(pendiente.Implementar("events.Store.GetEventForTenant"))
+	if _, perr := uuid.Parse(eventID); perr != nil {
+		return Event{}, fmt.Errorf("%w (id=%q no es un UUID)", ErrEventNotFound, eventID)
+	}
+	row := s.db.QueryRowContext(ctx, selectEventForTenantSQL, eventID, tenantID)
+	ev, err := scanEvent(row)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Event{}, fmt.Errorf("%w (id=%s)", ErrEventNotFound, eventID)
+	case err != nil:
+		return Event{}, fmt.Errorf("events: leer el evento del tenant: %w", err)
+	}
+	return ev, nil
 }
 
 // ListAlive devuelve los eventos VIVOS de la conversación en orden de NACIMIENTO:
@@ -172,8 +280,42 @@ func (s *Store) GetEventForTenant(ctx context.Context, tenantID, eventID string)
 //   - "events: recorrer eventos vivos: %w" si el recorrido termina con error;
 //   - "events: cerrar filas de eventos: %w" si lo único que falla es el cierre (D-17).
 func (s *Store) ListAlive(ctx context.Context, tenantID, sessionID, contactID string) ([]Event, error) {
-	panic(pendiente.Implementar("events.Store.ListAlive"))
+	rows, err := s.db.QueryContext(ctx, selectAliveSQL, tenantID, sessionID, contactID)
+	if err != nil {
+		return nil, fmt.Errorf("events: listar eventos vivos: %w", err)
+	}
+	return collect(rows, scanEvent)
 }
+
+// collect recorre las filas con el escáner dado y CIERRA siempre, propagando el
+// error de cierre solo si no había otro peor que contar.
+func collect[T any](rows *sql.Rows, scan func(scanner) (T, error)) (out []T, err error) {
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			out, err = nil, fmt.Errorf("events: cerrar filas de eventos: %w", cerr)
+		}
+	}()
+
+	for rows.Next() {
+		v, sErr := scan(rows)
+		if sErr != nil {
+			return nil, fmt.Errorf("events: leer fila de evento: %w", sErr)
+		}
+		out = append(out, v)
+	}
+	if rErr := rows.Err(); rErr != nil {
+		return nil, fmt.Errorf("events: recorrer eventos vivos: %w", rErr)
+	}
+	return out, nil
+}
+
+// transitionSQL es el compare-and-swap: el `AND status='open'` es el guard. Un
+// evento terminal no tiene transición de vuelta, y quien pierde la carrera con
+// otro escritor no pisa la muerte que el otro ya selló.
+const transitionSQL = `
+UPDATE public.conversation_events
+   SET status = $2, closed_at = $3
+ WHERE id = $1 AND status = 'open'`
 
 // TransitionEvent mueve un evento VIVO a un estado terminal y sella closed_at con
 // el reloj inyectado.
@@ -197,8 +339,31 @@ func (s *Store) ListAlive(ctx context.Context, tenantID, sessionID, contactID st
 //   - "events: filas afectadas por la transición: %w";
 //   - "%w (id=%s destino=%s)": ErrNotOpen.
 func (s *Store) TransitionEvent(ctx context.Context, eventID string, to Status) error {
-	panic(pendiente.Implementar("events.Store.TransitionEvent"))
+	if to != StatusClosed && to != StatusCancelled {
+		return fmt.Errorf("%w (recibido %q)", ErrNotTerminal, to)
+	}
+
+	res, err := s.db.ExecContext(ctx, transitionSQL, eventID, to, s.now().UTC())
+	if err != nil {
+		return fmt.Errorf("events: transitar evento a %q: %w", to, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("events: filas afectadas por la transición: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("%w (id=%s destino=%s)", ErrNotOpen, eventID, to)
+	}
+	return nil
 }
+
+// touchSQL refresca SOLO el reloj. Que status no aparezca en el SET no es un
+// detalle de implementación: es la regla (E-6). Nada mata ni resucita un evento
+// por actividad.
+const touchSQL = `
+UPDATE public.conversation_events
+   SET last_activity_at = $2
+ WHERE id = $1`
 
 // Touch estampa last_activity_at con el reloj inyectado: es EL refresco del reloj
 // de conversación (E-6), lo que hace que una conversación activa nunca venza.
@@ -214,12 +379,23 @@ func (s *Store) TransitionEvent(ctx context.Context, eventID string, to Status) 
 //   - "events: filas afectadas por el refresco: %w";
 //   - "%w (id=%s)": ErrEventMissing, si el id no existe.
 func (s *Store) Touch(ctx context.Context, eventID string) error {
-	panic(pendiente.Implementar("events.Store.Touch"))
+	res, err := s.db.ExecContext(ctx, touchSQL, eventID, s.now().UTC())
+	if err != nil {
+		return fmt.Errorf("events: refrescar el reloj del evento: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("events: filas afectadas por el refresco: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("%w (id=%s)", ErrEventMissing, eventID)
+	}
+	return nil
 }
 
 // IsSuspended reporta si el evento está suspendido AHORA, según el reloj inyectado
 // del store. Es la función pura IsSuspended con el reloj ya puesto: no consulta ni
 // escribe nada, y con ttl <= 0 devuelve siempre false.
 func (s *Store) IsSuspended(e Event, ttl time.Duration) bool {
-	panic(pendiente.Implementar("events.Store.IsSuspended"))
+	return IsSuspended(e, ttl, s.now().UTC())
 }

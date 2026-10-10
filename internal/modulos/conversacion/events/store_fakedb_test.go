@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package events
 
 // El driver de database/sql de mentira sobre el que corren los tests del adaptador (store_test.go,
@@ -8,8 +6,7 @@ package events
 // guioniza. No interpreta SQL. Sin Postgres.
 //
 // Es el de internal/modulos/conversacion/store/repository_postgres_fakedb_test.go
-// (copia-adaptación), sin transacciones: este adaptador no abre ninguna. Lleva la etiqueta
-// `pendiente` mientras lo usen solo tests en rojo.
+// (copia-adaptación), sin transacciones: este adaptador no abre ninguna.
 
 import (
 	"context"
@@ -338,11 +335,6 @@ func argText(v any) string {
 	default:
 		return "?"
 	}
-}
-
-// exactly dice si err es el centinela A SECAS: el mismo error, sin envolver ni añadirle texto.
-func exactly(err, sentinel error) bool {
-	return errors.Is(err, sentinel) && err.Error() == sentinel.Error()
 }
 
 // requireWrapped exige que err envuelva cause y empiece por el prefijo literal del contrato.

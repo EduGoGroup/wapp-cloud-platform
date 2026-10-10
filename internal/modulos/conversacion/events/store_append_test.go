@@ -22,6 +22,11 @@ const (
 	testClientText   = "quiero dos cafés sin azúcar"
 )
 
+// exactly dice si err es el centinela A SECAS: el mismo error, sin envolver ni añadirle texto.
+func exactly(err, sentinel error) bool {
+	return errors.Is(err, sentinel) && err.Error() == sentinel.Error()
+}
+
 // requireSealedArgs exige los ocho argumentos de una entrada de NIVEL 2: payload NULL y el sobre
 // de tres piezas, que descifrado con el cipher del store da el cuerpo. El texto no viaja en claro
 // en ningún argumento.
