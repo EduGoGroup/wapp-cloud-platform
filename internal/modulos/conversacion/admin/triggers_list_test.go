@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package admin_test
 
 // triggers_list_test.go — el listado de reglas (GET .../triggers) y sus dos marcas

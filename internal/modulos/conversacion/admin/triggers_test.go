@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package admin_test
 
 // triggers_test.go — el alta de reglas de disparo (POST .../triggers) y los ayudantes

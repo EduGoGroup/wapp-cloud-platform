@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package admin_test
 
 // triggers_delete_test.go — la baja de reglas (DELETE .../triggers/{id}) y la puerta
