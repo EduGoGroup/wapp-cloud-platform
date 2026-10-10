@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -305,5 +307,67 @@ func TestObserve_SeenSurvivesTheFlush(t *testing.T) {
 	rig.aggregator().Observe(context.Background(), aggregatorRef(key, "wa-2", aggregatorStart))
 	if got := rig.jobs.Jobs()[1].SourceRefs; !slices.Equal(got, []string{"wa-2", "wa-2"}) {
 		t.Errorf("refs de la ventana viva = %v, quería [wa-2 wa-2]: la memoria vive en el proceso", got)
+	}
+}
+
+// aggregatorContradictoryResolver contesta «sí la tiene» Y un error a la vez: lo que el contrato
+// de entitlements.Resolver prohíbe y un resolver roto podría hacer.
+type aggregatorContradictoryResolver struct {
+	entitlements.Resolver
+	err error
+}
+
+func (r aggregatorContradictoryResolver) Has(context.Context, string, string) (bool, error) {
+	return true, r.err
+}
+
+// TestObserve_ResolverErrorWinsOverItsAnswer es el paso 2 de AG-1: si el resolver FALLA, Observe
+// es fail-closed aunque el booleano venga a true. Manda el error, no la respuesta que lo acompaña.
+func TestObserve_ResolverErrorWinsOverItsAnswer(t *testing.T) {
+	rig := newAggregatorRig()
+	boom := errors.New("resolver a medias")
+	broken := aggregatorContradictoryResolver{Resolver: rig.ents, err: boom}
+	agg := NewIntakeAggregator(rig.log, rig.jobs, rig.settings, broken,
+		WithAggregatorClock(rig.now), WithAheadRequester(rig.ahead))
+
+	agg.Observe(context.Background(), aggregatorRef(aggregatorKey("event-1"), "wa-1", aggregatorStart))
+
+	if got := rig.jobs.Counters(); got != (intake.Counters{}) {
+		t.Errorf("con el resolver fallando se tocó intake_jobs: %+v (el error manda sobre el true)", got)
+	}
+	if len(rig.ahead.requested()) != 0 {
+		t.Error("con el resolver fallando se pidió una clasificación")
+	}
+	rig.requireLine(t, "warn", "agregador: no se pudo resolver la feature llm_intake; el entrante no entra en ninguna ventana",
+		map[string]any{"error": boom, "tenant_id": aggregatorTenant, "session_id": "session-9"})
+}
+
+// TestObserve_ConcurrentTurnsShareTheMemorySafely: Observe corre en línea con el turno de cada
+// cliente, así que varios turnos lo llaman a la vez. La memoria del último mensaje la protege el
+// candado: cada ventana recibe su mensaje UNA vez aunque llegue repetido y en paralelo con las
+// demás. (Con -race, además, es quien delata un acceso sin candado.)
+func TestObserve_ConcurrentTurnsShareTheMemorySafely(t *testing.T) {
+	const turns = 16
+	rig := newAggregatorRig()
+	agg := rig.aggregator()
+
+	var wg sync.WaitGroup
+	for i := range turns {
+		key := aggregatorKey("event-" + strconv.Itoa(i))
+		wg.Go(func() {
+			for range 5 {
+				agg.Observe(context.Background(), aggregatorRef(key, "wa-1", aggregatorStart))
+			}
+		})
+	}
+	wg.Wait()
+
+	if got, want := rig.jobs.Counters(), (intake.Counters{OpenOrAppend: turns}); got != want {
+		t.Errorf("presupuesto = %+v, quería %+v: una escritura por ventana, las repeticiones se descartan", got, want)
+	}
+	for _, job := range rig.jobs.Jobs() {
+		if !slices.Equal(job.SourceRefs, []string{"wa-1"}) {
+			t.Errorf("ventana %s: refs = %v, quería [wa-1]", job.Key.EventID, job.SourceRefs)
+		}
 	}
 }

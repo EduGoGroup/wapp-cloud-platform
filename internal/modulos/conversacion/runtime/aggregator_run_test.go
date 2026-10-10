@@ -165,8 +165,20 @@ func TestRun_ReturnsAtOnceWithoutAStore(t *testing.T) {
 
 		rig := newAggregatorRigAt(time.Now)
 		start := time.Now()
-		NewIntakeAggregator(rig.log, nil, rig.settings, rig.ents).Run(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel() // si Run no vuelve solo, que el fallo no lo deje barriendo en la burbuja
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			NewIntakeAggregator(rig.log, nil, rig.settings, rig.ents).Run(ctx)
+		}()
+		synctest.Wait()
 
+		select {
+		case <-done:
+		default:
+			t.Fatal("Run sin almacén se quedó esperando al ticker en vez de volver en el acto")
+		}
 		if elapsed := time.Since(start); elapsed != 0 {
 			t.Errorf("Run sin almacén se quedó %v esperando", elapsed)
 		}
@@ -228,5 +240,50 @@ func TestRun_ContextCancelled_ReturnsWithoutLoggingAtError(t *testing.T) {
 			}
 			rig.requireStatus(t, "tras la parada", intake.StatusAggregating)
 		})
+	})
+}
+
+// aggregatorGatedComposer retiene cada composición hasta que el test abre la compuerta: es la
+// forma de tener a Run DENTRO de un barrido el tiempo que haga falta.
+type aggregatorGatedComposer struct{ open chan struct{} }
+
+func (g aggregatorGatedComposer) ComposeAtFlush(ctx context.Context, _ intake.WindowKey) error {
+	select {
+	case <-g.open:
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+// TestRun_AHintDuringASweepIsNotLost es la promesa del despertador («no se pierde ningún
+// despertar»): un aviso que llega mientras Run está OCUPADO en un barrido queda pendiente en el
+// buffer y Run lo atiende al terminar, sin esperar al tick. El ticker va a una hora y el reloj no
+// avanza: solo el aviso guardado puede cerrar la segunda ventana.
+func TestRun_AHintDuringASweepIsNotLost(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		hourly := WithSweepInterval(time.Hour)
+		gate := aggregatorGatedComposer{open: make(chan struct{})}
+		rig := newAggregatorRigAt(time.Now)
+		agg := rig.aggregator(hourly, WithSourceComposer(gate))
+		first, second := aggregatorKey("event-1"), aggregatorKey("event-2")
+		agg.Observe(context.Background(), aggregatorRef(first, "wa-1", time.Now()))
+		agg.Observe(context.Background(), aggregatorRef(second, "wa-1", time.Now()))
+		cancel, done := aggregatorStartRun(agg)
+		defer cancel()
+		start := time.Now()
+
+		agg.OnClassified(first, IntentIntakeRequest, 0.9)
+		synctest.Wait() // Run está dentro del barrido, retenido en la composición de la primera
+		rig.requireStatus(t, "con el barrido a medias", intake.StatusPending, intake.StatusAggregating)
+
+		agg.OnClassified(second, IntentIntakeRequest, 0.9) // llega con Run ocupado: nadie escucha
+		close(gate.open)
+		synctest.Wait()
+
+		rig.requireStatus(t, "al terminar el barrido en curso", intake.StatusPending, intake.StatusPending)
+		if elapsed := time.Since(start); elapsed != 0 {
+			t.Errorf("pasaron %v de reloj: el aviso pendiente tenía que atenderse sin esperar al tick", elapsed)
+		}
+		aggregatorRequireStopped(t, cancel, done)
 	})
 }

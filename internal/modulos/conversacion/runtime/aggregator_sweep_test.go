@@ -444,3 +444,30 @@ func TestRecoverAtBoot_ClosesWhatExpiredWhileDown(t *testing.T) {
 	rig.requireStatus(t, "tras la recuperación", intake.StatusPending, intake.StatusPending)
 	rig.requireLine(t, "info", "agregador: ventanas vencidas cerradas al arrancar", map[string]any{"jobs": 2})
 }
+
+// TestSweep_ZeroDeadlineIsExpiredWhateverTheClocksSay: un plazo a 0 es «vencido siempre» —flush
+// inmediato para el silencio, y lo mismo para el techo—, no «vencido cuando el reloj alcance a la
+// fila». Las fechas de la fila las pone el reloj de la base y el barrido usa el del proceso: con
+// la base 5 s por delante, la ventana se cierra igual en el primer barrido que la ve.
+func TestSweep_ZeroDeadlineIsExpiredWhateverTheClocksSay(t *testing.T) {
+	cases := []struct {
+		name             string
+		silence, ceiling time.Duration
+	}{
+		{"zero silence", 0, 120 * time.Second},
+		{"zero ceiling", 45 * time.Second, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rig := newAggregatorRig()
+			rig.settings.setDeadlines(aggregatorTenant, c.silence, c.ceiling)
+			agg := rig.aggregator()
+			aggregatorObserveAt(rig, agg, aggregatorKey("event-1"), "wa-1", 10) // la fila nace en el segundo 10
+
+			if got := aggregatorSweepAt(rig, agg, 5); got != 1 { // el proceso va por el segundo 5
+				t.Fatalf("el barrido cerró %d ventanas, quería 1: un plazo a 0 está vencido siempre", got)
+			}
+			rig.requireStatus(t, "tras el barrido", intake.StatusPending)
+		})
+	}
+}
