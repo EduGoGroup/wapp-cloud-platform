@@ -440,6 +440,79 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     sub-agente vio dos pasadas del paquete en rc=1 (los tests de `keyedmutex`, con el fichero mutado en ese momento); no era un
     fallo real. Para F8-05: los mutantes, en serie o sobre una copia, nunca mientras otro mide en el mismo árbol. Y el
     scratchpad compartido: cada sub-agente, su subdirectorio.
+41. **(F8-05, método) El verde de los 14 son cuatro commits, no catorce, y `runtime` queda en 40 ficheros de producción.**
+    `persist_sink` (`46b6a1ec`), `source_composer` (`0c1d8973`) y `aggregator` (`0aaa18cd`) van solos: no cuelgan de `*Runtime`.
+    Los otros **11** (`runtime_engine`, `resume`, `start`, `exit_menu`, `event_lifecycle`, `events`, `incoming`, `event_effects`,
+    `welcome`, `thread`, `send`) van en **un** commit (`1e0f6009`): se llaman entre sí, los campos del struct `Runtime` solo
+    tienen lector en los demás ficheros (lint `unused`) y todos sus tests pasan por el mismo arnés, que no monta hasta que `New`
+    y las `With*` tienen cuerpo. Particiones E-13, solo moviendo declaraciones: `aggregator` → 5 (`_observe`, `_hint`, `_sweep`
+    con `RecoverAtBoot` porque el candado de exportados lo exige en el test homónimo, `_run`); `runtime_engine` → 3 (`_pool`,
+    `_streak`; el principal queda en 553 líneas, en la tolerancia); `event_lifecycle` → 2 (`_cancel`); `events` → 6
+    (`_start_new`, `_switch`, `_summary`, `_clock`, `_menu`); `incoming` → 5 (`_advance`, `_trigger`, `_guards`, `_limiter`).
+    Dos cosas que el rojo no había repartido: `observeForAggregation` vivía en el `aggregator.go` viejo pero es un método de
+    `*Runtime`: nace en `aggregator_bridge.go`, con su test, y entra con el núcleo; y a `event_effects.go` le faltaban los tres
+    emisores (`emitEventEffect`, `emitEventEscaped`, `emitEventEffectWithReason`), que no podían existir sin llamante.
+    `incoming_aggregation_test.go` e `incoming_doubles_test.go` quedan sin fichero de producción homónimo (el candado no lo
+    exige en ese sentido). El «rc=0 por commit» se midió después, en un *worktree* temporal: 36 de 36.
+42. **(F8-05) El hallazgo 32, medido: de los ≈ 260 tests nunca ejecutados contra lógica real, estaban mal dos.** Con la
+    lógica portada, el paquete dio 423 PASS a la primera. (a) `TestOnIncoming_SameConversationIsProcessedOneAtATime` usaba
+    `testing/synctest` y se colgaba: es el hallazgo 38 otra vez (un bloqueo en `sync.Mutex` no es durable para la burbuja).
+    Ahora observa la espera con el conteo del candado, por `ConversationLockRefs` en un `export_test.go` nuevo (solo existe
+    en el binario de test), y vive en `incoming_lock_test.go`; quitar el candado de `HandleIncoming` lo mata por aserción con
+    nombre. (b) `TestWithClock_GovernsTheConversationTTL` usaba un TTL de 1 h, mayor que la ventana de inactividad de la racha
+    (30 min, `streak.go`), que la cerraba sola y daba `[1]`: TTL de 10 min, expectativas intactas (el TTL no tiene mínimo ni
+    saneo, solo se aparta el `<= 0`). Ningún fallo real del porte. Lo que el arnés no tenía sigue resuelto con un segundo
+    `Runtime` por test; repasados siete de esos montajes, ninguno afirma algo vacuo (sin mirar a fondo: encender una feature
+    antes del primer entrante y la lectura del cuerpo del hilo). Los avisos de lint que el hallazgo 28 hacía temer: **0**, con
+    y sin etiqueta; ningún `//nolint` en `C/runtime`.
+43. **(F8-05, mutantes) 362 válidos, 357 muertos, 4 equivalentes y 1 que solo muere por `-timeout`.** Corridos en serie, cada
+    tanda en su *worktree* fuera del repo (hallazgo 40). **Núcleo**: 187 válidos, 185 muertos, 2 equivalentes (`started = true`
+    con el arranque cortado en `events_switch.go`; `due` sin mirar `active`, que su único llamante ya filtra); 12 supervivientes
+    cerrados con test (`a6fb0215`): el candado de `Start`, de `CancelEventForTenant` y de `repairCancelled` no tenía quien lo
+    viera (tres tests `…WaitsForTheTurnThatHoldsTheConversation`), la guarda de `UpdatedAt` cero del TTL, el arranque cortado
+    que no se ofrece al agregador, el no-op de `beginEvent` que solo vale para `gestureGoTo`, el testigo de `MarkWelcomed`, y dos
+    del hilo. Cada uno de los seis `Close` muere además por un test de conducta, no solo por el candado AST. **Agregador, sink y
+    compositor**: 175 válidos, 172 muertos, 2 equivalentes; 11 cerrados con test (`f5fd0374`). 🟡 Lo que conviene saber:
+    (a) `ceiling <= 0` → `< 0` **no** es equivalente, aunque el comentario del viejo lo sugiere: las fechas de la fila las pone
+    el reloj de la base y el barrido usa el del proceso (`TestSweep_ZeroDeadlineIsExpiredWhateverTheClocksSay`); (b) los
+    mutantes que quitan el candado de `seen` y de las pistas solo mueren con `-race`; (c) «no volver tras el error del
+    resolver» en `Observe` solo muere con un doble que devuelve `(true, err)`, que viola el contrato de `entitlements.Resolver`:
+    el test fija el *fail-closed* y se puede quitar si se juzga excesivo; (d) **sin arreglar**: `Run` con `return` → `continue`
+    en `ctx.Done()` solo muere por `-timeout` (un `Run` que gira impide que la burbuja de `synctest` quede quieta); (e) el
+    sobre-candado (clave solo con tenant, o sin contacto) lo delata de rebote una aserción que mira la clave buena, y un
+    `-timeout`: no hay test de «dos conversaciones distintas no se esperan»; (f) `StartNewOfKind` **no** toma candado: los
+    sitios son cuatro (`HandleIncoming`, `Start`, `CancelEventForTenant`, `repairCancelled`).
+44. **(F8-05, D-F7-9 y hallazgo 34) 🟡 Nada de lo pendiente de decisión se decidió aquí: todo portado tal cual.** D-F7-9 (cierre
+    → sobre en dos sentencias sin atomicidad) **sigue sin arreglar**: el encargo de la sesión no lo pedía, el arreglo toca la
+    guarda de `PutSourceText` en `captacion/intake` y pide su caso en P4. Los comentarios de `Sweep` y `ComposeAtFlush`, que
+    decían «lo decide el verde (F8-05)», dicen ahora que sigue pendiente (`6c9bd1f1`). **Hace falta que Jhoan diga en qué
+    sesión va** (F8-06 conmuta el runtime; F8-07 cierra). Las rarezas 34a–34i siguen portadas y con su test: el sobre de P2
+    sin escapar (el corpus gana cuatro casos adversarios: bloque de mensajes falsificado, bytes de control y UTF-8 inválido,
+    clases casi iguales, saltos al borde; el corpus entero pasó contra el `ComposeSourceText` viejo), el id visto antes de
+    `OpenOrAppend`, el `time.After(25 ms)` real del reintento, los dos panic diferidos y `Start` sin token pero contando racha
+    (cobrar token en `Start` lo matan `TestStart_SkipsTheIncomingMachinery` y `TestStart_DurableFlowIsRejectedWithoutATrace`).
+    D-F9-10 está en `logSweepError` (`aggregator_sweep.go`), con cinco mutantes muertos por
+    `TestRun_ContextCancelled_ReturnsWithoutLoggingAtError`.
+45. **(F8-05, `runtime`) Comentarios del viejo que no casan con su código, y lo no portado.** `aggregator.go:695-697` dice que
+    el plazo se recalcula desde `message_ts`; el código usa `LastActivity` y `CreatedAt` y `:824` lo niega. `source_composer.go:85-87`
+    sugiere un sobre robusto y no escapa nada. La cabecera de `beginEvent` describe el no-op sin nombrar el gesto, y el código lo
+    limita a `gestureGoTo` (`events.go:303` del viejo, `:302` del nuevo). El docstring viejo de `HandleIncoming` («sin estado lo
+    ignora») ya estaba corregido en el contrato. Varias referencias `fichero:línea` de comentarios portados apuntan al
+    *layout* viejo (`events.go:543-567`, `config_resolver.go:171-180`): se dejaron literales. No portado: la guarda
+    `hint == nil` de `intentTriggers` (rama muerta: recibe el valor) y los docstrings viejos de los exportados, donde manda el
+    contrato. Renombres E-11, solo no exportados: `debe` → `due`, `textoDeBienvenida` → `welcomeText`, `destino` →
+    `destination`, `despertar` → `wake`, `plazosDeVentana` → `windowDeadlines`, `venceElSilencio`/`venceElTecho` →
+    `silenceExpired`/`ceilingExpired`, `plazosFor` → `deadlinesFor`, `errHilo` → `threadErr`, y locales. Import nuevo fuera de
+    `modulos/` y `nucleo/`: `internal/platform/storage/postgres` por `IsPermanentFailure`, el mismo que usa `captacion/pipeline`.
+    `make cobertura-ficheros` (informe): de `C/runtime` solo `events_summary.go` queda por debajo (76,3 %).
+46. **(F8-05, método) Cupo en un bloque: ≈ 65 min de pared (≈ 12:40–13:45).** Lo que lo hizo posible: portar la producción en
+    cuatro sub-agentes a la vez en el mismo checkout con ficheros disjuntos (sink ≈ 2 min, agregador ≈ 7, y las dos mitades del
+    `*Runtime` ≈ 13 cada una) con una **regla de nombres común escrita en los dos prompts** (los no exportados que ya están en
+    inglés conservan su nombre; los campos de `Runtime`, los del viejo; las traducciones, fijadas de antemano): encajaron sin
+    hablarse (hallazgo 18). Después, un sub-agente para los tests y las etiquetas (≈ 6 min) y dos de mutantes en paralelo, cada
+    uno en su *worktree* (≈ 23 y ≈ 26 min), que devolvieron un commit solo de tests cada uno, integrado con `cherry-pick`.
+    🟡 Lo que costó: un sub-agente lanzó `pkill -f runtime.test` para matar su propia ejecución colgada, con otros midiendo en
+    la máquina (no hubo daño que se viera); y los mutantes fueron lo más largo, con diferencia.
 
 ## Orden de lectura
 
@@ -460,7 +533,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-03 ✅ | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (11) y `cart` (20) verdes; goldens idénticos; candado de orden verde y mutado (en dos mitades: 2026-10-09, rama `reorg/f8-03-events-cart`, `8c819b40` … `790ca522`, PR #62 en `dev`, merge `8b841c8d`; 2026-10-10, rama `reorg/f8-03b-cart-verde`, `dd0771ce` … `44255a2b`, PR #63 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash) |
 | F8-04 ✅ | `runtime` (1a): los contratos de los 23 | complejo | T8.18–T8.21 | 23 contratos en rojo, `runtimehelpertest` verde, candado de rachas escrito, lista blanca de `conversacion` completa; ningún verde de `runtime` (✎ 2026-10-10, D-F8-11: antes llevaba también T8.26) (2026-10-10, rama `reorg/f8-04-runtime-contratos`, `cf327ca5` … `de6a5411`, PR #65 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `cbebf10c`, sin squash) |
 | F8-04b ✅ | `runtime` (1b): el verde del soporte | complejo | T8.26 | **9** de los 12 de soporte verdes (✎ 2026-10-10, D-F8-12: `welcome`, `thread` y `send` pasan a F8-05), mutantes de `keyedmutex` y `streak` muertos, `pendiente` del runtime solo en los 11 del núcleo y en `welcome.go` (2026-10-10, rama `reorg/f8-04b-runtime-soporte`, `83565b4e` … `6216d1df`, PR #66 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `d80e7f56`, sin squash) |
-| F8-05 | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo y `welcome`, `thread` y `send` verdes (✎ 2026-10-10, D-F8-12: 14, no 11), mutantes muertos, `pendiente` del runtime = 0 |
+| F8-05 ✅ | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo y `welcome`, `thread` y `send` verdes (✎ 2026-10-10, D-F8-12: 14, no 11), mutantes muertos, `pendiente` del runtime = 0 (2026-10-10, rama `reorg/f8-05-runtime-nucleo`, `46b6a1ec` … `f5fd0374`, por PR a `dev`, sin squash) |
 | F8-06 | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo |
 | F8-07 | cierre | — | T8.36–T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
 
