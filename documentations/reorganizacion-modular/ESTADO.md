@@ -421,6 +421,10 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
 - **✎ D-F8-14 (Jhoan, 2026-10-10, tras la sesión, en el mismo PR)**: la rareza 34b se **arregla** (`c44c212f`): si `OpenOrAppend`
   falla, el id se desanota y la re-entrega del Edge vuelve a intentarlo, en vez de perderse el mensaje. Divergencia
   deliberada del viejo; dos casos nuevos y dos mutantes muertos.
+- **✎ D-F8-15 y D-F8-16 (Jhoan, 2026-10-10, en el mismo PR)**: 34c, el reintento del sink durable **retoma donde falló** y ya
+  no duplica la fila de `flow_events` ni la decisión del hilo (`6eb31a3d`; cinco mutantes muertos); 34e, `WithEventSink(nil)` y
+  `WithResumePolicy(tipo, nil)` **se ignoran** en vez de hacer panic en el primer turno (`a9da0105`). Divergencias deliberadas.
+  Gate repetido con los tres arreglos dentro: `GATE_RC=0`, 237 `ok`, lint `0 issues`; `runtime` 456 PASS, 0 SKIP.
 - **🟡 Para Jhoan, sin bloquear** (hallazgo 44): D-F7-9 sigue **sin arreglar** (✎ ya con sesión: F8-06b); las
   rarezas 34a–34i, portadas tal cual; el test `TestObserve_ResolverErrorWinsOverItsAnswer`, que solo muerde con un resolver
   que viola su contrato.

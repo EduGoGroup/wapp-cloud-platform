@@ -493,7 +493,10 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     sin escapar (el corpus gana cuatro casos adversarios: bloque de mensajes falsificado, bytes de control y UTF-8 inválido,
     clases casi iguales, saltos al borde; el corpus entero pasó contra el `ComposeSourceText` viejo), el id visto antes de
     `OpenOrAppend` (✎ **34b ya no: arreglada**, D-F8-14, `c44c212f`: si la sentencia falla, el id se desanota y la re-entrega
-    vuelve a intentarlo; divergencia deliberada del viejo, con dos casos y dos mutantes muertos), el `time.After(25 ms)` real del reintento, los dos panic diferidos y `Start` sin token pero contando racha
+    vuelve a intentarlo; divergencia deliberada del viejo, con dos casos y dos mutantes muertos), el `time.After(25 ms)` real del reintento
+    (✎ **34c, la mitad que duplicaba, arreglada**: D-F8-15, `6eb31a3d`, el reintento retoma donde falló y ya no repite el outbox ni
+    el hilo cuando lo que falló fue la proyección; los 25 ms de reloj real siguen), los dos panic diferidos (✎ **34e
+    arreglada**: D-F8-16, `a9da0105`, el nil se ignora) y `Start` sin token pero contando racha
     (cobrar token en `Start` lo matan `TestStart_SkipsTheIncomingMachinery` y `TestStart_DurableFlowIsRejectedWithoutATrace`).
     D-F9-10 está en `logSweepError` (`aggregator_sweep.go`), con cinco mutantes muertos por
     `TestRun_ContextCancelled_ReturnsWithoutLoggingAtError`.
