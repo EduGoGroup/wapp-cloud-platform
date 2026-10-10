@@ -387,6 +387,22 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   prompt de P2, que se ajusta por fichero y sin release) **y medir** antes de darlo por bueno. El corpus adversario ya fija
   la conducta de hoy; cambiará con el arreglo.
 
+### D-33 · 🟡 El resolver de tenant no filtra por el estado de la sesión
+
+> Abierta el 2026-10-10 por decisión de Jhoan tras F8-05 (D-F8-19; hallazgo 34f de
+> `reorganizacion-modular/plan/F8-conversacion/README.md`): **mejora para después de la migración**. No investigada a fondo.
+
+- **Dónde**: `internal/modulos/conversacion/runtime/tenant_resolver.go` (`PostgresTenantResolver`), igual que en el viejo
+  (`internal/flujos/runtime/tenant_resolver.go`). La consulta no mira `state`: una sesión `loggedout` resuelve su tenant
+  y pesa en el perfil igual que una viva. Lo fija el caso `AnyState_ResolvesTheSame` de la suite contra Postgres; el
+  mutante que añade `AND state <> 'loggedout'` muere por él (hallazgo 39).
+- **Consecuencia**: **sin medir**. Depende de dos cosas que nadie ha mirado: si puede llegar un entrante por una sesión
+  cerrada (si el Edge ya no tiene socket, no debería), y si el perfil se agrega por tenant o por sesión (si es por tenant,
+  una sesión muerta en pasiva podría volver pasivo a un tenant con otra viva y activa).
+- **Veredicto**: se porta tal cual. **Después del relevo de F10**: leer la consulta, contar en UAT las sesiones `loggedout`
+  que comparten tenant con una viva, y decidir si se filtra. Si se filtra, `AnyState_ResolvesTheSame` cambia con la
+  decisión.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes
