@@ -252,7 +252,7 @@ Para cuando: un job de ventana nunca es visible para el worker en `pending` sin 
   - **Hecho cuando**: un job de re-análisis nunca es visible en `pending` sin sobre; fallo al componer → no se abre job y la petición lo dice (hoy: job abierto sin literal que el worker mata); mutantes muertos; suite `Contrato` de `intake` verde en memoria y en Postgres; si `PutSourceText` queda sin llamante de producción, dicho y preguntado, no borrado.
   - **Gate**: `G` · `make test-procesos` (nuevo y viejo) · **Commit**: `fix(captacion): el job de re-análisis nace con su sobre (D-F7-9)`
 
-## Bloque 7 · cierre · 💻 · sesión F8-07 · T8.36–T8.38
+## Bloque 7 · cierre · 💻 · sesión F8-07 · T8.36–T8.38, T8.41–T8.42 (✎ 2026-10-10: dos tareas nuevas tras F8-06b)
 Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 entera.
 
 - [ ] **T8.36 · Gates y arranque local del binario nuevo** · 💻 · dep. T8.35, T8.39, T8.40 (✎ D-F8-13) · cumple R8.8.a, R8.8.c
@@ -261,7 +261,18 @@ Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 entera.
 - [ ] **T8.37 · 🕐 Procesos del módulo contra el binario nuevo (= T9.29, 9C de `conversacion`)** · 💻 · dep. T8.36 · cumple R8.8.b — *con D-F9-1 = sí (recomendación); si D-F9-1 = no, se tacha y lo cubre T9.34 tras F8*
   - **Hecho cuando**: T9.29 (9C de `conversacion`, [`../F9-procesos/tareas.md`](../F9-procesos/tareas.md)) pasa: «Entrante a respuesta», «De mensaje a borrador», «Re-análisis», con las aserciones de BD de `diseno.md` §4.2 (D-054.4, 23502, `ON CONFLICT` de la ventana); `make test-procesos` rc=0 y 0 SKIP con `-v`.
   - **Gate**: `make test-procesos > /tmp/p.log 2>&1; echo RC=$? >> /tmp/p.log; tail -1 /tmp/p.log`
-- [ ] **T8.38 · Cerrar F8** · 💻 · dep. T8.36 (y T8.37 si aplica)
+- [ ] **T8.41 · Borrar `PutSourceText` y `ComposeAtFlush` (deuda D-35)** · 💻 · dep. T8.40 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgo 55 del README)
+  - **Ficheros**: `C/runtime/source_composer_flush.go` y su test (`ComposeAtFlush`), `C/runtime/source_composer.go` (`SourceTextWriter`, el campo `jobs` y el argumento del constructor), `internal/modulos/captacion/intake/{store,postgres,memory}.go` y sus tests (`PutSourceText`), `intakehelpertest/` (los casos `PutSourceText_*` y lo que solo ellos usen), `internal/arranque/fase5_captacion.go` y las aserciones de cableado que miran `composer.jobs`.
+  - **Hecho cuando**: ninguna de las dos operaciones existe en el árbol nuevo; `intake.JobStore` vuelve a cuatro operaciones; los tests de cableado se actualizan en el mismo commit **sin debilitarse** (lo que afirmaba la identidad de `composer.jobs` desaparece con el campo, no se relaja); `G` rc=0 con 0 SKIP; suite `Contrato` de `intake` verde en memoria y en Postgres; D-35 marcada cerrada en `deuda.md`. **Fuera**: el código viejo.
+  - **Gate**: `G` · `make test-procesos` (nuevo) · **Commit**: `refactor(captacion): fuera PutSourceText y ComposeAtFlush, sin llamante desde F8-06b (D-35)`
+
+- [ ] **T8.42 · El caso adversario del callback del CRM tolera el corte de conexión** · 💻 · dep. T8.35 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgos 14 y 58 del README)
+  - **Ficheros**: `test/procesos/p6_crm_test.go` (`callback_body_adversarial`, ≈ :270) y sus helpers.
+  - **Antes de tocar**: leer el caso y **confirmar** que el «connection reset by peer» / «broken pipe» es el servidor rechazando el cuerpo adversario mientras el test aún lo envía, y no otra cosa. En F8-06b solo se leyó el mensaje del log. Si no es eso, PARA y dilo.
+  - **Hecho cuando**: el caso acepta como rechazo válido la respuesta de error **o** el corte al enviar, y sigue fallando si el servidor **acepta** el cuerpo; sin tocar el servidor; sin `time.Sleep` ni `t.Skip`; `-run TestP6_CRMBridge -count=10` verde contra los dos binarios.
+  - **Gate**: `make vet-integracion` · `make test-procesos` · **Commit**: `procesos(solicitudes): el callback adversario del CRM tolera el corte de conexión`
+
+- [ ] **T8.38 · Cerrar F8** · 💻 · dep. T8.36, T8.41, T8.42 (y T8.37 si aplica)
   - **Ficheros**: `ESTADO.md`, este `README.md` (estado «cerrada», SHA, hallazgos)
   - **Hecho cuando**: los 10 puntos de `reglas.md` §4 escritos con su número en `ESTADO.md`; `origin/dev` al día; la siguiente es F9/F10 (decisión de Jhoan). No se toca `main`.
   - **Commit**: `docs(reorganizacion-modular): F8 cerrada`

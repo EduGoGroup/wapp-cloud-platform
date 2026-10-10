@@ -692,7 +692,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-05 ✅ | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo y `welcome`, `thread` y `send` verdes (✎ 2026-10-10, D-F8-12: 14, no 11), mutantes muertos, `pendiente` del runtime = 0 (2026-10-10, rama `reorg/f8-05-runtime-nucleo`, `46b6a1ec` … `f5fd0374` y tres arreglos decididos después (`c44c212f`, `6eb31a3d`, `a9da0105`), PR #67 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash) |
 | F8-06 ✅ | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo (2026-10-10, rama `reorg/f8-06-cara-http-y-conmutar`, `5ba7f419` … `fe6305b9`; hallazgos 47–51) |
 | F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39, T8.40 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; el job de re-análisis nace con su sobre; caso de P4 verde contra el binario nuevo. ✎ **hecha** (2026-10-10; `a0144628` … `42a06574`; hallazgos 52–59) |
-| F8-07 | cierre | — | T8.36–T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
+| F8-07 | cierre | — | T8.36–T8.38, T8.41, T8.42 (✎ 2026-10-10) | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
 
 Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (medido en el código viejo):
 `admin` importa `runtime` (`handlers.go:24,306,308`), así que no puede nacer antes que sus contratos y va con la cara
