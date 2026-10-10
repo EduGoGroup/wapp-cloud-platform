@@ -16,15 +16,15 @@
 //	AG-4  la pista: anotar bajo candado Y DESPUÉS avisar (no bloqueante, buffer 1) ....... OnClassified
 //	AG-5  `seen` NO se borra al cerrar la ventana ...................................... Observe
 //	AG-6  sin timer por ventana; el plazo se recalcula en cada barrido; cierre idempotente Sweep, RecoverAtBoot, Run
-//	AG-7  tres llamantes del puente con el motor ....................................... (abajo: ola de `incoming`)
+//	AG-7  tres llamantes del puente con el motor ....................................... (abajo: aggregator_bridge.go)
 //	AG-8  sin compositor → noop; sin AheadRequester → siempre por reloj ................. WithSourceComposer, WithAheadRequester
 //
-// # AG-7 · El puente con el motor NO está en este contrato
+// # AG-7 · El puente con el motor NO está en este fichero
 //
 // En el viejo este fichero termina con observeForAggregation (aggregator.go:962), un
 // método NO exportado del Runtime: el ÚNICO puente entre el motor y el agregador.
-// Nace en el verde y se prueba con el Runtime (ola de `incoming`), no aquí. Lo que
-// promete, para quien lo escriba:
+// Aquí vive en aggregator_bridge.go y se prueba con el Runtime (por HandleIncoming:
+// incoming_aggregation_test.go), no aquí. Lo que promete:
 //
 //   - Tiene TRES puntos de llamada, EXCLUYENTES entre sí (por entrante corre como
 //     mucho uno): (1) el TURNO NORMAL sobre una conversación viva, junto a la escritura

@@ -22,7 +22,7 @@ import (
 //   - default distinto de PhaseProject (`return PhaseNotify` en phaseOf) → muere
 //     TestPhaseOf_UnphasedSinkIsProject.
 //
-// De conducta con el Runtime (ola siguiente): el fan-out entrega en el orden
+// De conducta con el Runtime (los tests de incoming y de resume): el fan-out entrega en el orden
 // proyecta-A, proyecta-B, notifica; el WebhookSink registrado antes que el PersistSink
 // encola el intake_id que generó la proyección.
 

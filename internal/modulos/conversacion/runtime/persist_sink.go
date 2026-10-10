@@ -86,7 +86,7 @@ var decisionEffects = map[string]struct{}{
 //
 // El reintento, el corte del turno y el aviso al cliente
 // (defaultDurableSinkFailureNotice, nunca un SQLSTATE) NO son de este sink: son del
-// despacho del runtime (ola de `incoming`/`resume`). Este sink solo MARCA; no
+// despacho del runtime (`incoming`/`resume`). Este sink solo MARCA; no
 // reintenta ni mira EffectContext.Durable.
 //
 // Su texto es observable (sale en el log del despacho) y se copia literal.
