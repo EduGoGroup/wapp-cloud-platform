@@ -8,19 +8,24 @@
 // deliberadamente aparte: aquella la satisface el store, mientras que cancelar orquesta tres
 // efectos (guard del evento, puntero del motor, contenido colgante) y eso es del runtime.
 //
-// En el rojo solo existen el puerto, ConversationEventCancelDeps y
-// MountConversationEventCancel; el handler y su 404 único (writeEventNotFound en la cara vieja)
-// son no exportados y nacen con el verde (05 E-4, P6). Sus promesas viven en el comentario de
-// MountConversationEventCancel.
+// En el rojo solo existían el puerto, ConversationEventCancelDeps y
+// MountConversationEventCancel; el handler y su 404 único (conversationEventCancelNotFound;
+// writeEventNotFound en la cara vieja) son no exportados y nacieron con el verde (05 E-4, P6).
+// Sus promesas viven en el comentario de MountConversationEventCancel.
 
 package apipublica
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"slices"
+
+	"github.com/google/uuid"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // ConversationEventCanceller es el puerto de CANCELACIÓN del evento conversacional. Lo satisface
@@ -142,5 +147,87 @@ type ConversationEventCancelDeps struct {
 // Common), con un mensaje que nombra MountConversationEventCancel. Si falta una dependencia no
 // se monta nada y k ni se mira.
 func MountConversationEventCancel(c *Cara, k Common, d ConversationEventCancelDeps) {
-	panic(pendiente.Implementar("apipublica.MountConversationEventCancel"))
+	if d.Canceller == nil || d.Entitlements == nil {
+		return
+	}
+	mustHaveMW(k, "MountConversationEventCancel")
+	anyKind := entitlements.RequireAnyFeature(d.Entitlements, events.KindFeatures()...)
+	c.Handle("POST /api/v1/conversation-events/{id}/cancel", protect(k,
+		"intakes.write", "conversation_event",
+		anyKind(conversationEventCancelHandler(d.Canceller, d.Entitlements))))
+}
+
+// conversationEventCancelHandler (cancelConversationEventHandler en la cara vieja) sirve POST
+// /api/v1/conversation-events/{id}/cancel: el dueño cierra a mano un evento que el flujo no
+// cerró solo. El porqué de cada desenlace está en MountConversationEventCancel.
+func conversationEventCancelHandler(canceller ConversationEventCanceller,
+	feats entitlements.Resolver) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		// El id es la identidad TÉCNICA (UUID, columna UUID en BD). Un id que no
+		// puede existir recibe el mismo 404 que uno que no existe —es literalmente
+		// eso— y de paso evita que el cast de Postgres convierta un typo en 500
+		// (mismo motivo que el contact_id del listado).
+		eventID := r.PathValue("id")
+		if uuid.Validate(eventID) != nil {
+			conversationEventCancelNotFound(w)
+			return
+		}
+
+		ev, err := canceller.GetEventForTenant(r.Context(), id.TenantID, eventID)
+		switch {
+		case errors.Is(err, events.ErrEventNotFound):
+			conversationEventCancelNotFound(w)
+			return
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "no se pudo leer el evento")
+			return
+		}
+
+		// El MISMO filtro por tipos del listado (events.AllowedKinds, mismo mapa
+		// tipo→feature del despachador), aplicado sobre el evento concreto.
+		kinds, err := events.AllowedKinds(r.Context(), feats, id.TenantID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudieron resolver los tipos habilitados del plan")
+			return
+		}
+		if !slices.Contains(kinds, ev.Kind) {
+			conversationEventCancelNotFound(w)
+			return
+		}
+
+		out, err := canceller.CancelEventForTenant(r.Context(), id.TenantID, eventID)
+		switch {
+		case errors.Is(err, events.ErrEventNotFound):
+			// Inalcanzable en la práctica (nada borra eventos, INV-09), pero si el
+			// puerto lo dice, la respuesta honesta sigue siendo el mismo 404.
+			conversationEventCancelNotFound(w)
+			return
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "no se pudo cancelar el evento")
+			return
+		}
+
+		// La MISMA proyección que una fila del listado (conversationEventsDTO), para
+		// que la pantalla que pinta la bandeja pueda pintar la respuesta sin otro
+		// contrato. `stale` viaja false: la marca «vencido» es una pregunta sobre
+		// eventos ABIERTOS y este acaba de dejar de serlo (o ya lo había dejado).
+		// `content_state`/`content_ref` viajan OMITIDOS: son derivados del join del
+		// LISTADO (D-043.22) y esta respuesta no los recalcula — quien quiera el
+		// contenido tras cancelar vuelve a la bandeja, que es su fuente.
+		writeJSON(w, http.StatusOK, conversationEventsToDTO(events.Rescuable{Event: out}))
+	})
+}
+
+// conversationEventCancelNotFound (writeEventNotFound en la cara vieja) es EL 404 de este
+// endpoint, en singular a propósito: que los caminos que no ven el evento (no existe, es de otro
+// tenant, es de un tipo que el plan no incluye) compartan función es lo que garantiza el cuerpo
+// idéntico — no se puede distinguir desde fuera cuál fue (INV-8).
+func conversationEventCancelNotFound(w http.ResponseWriter) {
+	writeError(w, http.StatusNotFound, "evento no encontrado")
 }

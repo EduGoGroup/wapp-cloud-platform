@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // conversationeventcancel_test.go — cubre el contrato de conversationeventcancel.go
