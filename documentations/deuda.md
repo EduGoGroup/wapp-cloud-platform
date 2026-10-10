@@ -403,6 +403,21 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   que comparten tenant con una viva, y decidir si se filtra. Si se filtra, `AnyState_ResolvesTheSame` cambia con la
   decisión.
 
+### D-34 · 🟡 Un `item_added` reentregado tras el cierre reescribe las líneas de la solicitud cerrada
+
+> Abierta el 2026-10-10 por decisión de Jhoan tras F8-05 (D-F8-20; hallazgos 25 y 27 de
+> `reorganizacion-modular/plan/F8-conversacion/README.md`): **para después de la migración**. La vía de entrada no está
+> confirmada.
+
+- **Dónde**: el proyector del carrito, `internal/modulos/conversacion/modules/cart/projection*.go`, igual que en el viejo
+  (`internal/flujos/modules/cart/projection.go:218-228`): la segunda búsqueda de la solicitud del evento **no filtra por
+  estado**, así que encuentra una `closed` y le reescribe las líneas.
+- **Consecuencia**: si un `item_added` se vuelve a entregar después de que el cliente confirmó, el pedido que el dueño ya
+  vio cambia sin que nadie lo toque. **Sin confirmar que hoy ocurra**: la fuente más obvia de re-entregas (el reintento del
+  sink durable, que repetía todo) quedó cerrada en F8-05 (D-F8-15); no se investigó si queda otra.
+- **Veredicto**: se porta tal cual. El arreglo es pequeño (no escribir sobre una cerrada), pero **qué hacer con el hecho
+  tardío** (descartarlo, avisar, abrir otra solicitud) es una regla de negocio. Después del relevo de F10.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes

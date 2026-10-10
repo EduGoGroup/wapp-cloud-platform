@@ -1,5 +1,14 @@
 # F8-06 · F8 · la cara HTTP y conmutar · 💻 CLI
 
+> ✎ **2026-10-10 (tras F8-05, PR #67)**: lo que F8-05 deja dicho, y manda sobre la tabla y el prompt de abajo:
+> (1) **D-F7-9 NO se arregla aquí**: va después, en [`F8-06b`](F8-06b-cli-d-f7-9-cierre-y-sobre.md) (D-F8-13); aquí el
+> agregador y el compositor nuevos se cablean **tal cual están**. (2) El runtime nuevo trae **tres divergencias deliberadas
+> del viejo** (D-F8-14, D-F8-15, D-F8-16): solo se ven cuando falla la base o cuando el cableado pasa un `nil`; la huella y
+> los procesos no deberían notarlas, y si un proceso las nota, es un hallazgo. (3) Por D-F8-16, `WithEventSink(nil)` y
+> `WithResumePolicy(tipo, nil)` **se ignoran en silencio**: el test de cableado tiene que afirmar que los sinks y las
+> políticas están puestos **de verdad** (un `nil` ya no revienta). (4) `runtime` son 40 ficheros de producción y ninguno
+> lleva `pendiente`; ningún binario lo cablea todavía. Hallazgos 41–46 del README de F8.
+
 | | |
 |---|---|
 | Fase · bloque | [F8 · conversacion](../F8-conversacion/README.md) · 6 · la cara HTTP y conmutar |
