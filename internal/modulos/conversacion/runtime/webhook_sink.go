@@ -9,7 +9,6 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/integrations/crmpush"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // WebhookSink es la PUERTA CONVERSACIONAL del puente CRM (Plan 042 · Ola 3 ·
@@ -31,10 +30,20 @@ import (
 // Hereda el contrato de EventSink: no bloquea indefinidamente (una consulta al gate y
 // un solo INSERT), NUNCA filtra PII ni credenciales, y NUNCA aborta el avance del
 // flujo (Handle devuelve nil siempre).
-//
-// En el rojo no lleva campos. El verde le pone cuatro: el logger, el encolador de
-// crmpush, el nombre del efecto que entrega y si se construyó con sus dos dependencias.
-type WebhookSink struct{}
+type WebhookSink struct {
+	log    logger.Logger
+	pusher *crmpush.Pusher
+	// deliverEffect es el efecto que este sink entrega al puente (hoy cart_closed).
+	// Se INYECTA (no se hardcodea el literal de un módulo, Plan 027 · Ola 3 · T8):
+	// el arranque lo cablea con cart.EffectCartClosed.
+	deliverEffect string
+	// hasDependencies (en el viejo, tieneDependencias) distingue el sink de producción
+	// del que construyen los tests unitarios que solo ejercitan el camino «no entrega».
+	// Se guarda al construir porque crmpush.NewPusher devuelve un *Pusher aunque le den
+	// nils, y su Push es un no-op seguro: el sink necesita saberlo para no loguear un
+	// encolado que no ocurrió.
+	hasDependencies bool
+}
 
 // WebhookQueuer es lo mínimo que el sink necesita del almacén de integraciones
 // (interfaz local, ISP): un solo INSERT en webhook_outbox. Lo satisface el almacén
@@ -66,7 +75,12 @@ type WebhookGate = crmpush.Gate
 // es el de crmpush por defecto (time.Now().UTC()): este constructor no lo inyecta,
 // igual que el viejo.
 func NewWebhookSink(log logger.Logger, deliverEffect string, queuer WebhookQueuer, gate WebhookGate) *WebhookSink {
-	panic(pendiente.Implementar("runtime.NewWebhookSink"))
+	return &WebhookSink{
+		log:             log,
+		pusher:          crmpush.NewPusher(log, queuer, gate),
+		deliverEffect:   deliverEffect,
+		hasDependencies: queuer != nil && gate != nil,
+	}
 }
 
 // Phase implementa PhasedSink: este sink corre en PhaseNotify, DESPUÉS de toda la
@@ -76,9 +90,7 @@ func NewWebhookSink(log logger.Logger, deliverEffect string, queuer WebhookQueue
 // garantice el runtime y no el orden de las líneas del arranque.
 //
 // Devuelve PhaseNotify siempre, también sobre un receptor nil.
-func (s *WebhookSink) Phase() SinkPhase {
-	panic(pendiente.Implementar("runtime.WebhookSink.Phase"))
-}
+func (*WebhookSink) Phase() SinkPhase { return PhaseNotify }
 
 // Handle traduce el efecto que este sink entrega (hoy cart_closed) y se lo pasa a
 // crmpush para que lo ENCOLE. Devuelve nil SIEMPRE: notificar al puente jamás cuelga
@@ -165,5 +177,95 @@ func (s *WebhookSink) Phase() SinkPhase {
 //   - El sink NO MUTA eff.Payload: sacar la nota de la plantilla no se hace
 //     borrándola del efecto, que comparten todos los sinks del fan-out.
 func (s *WebhookSink) Handle(ctx context.Context, ec EffectContext, eff modules.Effect) error {
-	panic(pendiente.Implementar("runtime.WebhookSink.Handle"))
+	if s == nil || s.log == nil {
+		return nil
+	}
+	if eff.Name != s.deliverEffect {
+		return nil
+	}
+	if !s.hasDependencies {
+		return nil // sink construido sin dependencias (tests): no-op seguro
+	}
+
+	res, err := s.pusher.Push(ctx, effectInput(ec, eff))
+	if err != nil {
+		s.log.Error("webhook: no se pudo encolar intake.push", "error", err,
+			"tenant", ec.TenantID, "name", eff.Name)
+		return nil
+	}
+	if !res.Enqueued {
+		return nil // gate cerrado; crmpush ya lo dejó en debug con su motivo
+	}
+	s.log.Debug("webhook: intake.push encolado",
+		"tenant", ec.TenantID, "outbox_id", res.OutboxID, "intake_id", res.Payload.IntakeID)
+	return nil
+}
+
+// effectInput saca del EffectContext y del efecto cart_closed los datos que el
+// contrato pide. Es la ÚNICA parte del empuje que conoce el motor de flujos, y es
+// pura: no toca la BD ni la red (INV-02).
+//
+// intake_id, revision_no y lifecycle_status salen de eff.Payload — los anota el
+// proyector del carrito DESPUÉS de proyectar, en el MISMO mapa que ve este sink (que
+// corre después, en PhaseNotify): sin esas anotaciones no habría forma de correlacionar
+// sin una consulta extra a la BD, que el sink NO debe hacer.
+//
+// 🔴 LOS TRES SON DATOS, NO CONSTANTES, y dos de ellos lo fueron:
+//
+//   - revision_no fue un literal `1` hasta T4.10 (mitad 1). El puente hace UPSERT
+//     por (intake_id, revision_no) y trata como duplicado todo par repetido (manual
+//     del integrador §4), así que un número fijo deja al CRM con el primer estado
+//     para siempre. AUSENTE ⇒ 0 a propósito: AsInt no distingue «no está» de «vale
+//     0», y aquí ese empate juega a favor porque el cero es el único valor que el
+//     schema rechaza (`minimum: 1`). Un número FALSO es peor que uno ausente.
+//   - lifecycle_status fue un literal `"confirmed"` hasta T4.10 (mitad 2), y
+//     acertaba SOLO porque este sink entrega el cierre del carrito. Llega crudo —la
+//     clave legada `closed` con la que cart escribe la fila— y lo normaliza
+//     crmpush.Build, que es donde vive la prohibición de emitir `closed`.
+//
+// customer_note NO se lee aunque esté en el efecto (el proyector la necesita para
+// escribir intakes.customer_note): la completa el worker justo antes del POST, por
+// EXPOSICIÓN y no por coste — congelarla aquí la dejaría en claro en webhook_outbox,
+// una tabla que sobrevive a la entrega. Ver el doc de crmpush.Payload.
+func effectInput(ec EffectContext, eff modules.Effect) crmpush.Input {
+	items := effectItems(eff.Payload)
+	lines := make([]crmpush.Item, 0, len(items))
+	for _, m := range items {
+		lines = append(lines, crmpush.Item{
+			SKU:           modules.AsString(m["sku"]),
+			Label:         modules.AsString(m["label"]),
+			Customization: modules.AsString(m["customization"]),
+			Qty:           modules.AsInt(m["qty"]),
+			UnitPrice:     modules.AsFloat(m["unit_price"]),
+		})
+	}
+	return crmpush.Input{
+		TenantID:        ec.TenantID,
+		ContactID:       ec.ContactID,
+		IntakeID:        modules.AsString(eff.Payload["intake_id"]),
+		LifecycleStatus: modules.AsString(eff.Payload["lifecycle_status"]),
+		RevisionNo:      modules.AsInt(eff.Payload["revision_no"]),
+		Items:           lines,
+		Total:           modules.AsFloat(eff.Payload["total"]),
+	}
+}
+
+// effectItems extrae la lista de líneas del payload como []map[string]any, tolerando
+// el camino en-proceso ([]map[string]any) y el round-trip JSON ([]any de map). Es
+// genérico (no conoce el módulo): parsea la forma del payload, no su semántica.
+func effectItems(payload map[string]any) []map[string]any {
+	switch items := payload["items"].(type) {
+	case []map[string]any:
+		return items
+	case []any:
+		out := make([]map[string]any, 0, len(items))
+		for _, e := range items {
+			if m, ok := e.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
