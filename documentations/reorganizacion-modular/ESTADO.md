@@ -384,8 +384,8 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
 **F8-03 · F8, segunda mitad: el verde de `cart`, T8.25 (2026-10-10, 💻, relanzamiento, rama `reorg/f8-03b-cart-verde` desde `origin/dev` @ `8b841c8d`) — F8-03 CERRADA.**
 
 - **De dónde parte**: el PR #62 (primera mitad: `events` verde, `cart` en rojo) se **integró en `dev` por orden expresa de
-  Jhoan** en la conversación, merge `8b841c8d`, sin squash. La segunda mitad nace en rama nueva desde ese merge; su PR a `dev`,
-  por abrir.
+  Jhoan** en la conversación, merge `8b841c8d`, sin squash. La segunda mitad nace en rama nueva desde ese merge; su PR a `dev` es
+  el #63, abierto.
 - **Código** (5 commits; un sub-agente, en serie, en el checkout): `dd0771ce` (previo, solo tests: 17 comentarios
   `//nolint:<linter> // motivo` en 10 ficheros —10 `errcheck` de aserción de tipo, 3 `ST1018`, 2 `gocritic` `mapKey`, 2
   `gocyclo`—; ninguna aserción ni dato cambia; hallazgo 28) → verdes `4045db25` (13 ficheros en un commit, por `unused`: `state`,
