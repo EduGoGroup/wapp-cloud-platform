@@ -25,6 +25,8 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/out"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
+	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/admin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
@@ -187,9 +189,11 @@ func TestMudanzas_ElMapa(t *testing.T) {
 // siendo 33: catalogo no muda ninguna ruta (I14–I17 se quedan en la vieja hasta F8). Desde F6
 // (conmutar(solicitudes)), FaseActual = 6 y sirve 51: además las 18 de solicitudes (G1–G18).
 // Desde F7 (conmutar(captacion)), FaseActual = 7 y sirve 54: además las 3 de captación (H1, E1–E2).
+// Desde F8 (conmutar(conversacion), FX TX.24), FaseActual = 8 y sirve las 73: además las 19 de
+// conversación (I1–I19). A la cara vieja no le queda ninguna.
 func TestMudanzas_FaseActual(t *testing.T) {
-	if FaseActual != 7 {
-		t.Fatalf("FaseActual = %d; conmutar(captacion) la deja en 7 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
+	if FaseActual != 8 {
+		t.Fatalf("FaseActual = %d; conmutar(conversacion) la deja en 8: es la última fase de módulo y la cara nueva sirve las 73 rutas del :8103", FaseActual)
 	}
 	filas := leerMapa(t)
 	cara := caraNueva(newFaceDepsWithDoubles())
@@ -205,8 +209,8 @@ func TestMudanzas_FaseActual(t *testing.T) {
 			esperadas = append(esperadas, f.patron)
 		}
 	}
-	if len(esperadas) != 54 {
-		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2), edge 6 (D1–D6), inferencia 4 (F1–F4), solicitudes 18 (G1–G18) y captación 3 (H1, E1–E2): 54", len(esperadas), FaseActual)
+	if len(esperadas) != 73 {
+		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2), edge 6 (D1–D6), inferencia 4 (F1–F4), solicitudes 18 (G1–G18), captación 3 (H1, E1–E2) y conversación 19 (I1–I19): 73", len(esperadas), FaseActual)
 	}
 	patrones := cara.Patrones()
 	slices.Sort(patrones)
@@ -343,6 +347,54 @@ func newFaceDepsWithDoubles() newFaceDeps {
 				ConfigPush:   struct{ apipublica.ConfigPusher }{},
 			},
 		},
+		conversation: newFaceConversationDoubles(),
+	}
+}
+
+// newFaceConversationDoubles devuelve los dobles del área de conversación (F8 · I1–I19): I1–I10
+// se montan siempre; I11–I13 con el almacén de reglas; I14–I17 con el lector, el escritor
+// versionado y el resolver de derechos (el MISMO valor para los tres Mount del catálogo); I18 con
+// el lector de eventos y el resolver; I19 con el cancelador y el resolver.
+func newFaceConversationDoubles() conversationFaceDeps {
+	return conversationFaceDeps{
+		flows: apipublica.FlowsDeps{
+			Flows: struct{ apipublica.FlowsStore }{},
+			// El registro es uno de verdad, vacío: DefinitionHandler le pregunta los tipos AL
+			// CONSTRUIRSE, así que aquí un doble sin métodos haría panic al montar.
+			Modules:             modules.NewRegistry(),
+			Starter:             struct{ flowadmin.Starter }{},
+			Triggers:            struct{ flowadmin.TriggerStore }{},
+			TriggersDurableFlow: struct{ flowadmin.DurableFlowChecker }{},
+		},
+		media: apipublica.MediaDeps{
+			Uploader: struct {
+				apipublica.MediaPresignUploader
+			}{},
+		},
+		tenantContent: apipublica.TenantContentDeps{
+			Content: struct{ apipublica.TenantContentStore }{},
+		},
+		catalogImport: apipublica.CatalogImportDeps{
+			Content: struct {
+				apipublica.CatalogImportContentReader
+			}{},
+			ContentVersions: struct {
+				apipublica.CatalogImportVersionWriter
+			}{},
+			Entitlements: entitlementshelpertest.NewFake(),
+		},
+		events: apipublica.ConversationEventsDeps{
+			Events: struct {
+				apipublica.ConversationEventLister
+			}{},
+			Entitlements: entitlementshelpertest.NewFake(),
+		},
+		eventCancel: apipublica.ConversationEventCancelDeps{
+			Canceller: struct {
+				apipublica.ConversationEventCanceller
+			}{},
+			Entitlements: entitlementshelpertest.NewFake(),
+		},
 	}
 }
 
@@ -409,8 +461,8 @@ func TestMudanzas_SobraEnLaNueva(t *testing.T) {
 
 // TestMudanzas_HuellaPorElCompuesto (RX.2.a): sobre el arranque NUEVO real (el contenedor
 // de la huella, en los dos perfiles), las 73 filas del :8103 las resuelve el compuesto que
-// sirve publicSrv —cada una por la cara que le toca con FaseActual y con el MISMO texto de
-// patrón que el arranque viejo— y el candado de mudanzas no da ningún fallo, mirando los
+// sirve publicSrv —cada una por la cara que le toca con FaseActual (desde F8, todas por la
+// nueva) y con el MISMO texto de patrón que el arranque viejo— y el candado de mudanzas no da ningún fallo, mirando los
 // Patrones() de la cara REAL que la fase 8 compuso (no de una rearmada aquí).
 func TestMudanzas_HuellaPorElCompuesto(t *testing.T) {
 	filas := leerMapa(t)

@@ -169,7 +169,7 @@ cablea, el tipo se traduce en `internal/arranque/bridge_<x>.go` (nivel simple, s
 | — acceso · solicitudes | — | `WithEntitlements`, `events.NewDispatcher` (`entitlements.Resolver`) y los puertos del runtime/sink de solicitudes son **estructurales** (F2 §4, F6 §4): el objeto nuevo entra tal cual, sin adaptador | — | — |
 
 `conversacion` no tiene adaptador propio: entra en `Conmutados` con su `conmutar(conversacion)`. Al cerrar F8 la lista
-está **completa**. `FaseActual` sigue existiendo y no cambia.
+está **completa**. `FaseActual` sigue existiendo y no cambia (✎ F8-06: sí cambia, a 8, como manda TX.24; hallazgo 50 del README).
 
 Tabla única del plan: [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1.
 T8.2 la re-mide contra el árbol real (hoy, 2026-10-03, en `internal/arranque` solo existe `bridge_contact.go`) antes de tocar nada.

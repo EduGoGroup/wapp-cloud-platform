@@ -3,8 +3,10 @@
 // Service de internal/modulos/solicitudes. Y desde F7 (T7.23–T7.24, conmutar(captacion)) el
 // re-análisis y la etapa draft son los de internal/modulos/captacion: el texto que este test busca
 // cambió con E-11 (`reanalisis.NewService`, `stages.WithCRMPush`; hallazgo 28 de F7) y el campo
-// `Reanalysis` se exige en las deps de la cara NUEVA (apipublica.ReanalyzeDeps), no en las de
-// publicapi, que ya no lo lleva.
+// `Reanalysis` se exige en las deps de la cara NUEVA (apipublica.ReanalyzeDeps), la única que hay
+// desde F8 (conmutar(conversacion)): el arranque ya no importa publicapi. Desde F8 también el
+// compositor que recibe reanalisis.NewService es c.intakeComposer a secas (murió composerBridge);
+// eso lo afirma captacion_cableado_test.go, este test no mira ese argumento.
 package arranque
 
 // reanalisis_cableado_test.go — QUE EL RE-ANÁLISIS ESTÉ ENCHUFADO (Plan 044 · Ola 4 ·
@@ -76,7 +78,7 @@ func (c *cableadoDelReanalisis) anota(t *testing.T, fset *token.FileSet, n ast.N
 		}
 	case *ast.KeyValueExpr:
 		// En CUALQUIER literal del arranque: una clave `Reanalysis` escrita a nil es la ruta que
-		// no se monta. En la cara vieja el campo se OMITE (F7); no se escribe con nil.
+		// no se monta. No hay otro literal que lo lleve: la cara vieja murió en F8.
 		if campoDe(v.Key) == "Reanalysis" && campoDe(v.Value) == "nil" {
 			t.Fatalf("el campo Reanalysis se cablea a nil: la ruta no se montaría (%s)",
 				fset.Position(v.Pos()))
@@ -88,8 +90,8 @@ func (c *cableadoDelReanalisis) anota(t *testing.T, fset *token.FileSet, n ast.N
 
 // anotaDeps exige que el servicio llegue a la cara NUEVA: el literal apipublica.ReanalyzeDeps
 // lleva la clave Reanalysis, y su valor es el servicio del contenedor pasado por la costura que
-// conserva el nil de verdad (reanalysisServicePort). Un `Reanalysis:` en otro literal —el de la
-// cara vieja, que desde F7 no lo lleva— NO cuenta: allí no monta la ruta que hoy sirve H1.
+// conserva el nil de verdad (reanalysisServicePort). Un `Reanalysis:` en otro literal NO cuenta:
+// solo apipublica.ReanalyzeDeps monta la ruta que sirve H1.
 func (c *cableadoDelReanalisis) anotaDeps(t *testing.T, fset *token.FileSet, lit *ast.CompositeLit) {
 	t.Helper()
 	if campoDe(lit.Type) != "apipublica.ReanalyzeDeps" {

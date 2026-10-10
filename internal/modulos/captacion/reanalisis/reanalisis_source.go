@@ -9,8 +9,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/stages"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
 )
 
 // reanalisis_source.go — EL MATERIAL de Reanalyze: si hay algo que analizar (escalón

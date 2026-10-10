@@ -130,11 +130,29 @@ func field(t *testing.T, ptr any, name string) reflect.Value {
 	return f
 }
 
+// sameInstance dice si el valor de un campo (puntero, o interfaz que guarda un puntero) es la misma
+// instancia que want.
+func sameInstance(field reflect.Value, want any) bool {
+	if field.Kind() == reflect.Interface {
+		if field.IsNil() {
+			return want == nil
+		}
+		field = field.Elem()
+	}
+	w := reflect.ValueOf(want)
+	if !w.IsValid() || field.Kind() != reflect.Pointer || w.Kind() != reflect.Pointer {
+		return false
+	}
+	return field.Type() == w.Type() && field.Pointer() == w.Pointer()
+}
+
 // TestIdentidad_EveryConsumerSharesTheOneGateway (FX TX.11, T-4): sobre el arranque real, todo el
 // que habla con un Edge lo hace por el MISMO puntero que c.gw: el notificador de solicitudes
 // (el nuevo desde F6), el empuje de filtros nuevo, el ConfigPush de E2 —en la cara NUEVA desde F7—, el selector LLM
-// nuevo —que lo recibe como Frame y, del mismo valor, como enrutador de plazas—, y las deps de D1
-// y D5 de la cara nueva. Y la cara VIEJA ya no recibe ConfigPush: su único lector era E2.
+// nuevo —que lo recibe como Frame y, del mismo valor, como enrutador de plazas—, las deps de D1
+// y D5 de la cara nueva y, desde F8 (conmutar(conversacion), T-13), el Sender del runtime NUEVO
+// del Motor de Flujos, sin adaptador. La cara VIEJA murió con depsDeLaAPIPublica: ya no hay un
+// ConfigPush viejo que afirmar a nil.
 func TestIdentidad_EveryConsumerSharesTheOneGateway(t *testing.T) {
 	c := contenedorDeHuella(t, "minimo")
 	if c.gw == nil {
@@ -165,14 +183,12 @@ func TestIdentidad_EveryConsumerSharesTheOneGateway(t *testing.T) {
 		{"el enrutador de plazas del selector LLM (aforo por Edge)", field(t, c.llmSelector, "router")},
 		{"el Sender de D1 en la cara nueva", reflect.ValueOf(edge.messages.Sender)},
 		{"el DiagnosticsRequester de D5 en la cara nueva", reflect.ValueOf(edge.diagnostics.DiagnosticsRequester)},
+		{"el Sender del runtime del Motor de Flujos (flowruntime.New)", field(t, c.flowRuntime, "sender")},
 	}
 	for _, k := range consumers {
 		if !sameInstance(k.got, c.gw) {
 			t.Errorf("%s no es la MISMA instancia que c.gw: habría dos gateways en el proceso", k.name)
 		}
-	}
-	if old := depsDeLaAPIPublica(c).ConfigPush; old != nil {
-		t.Errorf("la cara vieja recibe un ConfigPush (%T); se espera nil: E2, su único lector, la sirve la nueva", old)
 	}
 }
 

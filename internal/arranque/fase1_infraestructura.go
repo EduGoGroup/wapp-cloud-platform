@@ -1,4 +1,5 @@
-// Copia de internal/bootstrap/arranque/fase1_infraestructura.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/fase1_infraestructura.go @ 80807ba (F0 · 05 §6): cableaba paquetes VIEJOS.
+// 🔀 F8 · conmutar(conversacion): ya no cablea ninguno; desde F8 el arranque nuevo es todo módulos nuevos.
 package arranque
 
 import (

@@ -1,9 +1,10 @@
-// Copia de internal/bootstrap/arranque/servir.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/servir.go @ 80807ba (F0 · 05 §6): cableaba paquetes VIEJOS.
 //
 // 🔀 SE APARTA DEL VIEJO A PROPÓSITO en la parada del CloudLink (D-F3-13, hallazgo 81 de F3):
 // el viejo espera siempre el plazo entero con un Edge conectado; este para en cuanto no queda
 // nada en vuelo. El porqué y la espera están en servir_cloudlink.go; aquí solo cambia por
 // dónde llega el contador (grpcServer.inFlight) y que gracefulStopGRPC lo recibe.
+// 🔀 F8 · conmutar(conversacion): ya no cablea ninguno; desde F8 el arranque nuevo es todo módulos nuevos.
 package arranque
 
 import (

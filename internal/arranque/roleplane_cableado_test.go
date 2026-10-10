@@ -38,9 +38,10 @@ import (
 // arranque tiene que hacer para que T1.0-4 exista en producción, retargeteadas en F2
 // (T2.31, conmutar(acceso)) a la cara NUEVA: que http.go llame a buildRolePlane, que
 // apipublica.RolePlaneDeps reciba Roles y Members DE ESE plano (no nil, no otra cosa) y
-// que la cara VIEJA ya no los reciba (pub.Roles y pub.Members solo a nil: con un
-// valor, publicapi registraría B1–B11 también en el mux viejo, tapadas por la nueva y
-// sin que ni la huella ni el candado de mudanzas lo vieran).
+// que no haya una segunda cara que los reciba. De F2 a F8 eso último se afirmaba sobre
+// la cara VIEJA (pub.Roles y pub.Members asignados solo a nil); la cara vieja murió en
+// conmutar(conversacion) y con ella la variable `pub`, así que hoy se exige que http.go
+// no asigne ningún `pub.*` y que el literal RolePlaneDeps se escriba UNA sola vez.
 func TestCableado_LaPuertaAlPlanoDeRolesEstaEnchufada(t *testing.T) {
 	t.Parallel()
 	visto := cableadoDelPlanoDeRolesEn(t)
@@ -51,8 +52,8 @@ func TestCableado_LaPuertaAlPlanoDeRolesEstaEnchufada(t *testing.T) {
 	}
 	for _, campo := range []string{"Roles", "Members"} {
 		visto.exigeDelPlano(t, campo)
-		visto.exigeViejoANil(t, campo)
 	}
+	visto.requireSingleFace(t)
 }
 
 // cableadoDelPlanoDeRoles es lo que el recorrido de http.go ve del plano de roles.
@@ -62,8 +63,11 @@ type cableadoDelPlanoDeRoles struct {
 	planoDe string
 	// nuevo es el literal apipublica.RolePlaneDeps: campo → expresión (texto) y posición.
 	nuevo map[string]ast.Expr
-	// viejo son las asignaciones a pub.<campo>: campo → expresiones asignadas.
+	// viejo son las asignaciones a pub.<campo>: campo → expresiones asignadas. Desde F8 tiene
+	// que quedar vacío: `pub` eran las deps de la cara vieja.
 	viejo map[string][]ast.Expr
+	// literales cuenta los literales apipublica.RolePlaneDeps de http.go.
+	literales int
 }
 
 // cableadoDelPlanoDeRolesEn recorre el AST de http.go y anota el plano de roles.
@@ -82,6 +86,7 @@ func cableadoDelPlanoDeRolesEn(t *testing.T) cableadoDelPlanoDeRoles {
 			if types.ExprString(x.Type) != "apipublica.RolePlaneDeps" {
 				return true
 			}
+			v.literales++
 			for _, el := range x.Elts {
 				if kv, ok := el.(*ast.KeyValueExpr); ok {
 					v.nuevo[types.ExprString(kv.Key)] = kv.Value
@@ -127,19 +132,19 @@ func (v cableadoDelPlanoDeRoles) exigeDelPlano(t *testing.T, campo string) {
 	}
 }
 
-// exigeViejoANil: la cara vieja ya no recibe el servicio. pub.<campo> se asigna, y solo a
-// nil, para que quede escrito en el código que la vieja deja de servir esas rutas.
-func (v cableadoDelPlanoDeRoles) exigeViejoANil(t *testing.T, campo string) {
+// requireSingleFace: el plano de roles llega a UNA cara, la nueva. http.go escribe el literal
+// apipublica.RolePlaneDeps exactamente una vez y no asigna nada a `pub.*` (las deps de la cara
+// vieja, que murió en F8): un segundo destino serían las mismas rutas registradas dos veces, con
+// OTRO servicio detrás de una de ellas.
+func (v cableadoDelPlanoDeRoles) requireSingleFace(t *testing.T) {
 	t.Helper()
-	asignaciones := v.viejo[campo]
-	if len(asignaciones) == 0 {
-		t.Errorf("http.go no deja pub.%s a nil de forma explícita: desde F2 la cara vieja no sirve esas rutas "+
-			"y tiene que quedar escrito (FX TX.7)", campo)
+	if v.literales != 1 {
+		t.Errorf("http.go escribe el literal apipublica.RolePlaneDeps %d veces; se espera 1", v.literales)
 	}
-	for _, e := range asignaciones {
-		if types.ExprString(e) != "nil" {
-			t.Errorf("pub.%s = %s (%s): la cara VIEJA volvería a registrar las rutas que ya sirve la nueva, "+
-				"tapadas por ella y con OTRO servicio detrás", campo, types.ExprString(e), v.fset.Position(e.Pos()))
+	for campo, asignaciones := range v.viejo {
+		for _, e := range asignaciones {
+			t.Errorf("pub.%s = %s (%s): la cara VIEJA murió en F8; http.go no puede volver a darle dependencias",
+				campo, types.ExprString(e), v.fset.Position(e.Pos()))
 		}
 	}
 }

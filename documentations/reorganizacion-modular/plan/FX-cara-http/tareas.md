@@ -137,11 +137,11 @@ Para cuando: 3 rutas más (H1, E1, E2), `FaseActual = 7`, ningún puente desde `
 
 Sesión: [`F8-06`](../sesiones/F8-06-cli-cara-http-y-conmutar.md) (💻: el tramo entero se hace en local).
 
-- [ ] **TX.22 · rojo(apipublica): conversación** · 💻 · dep. TX.21 y el verde de `modulos/conversacion` · cumple RX.2.b, RX.2.d
+- [x] **TX.22 · rojo(apipublica): conversación** · 💻 · dep. TX.21 y el verde de `modulos/conversacion` · cumple RX.2.b, RX.2.d — ✅ F8-06: `ffc26a60` y `aee427ed` (dos commits de rojo: `flows` esperaba al contrato de `admin`)
   - **Ficheros**: `flows.go`, `media.go`, `tenantcontent.go`, `catalogimport.go`, `catalogtabular.go`, `catalogtemplate.go`, `conversationevents.go`, `conversationeventcancel.go` y sus 8 tests (16)
   - **Hecho cuando**: `flows.go` monta I1 e I11–I13 con los handlers de `modulos/conversacion/admin` **nuevos** y usa `nucleo/contact.Ref`; I16–I17 montan con la misma condición que I14 · **Commit**: `rojo(apipublica): conversación`
-- [ ] **TX.23 · verde(apipublica): conversación, fichero a fichero** · 💻 · dep. TX.22 · **Hecho cuando**: pendientes = 0; un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9 · **Gate**: el de cabecera · **Commit**: `verde(apipublica): <fichero>`
-- [ ] **TX.24 · conmutar(conversacion): 19 rutas y la cara vieja deja de construirse** · 💻 · dep. TX.23 · cumple RX.3.a, RX.3.d, RX.4.a, RX.6.b
+- [x] **TX.23 · verde(apipublica): conversación, fichero a fichero** · 💻 · dep. TX.22 · **Hecho cuando**: pendientes = 0; un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9 · **Gate**: el de cabecera · **Commit**: `verde(apipublica): <fichero>` — ✅ F8-06: `62b61dc0`, `27fa4bb4`, `1827e486`, `4e2727aa`, `d5cf1823`, `8ebe7b79`, `8588a5b9`, `ecf25862`
+- [x] **TX.24 · conmutar(conversacion): 19 rutas y la cara vieja deja de construirse** · 💻 · dep. TX.23 · cumple RX.3.a, RX.3.d, RX.4.a, RX.6.b — ✅ F8-06: `fe6305b9` (el e2e de `cmd/server-modular` **no** se corrió en F8-06: queda para F8-07, T8.36)
   - **Hecho cuando**: I1–I19 por la nueva; el mux viejo es `http.NewServeMux()` **vacío** (sin `publicapi.Register`) → `grep -rn 'publicapi\.' internal/arranque` vacío; J18–J22 con handlers nuevos y el **mismo** rt; lista de puentes de `apipublica` vacía (con D-F3-2 no hubo puente de identidad; con D-FX-3 se retira aquí); `FaseActual = 8`; se corre el e2e de `cmd/server-modular`
   - **Gate**: el de TX.7 · **Commit**: parte del `conmutar(conversacion)`
 

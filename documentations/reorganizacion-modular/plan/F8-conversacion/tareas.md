@@ -207,32 +207,32 @@ Para cuando: `admin` y los handlers de I1–I19 verdes; huella igual, 0 puentes 
 arranque tiene que pasarles los nuevos a la vez): van en **un** commit `conmutar(conversacion)`,
 con un párrafo por tarea en el mensaje.
 
-- [ ] **T8.13 · conversacion: `admin` (4, sin `sessions.go`) — rojo y verde** · 💻 · dep. T8.6, T8.9, T8.28 · cumple R8.6.d
+- [x] **T8.13 · conversacion: `admin` (4, sin `sessions.go`) — rojo y verde** · 💻 · dep. T8.6, T8.9, T8.28 · cumple R8.6.d — rojo `5ba7f419` · verde `b310e7d0` (`durable_flow`), `f7aa209f` (`handlers`), `cebe65f0` (`triggers`, partido en tres por E-13). ✎ F8-06: son **15** exportados, no 16 (la cifra contaba `Register`, que no se reconstruye, D-F8-2); hallazgo 48
   - **Ficheros**: `C/admin/{doc,handlers,triggers,durable_flow}.go` + tests (menos `doc.go`)
   - **Hecho cuando**: 16 exportados; **sin** `Register` (D-F8-2, dicho en el commit); `handlers.go` compara `modulos/edge/session.ErrSessionOffline` y los centinelas de `C/runtime`; un test por promesa; textos de error HTTP literales; `pendiente` del módulo = 0.
   - **Gate**: `V` · `G` · **Commit**: `rojo(conversacion): contrato de admin (sin Register, D-7)` y `verde(conversacion): <fichero>` (según nivel)
-- [ ] **T8.29 · FX TX.22–TX.23: rojo y verde de los ficheros de conversación de `apipublica`** · 💻 · dep. T8.13 · cumple R8.6.a, R8.6.d
+- [x] **T8.29 · FX TX.22–TX.23: rojo y verde de los ficheros de conversación de `apipublica`** · 💻 · dep. T8.13 · cumple R8.6.a, R8.6.d — rojo `ffc26a60` (siete ficheros) y `aee427ed` (`flows`, que esperaba al contrato de `admin`) · verde `62b61dc0` (`media`), `27fa4bb4` (`tenantcontent`), `1827e486` (`conversationevents`), `4e2727aa` (`conversationeventcancel`), `d5cf1823` (`flows`), `8ebe7b79` (`catalogimport`, partido en dos), `8588a5b9` (`catalogtabular`), `ecf25862` (`catalogtemplate`); hallazgo 49
   - **Ficheros**: los que liste [`../FX-cara-http/tareas.md`](../FX-cara-http/tareas.md) TX.22 (flujos, contenido de tenant, media, disparadores, catálogo, eventos de conversación)
   - **Hecho cuando**: lo dicen TX.22 y TX.23 de FX; importan **solo** `C/**`, `nucleo`, `platform` y módulos nuevos; aún **sin montar**.
   - **Gate**: los de FX · **Commit**: los de FX
-- [ ] **T8.30 · Ensayo en seco de la conmutación** · 💻 · dep. T8.29
+- [x] **T8.30 · Ensayo en seco de la conmutación** · 💻 · dep. T8.29 — sin commit propio: ensayado en un *worktree* aparte sobre `aee427ed` (`go build ./...` rc=0 a la primera; `go list -deps` 0 viejos), ya borrado; su resultado es `fe6305b9`
   - **Hecho cuando**: rama local con T8.31–T8.34 aplicados compila (`GOWORK=off go build ./...; echo rc=$?` → 0) y la lista de ficheros tocados queda anotada para el mensaje del commit; se descarta si la huella no cuadra.
   - **Gate**: `go build` rc=0
-- [ ] **T8.31 · Retirar los puentes (import) de F5–F7** · 💻 · dep. T8.30 · cumple R8.7.a, R8.7.c
+- [x] **T8.31 · Retirar los puentes (import) de F5–F7** · 💻 · dep. T8.30 · cumple R8.7.a, R8.7.c — `fe6305b9`
   - **Ficheros**: `internal/modulos/catalogo/catalog.go` y `catalogo/indice/cache.go` (si D-F8-1 = no) · `solicitudes/intakes/telemetria/telemetria.go` · `captacion/stages/draft.go` · `captacion/reanalisis/reanalisis.go` · sus `_test.go` · `internal/modulos/fronteras_test.go` (lista de puentes → vacía)
   - **Hecho cuando**: `grep -rn 'internal/flujos\|internal/turnoacotado' internal/modulos --include='*.go'` → vacío; cada paquete re-tocado sigue en verde (`go test -race`, rc=0).
-- [ ] **T8.32 · Retirar todos los adaptadores `internal/arranque/bridge_*.go` vivos** · 💻 · dep. T8.31 · cumple R8.7.b
+- [x] **T8.32 · Retirar todos los adaptadores `internal/arranque/bridge_*.go` vivos** · 💻 · dep. T8.31 · cumple R8.7.b — `fe6305b9`
   - **Ficheros**: todos los `bridge_*.go` y sus `bridge_*_test.go` (lista de T8.2; previstos: `bridge_contact`, `bridge_inferencia` con `turneroBridge`, `bridge_captacion`); `internal/arranque/fase{3,5,6,8,9}_*.go` re-cableados con los tipos nuevos; `internal/modulos/fronteras_test.go` (`Conmutados`)
   - **Hecho cuando**: `ls internal/arranque/bridge_*.go` → nada ([`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1); fuera las dos **segundas instancias viejas** (`intakes.Postgres` de F6, `intake.Postgres` de F7); un solo `entResolver`, un solo `flowDeps.kp`, un solo `gw` (T-2, T-3); con cada muerte, el módulo dueño entra en `Conmutados` (`nucleo`, `inferencia`, `captacion`, `solicitudes`) y `conversacion` con este commit: **`Conmutados` completo**; el test de cableado afirma que el arranque construye los servicios **nuevos** y que **ninguna fase importa un paquete viejo** (grep por ruta de import, no solo el campo del contenedor: hallazgo 39).
-- [ ] **T8.33 · `fase7_flujos.go` y `:8100`** · 💻 · dep. T8.32 · cumple R8.5.a–c, R8.6.b
+- [x] **T8.33 · `fase7_flujos.go` y `:8100`** · 💻 · dep. T8.32 · cumple R8.5.a–c, R8.6.b — `fe6305b9`
   - **Ficheros**: `internal/arranque/fase7_flujos.go`, `rutas_admin.go` (J18–J22 con `C/admin`), los candados de cableado portados (`flow_options_cableadas`, `turno_acotado_cableado`)
   - **Hecho cuando**: un `runtime.New`, un `NewIntakeAggregator`, las 22 opciones, los 4 hooks y la fuente del gauge; test de identidad del `Runtime` (gateway = Starter = EventCanceller).
-- [ ] **T8.34 · FX TX.24: 19 rutas, cara vieja fuera y centinela único** · 💻 · dep. T8.33 · cumple R8.6.a, R8.6.c, R8.7.d
+- [x] **T8.34 · FX TX.24: 19 rutas, cara vieja fuera y centinela único** · 💻 · dep. T8.33 · cumple R8.6.a, R8.6.c, R8.7.d — `fe6305b9` (✎ F8-06: los dos `grep … → vacío` de T8.31 y T8.34 casan las cabeceras «Porta internal/flujos/…»; se midió por línea de import y con `go list -deps`: 0; hallazgo 50)
   - **Ficheros**: los de TX.24 de FX. Con **D-F3-2** (recomendación) `edge/session.ErrSessionOffline` ya es el de `platform` desde F3 y **no se toca**; solo si D-F3-2 = no (D-FX-3) se edita `internal/modulos/edge/session/registry.go` para que deje de ser alias del viejo
   - **Hecho cuando**: `grep -rn 'internal/publicapi\|internal/gateway/session' internal/arranque internal/modulos internal/apipublica` → vacío.
   - **Gate** (T8.31–T8.34 juntos): `G` · `V` · `go test -run Huella ./internal/arranque/` rc=0 · `go list -deps ./cmd/server-modular` sin paquetes viejos (`reglas.md` §4.5)
   - **Commit**: `conmutar(conversacion): el arranque nuevo cablea conversacion, 19+5 rutas, cero puentes y cero adaptadores`
-- [ ] **T8.35 · Lo que la conmutación deja sin comprobar** · 💻 · dep. T8.34 — *sustituye al traspaso web → local: ya no hay dos entornos; el traspaso (skill `traspaso-web-local`) solo se escribe si la sesión se corta*
+- [x] **T8.35 · Lo que la conmutación deja sin comprobar** · 💻 · dep. T8.34 — *sustituye al traspaso web → local: ya no hay dos entornos; el traspaso (skill `traspaso-web-local`) solo se escribe si la sesión se corta* — el commit `docs(reorganizacion-modular): F8 conmutada — pendiente de cierre` de esta rama; lo que F8-07 tiene que refutar, en el hallazgo 51 del README y en el bloque F8-06 de `ESTADO.md`
   - **Ficheros**: `ESTADO.md` (bloque de la sesión) y el README de la fase (hallazgos)
   - **Hecho cuando**: escrito lo que F8-07 tiene que refutar: la identidad de `entResolver`/`kp`/`gw` en ejecución, el barrido del agregador con BD real, el golden en un Edge real; las tres cosas del cierre; `dev` empujado.
   - **Commit**: `docs(reorganizacion-modular): F8 conmutada — pendiente de cierre`

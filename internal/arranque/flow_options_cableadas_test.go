@@ -1,4 +1,6 @@
-// Copia de internal/bootstrap/arranque/flow_options_cableadas_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/flow_options_cableadas_test.go @ 80807ba (F0 · 05 §6). Desde F8 (T8.32,
+// conmutar(conversacion)) el `flowruntime` que se vigila es internal/modulos/conversacion/runtime, que conserva el
+// alias, y la lista de requeridas son TODAS las opciones que el arranque pasa a flowruntime.New (eran tres).
 package arranque
 
 import (
@@ -30,21 +32,52 @@ import (
 func TestFlowRuntimeOptionsCableadas(t *testing.T) {
 	// Cada entrada es una Option cuya ausencia NO rompe nada visible: el motor arranca, los
 	// tests pasan y la capacidad simplemente no existe en producción.
+	//
+	// 🔀 F8 · conmutar(conversacion): son las 21 opciones distintas (22 llamadas: WithEventSink
+	// va dos veces) que construirRuntimeDeFlujos pasa a flowruntime.New. Al reescribir esa
+	// lista contra el runtime nuevo, cualquiera pudo caerse sin dar un solo rojo.
 	requeridas := map[string]string{
 		"WithOpeningBuilder": "sin ella el fallback cae a startPlainFlow (arranque SIN evento): " +
 			"comanda perdida en silencio si el flujo del tenant lleva un nodo cart (E-9, hallazgos #001/#003)",
 		"WithDispatcher": "sin él no hay menú del despachador: la elección explícita de tipo — la " +
 			"TERCERA puerta del nacimiento del evento (T2.5/REQ-01b) — deja de existir",
-		"WithFlowForKind": "sin él el salto por tipo no sabe qué flujo arrancar para un event_kind",
+		"WithFlowForKind":           "sin él el salto por tipo no sabe qué flujo arrancar para un event_kind",
+		"WithEventSink":             "sin ella ningún efecto de módulo se persiste ni sale al puente CRM: el runtime se queda con su LogSink de relleno",
+		"WithAggregator":            "sin ella ninguna ventana de captación se abre: el pipeline LLM no recibe un solo job",
+		"WithWelcomeStore":          "sin ella no hay bienvenida única («estamos procesando») al primer mensaje",
+		"WithResumePolicy":          "sin ella un carrito a medias no se reanuda: el cliente vuelve y empieza de cero",
+		"WithPresignClient":         "sin ella el nodo media no puede firmar la URL del adjunto",
+		"WithTriggerResolver":       "sin ella ninguna regla de disparo casa: todo entrante cae al fallback",
+		"WithEventStore":            "sin ella un event_start arranca su flujo sin parir evento y un event_stop no desactiva nada",
+		"WithIntakeAbandoner":       "sin ella abandonar un evento deja su solicitud abierta para siempre",
+		"WithSummarySources":        "sin ella los abandonos no dejan resumen en el historial",
+		"WithEntitlements":          "sin ella no hay gate por plan: ni hilo del evento ni bienvenida para quien tiene llm_intake",
+		"WithReplyLimiter":          "sin ella no hay límite de respuestas por conversación",
+		"WithIncomingTimeout":       "sin ella un entrante colgado no tiene plazo",
+		"WithMaxConcurrentIncoming": "sin ella no hay semáforo de entrantes concurrentes",
+		"WithSelfNumbers":           "sin ella el anti-self-loop no bloquea: dos sesiones del mismo tenant se hablarían para siempre",
+		"WithIngestDeduper":         "sin ella un entrante reentregado se procesa dos veces",
+		"WithReactiveBlockedHook":   "sin ella los entrantes cortados (passive / self-loop / rate-limit) no se cuentan en /metrics",
+		"WithAutoreplyStreakHook":   "sin ella el histograma de rachas de auto-respuesta se queda vacío",
+		"WithDepositReminder":       "sin ella el tercer toque del recordatorio de la seña no se dispara nunca",
 	}
 
 	_, ficheros := astDelArranque(t)
 
-	vistas := map[string]bool{}
+	// pasadas son las opciones que de verdad viajan como argumento de flowruntime.New: una
+	// opción construida en otra parte del arranque y no pasada al runtime no cablea nada.
+	vistas, pasadas := map[string]bool{}, map[string]bool{}
+	constructores := 0
 	inspecciona(ficheros, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
+		}
+		if esLlamada(call, "flowruntime", "New") {
+			constructores++
+			for _, opcion := range runtimeOptionsAmong(call.Args) {
+				pasadas[opcion] = true
+			}
 		}
 		// Interesa la forma `flowruntime.WithX(...)`: un selector sobre el paquete.
 		sel, ok := call.Fun.(*ast.SelectorExpr)
@@ -59,9 +92,37 @@ func TestFlowRuntimeOptionsCableadas(t *testing.T) {
 		return true
 	})
 
+	if constructores != 1 {
+		t.Errorf("flowruntime.New aparece %d veces en la producción de internal/arranque; se espera 1 (EL runtime, T-1)", constructores)
+	}
 	for opcion, porQue := range requeridas {
 		if !vistas[opcion] {
-			t.Errorf("flowruntime.%s NO está cableada en bootstrap.go — %s", opcion, porQue)
+			t.Errorf("flowruntime.%s NO está cableada en internal/arranque — %s", opcion, porQue)
+		} else if !pasadas[opcion] {
+			t.Errorf("flowruntime.%s se construye pero NO es un argumento de flowruntime.New — %s", opcion, porQue)
 		}
 	}
+	// Y al revés: una opción que el arranque pasa al runtime y que esta lista no conoce es una
+	// opción sin red. Quien la añada, la añade aquí con su porqué.
+	for opcion := range pasadas {
+		if _, ok := requeridas[opcion]; !ok {
+			t.Errorf("flowruntime.New recibe flowruntime.%s, que no está en `requeridas`: añádela con lo que se rompe sin ella", opcion)
+		}
+	}
+}
+
+// runtimeOptionsAmong devuelve, de una lista de argumentos, los nombres de los que son una
+// llamada `flowruntime.WithX(...)`.
+func runtimeOptionsAmong(args []ast.Expr) []string {
+	var options []string
+	for _, arg := range args {
+		opt, ok := arg.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		if sel, ok := opt.Fun.(*ast.SelectorExpr); ok && campoCompletoDe(sel.X) == "flowruntime" {
+			options = append(options, sel.Sel.Name)
+		}
+	}
+	return options
 }

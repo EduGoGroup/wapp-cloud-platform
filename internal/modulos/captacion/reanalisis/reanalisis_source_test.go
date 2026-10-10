@@ -8,9 +8,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/reanalisis"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/stages"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
 )
 
 // contextOnly es un hilo hecho solo de CONTEXTO: un resumen del sistema y un saliente

@@ -1,8 +1,9 @@
-// Copia de internal/bootstrap/arranque/fase6_solicitudes.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// Copia de internal/bootstrap/arranque/fase6_solicitudes.go @ 80807ba (F0 · 05 §6): cableaba paquetes VIEJOS,
 // salvo acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)), que son
 // internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador. Desde
 // F6 (T6.24, conmutar(solicitudes)) TODO lo que construye esta fase es de
 // internal/modulos/solicitudes: ya no cablea ningún paquete viejo.
+// 🔀 F8 · conmutar(conversacion): ya no cablea ninguno; desde F8 el arranque nuevo es todo módulos nuevos.
 package arranque
 
 import (
@@ -46,11 +47,13 @@ func (faseSolicitudes) ejecutar(_ context.Context, c *contenedor) error {
 	// Es un solo objeto: dos serían dos criterios de "ya recordé".
 	//
 	// 🔀 F6 · conmutar(solicitudes): el notificador nuevo recibe el resolver de contactos del
-	// NÚCLEO sin envolver (flowDeps.contactResolver): su puerto Destinations devuelve el
-	// contact.Ref de internal/nucleo/contact. Es la MISMA instancia en la que delega el
-	// contactBridge que sigue recibiendo el motor (flowDeps.contacts): una sola vía custodiada
-	// de PII, y el adaptador deja de hacer falta aquí.
-	c.intakeNotifier = intakes.NewNotifier(c.gw, c.flowDeps.contactResolver, c.intakeStore, c.log)
+	// NÚCLEO sin envolver: su puerto Destinations devuelve el contact.Ref de
+	// internal/nucleo/contact.
+	//
+	// 🔀 F8 · conmutar(conversacion): es flowDeps.contacts, el MISMO campo y la MISMA instancia
+	// que recibe el motor (fase 7): una sola vía custodiada de PII. De F6 a F8 era un campo
+	// aparte (contactResolver) porque el motor recibía ese resolver detrás de contactBridge.
+	c.intakeNotifier = intakes.NewNotifier(c.gw, c.flowDeps.contacts, c.intakeStore, c.log)
 	c.depositReminder = intakes.NewDepositReminder(c.intakeNotifier, c.intakeStore)
 
 	// El recordatorio del PLAZO del presupuesto (Plan 044 · T4.5, D-044.50 §2). Es el
@@ -101,7 +104,7 @@ func (faseSolicitudes) ejecutar(_ context.Context, c *contenedor) error {
 		// eventos del plan se leen juntos desde las consultas del runbook.
 		//
 		// El envoltorio `telemetria.New` NO es ceremonia: `intakes` no puede importar
-		// `flujos/store` —ciclo con el test in-package de aquel paquete— así que su
+		// `conversacion/store` —ciclo con el test in-package de aquel paquete— así que su
 		// puerto habla de tenant/contacto/nombre/payload y quien sabe firmar la fila es
 		// este adaptador. Ver internal/modulos/solicitudes/intakes/telemetria.
 		//

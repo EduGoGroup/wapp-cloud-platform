@@ -62,7 +62,6 @@ func OversizedFiles() map[string]int {
 // 2026-10-04 sobre la rama de F2-03 (D-R-7). No se exporta: nadie fuera de este fichero lo
 // lee ni lo cambia.
 var oversizedFiles = map[string]int{
-	"internal/arranque/bridge_contact_test.go":        809, // F1 · adaptador de contact
 	"internal/arranque/huellatest/huellatest.go":      732, // F0 · la huella de los arranques
 	"internal/arranque/huellatest/huellatest_test.go": 669, // F0
 	"internal/candados/sinbdviva_openers_test.go":     629, // F9 · D-F9-6

@@ -1,6 +1,9 @@
-// Copia de internal/bootstrap/arranque/flows.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo el resolver de contactos, que desde F1 (T1.16, conmutar(nucleo)) es el de
-// internal/nucleo/contact detrás del adaptador contactBridge (bridge_contact.go).
+// Copia de internal/bootstrap/arranque/flows.go @ 80807ba (F0 · 05 §6). El resolver de contactos
+// es desde F1 (T1.16, conmutar(nucleo)) el de internal/nucleo/contact.
+//
+// 🔀 F8 · conmutar(conversacion) (T8.32): va SIN adaptador. El runtime nuevo pide el
+// contact.Resolver del núcleo, así que contactBridge (bridge_contact.go, vivo de F1 a F8) murió y
+// este fichero ya no importa internal/flujos/contact.
 package arranque
 
 import (
@@ -8,7 +11,6 @@ import (
 	"database/sql"
 	"fmt"
 
-	viejo "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
@@ -21,19 +23,17 @@ import (
 // arranque tenga UNA sola rama de error (cualquier fallo aborta el proceso).
 type flowRuntimeDeps struct {
 	// contacts resuelve la identidad OPACA del contacto (cifra/descifra PII). Es el
-	// viejo.Resolver que pide flowruntime.New, pero detrás hay el resolver NUEVO
-	// (nucleo/contact) envuelto en contactBridge (F1 · T1.16).
+	// contact.Resolver del NÚCLEO (nucleo/contact, F1 · T1.16), que es lo que piden
+	// flowruntime.New, el compositor del literal y el notificador de solicitudes.
+	//
+	// 🔀 F8 · conmutar(conversacion): UN solo campo y UNA sola instancia. De F1 a F8 hubo dos
+	// campos (contacts, el viejo.Resolver que servía contactBridge, y contactResolver, el del
+	// núcleo sin envolver): con el adaptador muerto, los tres consumidores reciben éste.
 	//
 	// ✎ F1 (T-8 de la spec de F1): la copia ya no tiene el campo contactsPG del viejo.
 	// Se escribía y no se leía en ningún sitio: su único motivo, el backfill de arranque
 	// BackfillPushName (T4.2), murió en 58e92a2 (T5.4).
-	contacts viejo.Resolver
-	// contactResolver es ESE MISMO resolver nuevo, sin envolver: la instancia en la que
-	// delega el contactBridge de arriba, no otra. Lo recibe el notificador de solicitudes
-	// (F6 · conmutar(solicitudes)), que es ya el de internal/modulos/solicitudes y pide el
-	// contact.Ref del núcleo. Deja de ser un campo aparte en F8, cuando muera el adaptador
-	// y contacts pase a ser de este tipo.
-	contactResolver contact.Resolver
+	contacts contact.Resolver
 	// cipher y kp son el stack de cifrado de PII (Plan 011); el runtime los usa vía
 	// el resolver, y el endpoint admin /admin/crypto/rekey los necesita en crudo
 	// para la rotación de KEK (Plan 012).
@@ -87,12 +87,10 @@ func buildFlowRuntimeDeps(ctx context.Context, cfg config.AppConfig, db *sql.DB)
 	// 🔴 El resolver se construye con ESTE cipher y ESTE kp, los mismos que reciben
 	// fleet, events, intakes, integrations y tenantllm en la fase 3: otro KeyProvider
 	// calcularía otro value_bidx y duplicaría contactos en silencio.
-	contacts := newContactResolver(db, cipher, kp)
 	return flowRuntimeDeps{
-		contacts:        contacts,
-		contactResolver: contacts.next,
-		cipher:          cipher,
-		kp:              kp,
-		presign:         presignClient,
+		contacts: contact.NewPostgresResolver(db, cipher, kp),
+		cipher:   cipher,
+		kp:       kp,
+		presign:  presignClient,
 	}, nil
 }

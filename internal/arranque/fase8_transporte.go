@@ -1,11 +1,13 @@
-// Copia de internal/bootstrap/arranque/fase8_transporte.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo acceso (F2, T2.31, conmutar(acceso)), edge (F3, T3.28, conmutar(edge)) e inferencia (F4,
-// T4.24, conmutar(inferencia)), que son internal/modulos/{acceso,edge,inferencia}: un solo gateway,
-// el nuevo, que recibe acceso sin adaptador; de inferencia, aquí solo viajan sus almacenes hacia la cara nueva.
-// Desde F6 (T6.25, conmutar(solicitudes)) las 18 rutas de solicitudes (G1–G18) las sirve la cara nueva
-// con los objetos de internal/modulos/solicitudes que arma requestsDepsOfTheNewFace. Y desde F7 (T7.24,
-// conmutar(captacion)) las 3 de captación (H1, E1, E2), con los de internal/modulos/captacion que arma
-// captureDepsOfTheNewFace.
+// Copia de internal/bootstrap/arranque/fase8_transporte.go @ 80807ba (F0 · 05 §6). Nació cableando
+// paquetes VIEJOS y cada conmutar(<módulo>) le cambió los suyos: acceso (F2, T2.31), edge (F3,
+// T3.28: un solo gateway, el nuevo), inferencia (F4, T4.24: sus almacenes hacia la cara nueva),
+// solicitudes (F6, T6.25: G1–G18, requestsDepsOfTheNewFace) y captación (F7, T7.24: H1, E1 y E2,
+// captureDepsOfTheNewFace).
+//
+// 🔀 F8 · conmutar(conversacion) (T8.33, T8.34 · FX TX.24): las 19 rutas de conversación (I1–I19)
+// las sirve la cara nueva con lo que arma conversationDepsOfTheNewFace, y J18–J22 del :8100 los
+// handlers de internal/modulos/conversacion/admin. Murió depsDeLaAPIPublica: a la cara vieja no le
+// queda ninguna ruta y este fichero ya no importa internal/publicapi ni internal/flujos.
 package arranque
 
 import (
@@ -20,9 +22,9 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
-	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/reanalisis"
+	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/filtercfg"
 	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
@@ -30,7 +32,6 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 )
 
 // faseTransporte levanta los CUATRO listeners del proceso y les monta sus rutas:
@@ -101,13 +102,17 @@ func (faseTransporte) ejecutar(_ context.Context, c *contenedor) error {
 		log:       c.log,
 		mtx:       c.mtx,
 		authStack: c.authStk,
-		oldFace:   depsDeLaAPIPublica(c),
+		// 🔀 F8 · conmutar(conversacion): aquí viajaba oldFace, las dependencias del publicapi
+		// viejo. Lo único suyo que seguía leyendo buildPublicAPIServer era el resolver de
+		// derechos, que ahora llega con su nombre: el MISMO c.entResolver de siempre (T-2).
+		entResolver: c.entResolver,
 		// Un campo por módulo mudado; la fase que mude rutas añade aquí el suyo (newFaceDeps).
 		newFace: newFaceDeps{
-			edge:      edgeDepsOfTheNewFace(c),
-			inference: inferenceDepsOfTheNewFace(c),
-			requests:  requestsDepsOfTheNewFace(c),
-			capture:   captureDepsOfTheNewFace(c),
+			edge:         edgeDepsOfTheNewFace(c),
+			inference:    inferenceDepsOfTheNewFace(c),
+			requests:     requestsDepsOfTheNewFace(c),
+			capture:      captureDepsOfTheNewFace(c),
+			conversation: conversationDepsOfTheNewFace(c),
 		},
 		platformRepo: c.platformRepo,
 	})
@@ -150,6 +155,10 @@ func servidorAdmin(c *contenedor) *http.Server {
 				return crypto.Rekey(ctx, c.db, c.flowDeps.cipher, c.flowDeps.kp, batch)
 			},
 		),
+		// 🔀 F8 · conmutar(conversacion) (T8.33): J18–J22 son los handlers de
+		// internal/modulos/conversacion/admin, con los MISMOS objetos que reciben I1–I4 e
+		// I11–I13 en el :8103. 🔴 J19 recibe c.flowRuntime, EL runtime (T-1): el mismo puntero
+		// que gw.OnIncoming, I4 e I19.
 		flowsCreate:    flowadmin.DefinitionHandler(c.flowStore, c.flowReg),
 		flowsStart:     flowadmin.StartHandler(c.flowRuntime),
 		triggersCreate: flowadmin.CreateTriggerHandler(c.triggerStore, c.durableFlowChecker),
@@ -190,95 +199,9 @@ func servidorAdmin(c *contenedor) *http.Server {
 	}
 }
 
-// depsDeLaAPIPublica reúne lo que el listener :8103 sirve. Todo lo de aquí YA EXISTE
-// en el contenedor: esta función no construye dominio, solo lo enchufa — con la única
-// excepción de los dos adaptadores de lectura que solo esta API usa.
-//
-// 🔴 UNA AUSENCIA AQUÍ NO DA ERROR: la ruta simplemente no se monta y responde 404 de
-// ruta inexistente, que desde fuera es indistinguible del 404 al recurso ajeno. Es el
-// modo de fallo que vigilan los tests de cableado de este paquete.
-//
-// 🔀 F3 · conmutar(edge) (FX TX.11): la cara VIEJA ya no sirve D1–D6. Sender, Sessions,
-// SessionStatus, SessionProfiles, ProfilePush, Diagnostics y DiagnosticsRequester se quedan
-// SIN asignar (nil) A PROPÓSITO: con nil, publicapi no registra D2–D6, que sirve la cara
-// nueva con lo que arma edgeDepsOfTheNewFace; D1 la registra SIEMPRE (no tiene condición
-// de montaje) pero queda tapada por la nueva en el compuesto. Con ellos se van los campos
-// que solo leían esas rutas (Health, DiagnosticsBundleTTL). ConfigPush e Intents siguieron
-// puestos hasta F7 (ver más abajo).
-//
-// 🔀 F4 · conmutar(inferencia) (FX TX.14): la cara VIEJA ya no sirve F1–F4. TenantLLM y
-// DegradationNotices se quedan SIN asignar (nil) A PROPÓSITO: con nil, publicapi no registra
-// ni las tres rutas de /api/v1/tenant-llm ni GET /api/v1/degradation-notices, que sirve la
-// cara nueva con lo que arma inferenceDepsOfTheNewFace. No es solo orden: los almacenes del
-// contenedor son ya los de internal/modulos/inferencia y no satisfacen los puertos viejos.
-//
-// 🔀 F6 · conmutar(solicitudes) (FX TX.18): la cara VIEJA ya no sirve G1–G18. Intakes,
-// QuoteSuggestions, TenantVariables, Integrations, CRMSecrets, CRMGate, CRMReflect, CRMNotify y
-// EventTelemetry se quedan SIN asignar (nil) A PROPÓSITO: con nil, publicapi no registra ni la
-// cotización sugerida (G7), ni las variables (G11–G12), ni el puente CRM con su callback
-// (G13–G17), ni la telemetría de eventos (G18), que sirve la cara nueva con lo que arma
-// requestsDepsOfTheNewFace. Las 18 se mudan en el MISMO commit: G2 es un comodín
-// (`…/intakes/{id}`) que, sola en la cara nueva, taparía los literales G9 y G10 de la vieja (son
-// dos ServeMux; FX mapa §4.2). No es solo orden: el Service, los almacenes y el notificador del
-// contenedor son ya los de internal/modulos/solicitudes y no satisfacen los puertos viejos.
-// Entitlements y DBTimeout SIGUEN puestos: los leen las rutas que la vieja conserva.
-//
-// 🔀 F7 · conmutar(captacion) (FX TX.21): la cara VIEJA ya no sirve H1, E1 ni E2. Reanalysis,
-// Intents y ConfigPush se quedan SIN asignar (nil) A PROPÓSITO: con nil, publicapi no registra ni
-// `POST /api/v1/intakes/{id}/reanalyze` (H1) ni las dos de `/api/v1/intents` (E1–E2), que sirve la
-// cara nueva con lo que arma captureDepsOfTheNewFace. ConfigPush solo lo leía E2 (medido: su
-// único lector en publicapi es putIntentsHandler), así que se va con ella. No es solo orden: el
-// servicio de re-análisis y el store de intenciones del contenedor son ya los de
-// internal/modulos/captacion y no satisfacen los puertos viejos (Reanalizar ≠ Reanalyze; el Config
-// de otro paquete).
-//
-// 🔴 Los tres campos se OMITEN, no se escriben con `nil`: el candado de cableado del re-análisis
-// lee el AST de este paquete y da por rota cualquier clave `Reanalysis:` con valor nil, que es
-// justo el modo de fallo que vigila (la ruta que no se monta y responde 404 sin un error).
-//
-// Y con H1 fuera, Intakes vuelve a nil DE VERDAD: murió oldFaceIntakesMountSentinel, el centinela
-// sin implementación de D-F6-13 que existía solo para que la vieja siguiera registrando H1 (en
-// publicapi, registerIntakes guarda toda su función tras `d.Intakes == nil`). Con él se van las
-// nueve rutas de la bandeja que la vieja volvía a registrar tapadas por la nueva, y el pánico de
-// puntero nil que había detrás de cada una si alguna quedaba destapada.
-func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
-	return publicapi.Deps{
-		FlowDeps: publicapi.FlowDeps{
-			Flows:   c.flowStore,
-			Modules: c.flowReg,
-			Starter: c.flowRuntime,
-		},
-		MediaDeps: publicapi.MediaDeps{
-			Media:           c.flowDeps.presign,
-			Content:         c.flowStore,
-			ContentMaxBytes: c.cfg.TenantContent.MaxBytes,
-			ContentVersions: c.flowStore,
-			ImportMaxItems:  c.cfg.Import.MaxItems,
-		},
-		Triggers:            c.triggerStore,
-		TriggersDurableFlow: c.durableFlowChecker,
-		Entitlements:        c.entResolver,
-		// La bandeja de EVENTOS conversacionales (Plan 043 · T3.9b) lee del MISMO
-		// store que el motor y el despachador: es la misma consulta de rescatables
-		// leída desde el lado del dueño, y una segunda instancia sería un segundo
-		// reloj opinando sobre qué está vencido.
-		ConversationEvents: c.eventStore,
-		// La cancelación de esa bandeja (Plan 043 · T4.2/T4.3) la sirve el MISMO
-		// runtime del motor —no el store— porque cancelar orquesta tres efectos:
-		// guard del evento, puntero del flow_state y solicitud colgante. El runtime
-		// ya viene armado con WithEventStore y WithIntakeAbandoner; sin este cable la
-		// ruta POST …/{id}/cancel no se monta.
-		EventCanceller: c.flowRuntime,
-		// El plazo de las consultas a BD de estos handlers (Plan 050 · Ola 3): un
-		// solo valor de config para todos, porque lo que hay que respetar es la SUMA
-		// con el reloj del Ack, no cada consulta por separado.
-		DBTimeout: c.cfg.PublicAPIDBTimeout,
-	}
-}
-
 // edgeDepsOfTheNewFace reúne lo que la cara NUEVA necesita para servir D1–D6 (F3 ·
-// conmutar(edge), FX TX.11), con los MISMOS valores que hasta F3 iban a la cara vieja en
-// depsDeLaAPIPublica: el gateway como Sender y DiagnosticsRequester, la flota por sus tres
+// conmutar(edge), FX TX.11), con los MISMOS valores que hasta F3 iban a la cara vieja (en
+// depsDeLaAPIPublica, que murió en F8): el gateway como Sender y DiagnosticsRequester, la flota por sus tres
 // ejes, el almacén de diagnóstico y los umbrales de salud. Alerter no se cablea (como hasta
 // ahora): nil ⇒ NoopAlerter. messages.SendBudget lo pone buildPublicAPIServer, que es quien
 // conoce el writeTimeout del que se deriva.
@@ -478,4 +401,68 @@ func configPusherPort(gw *edgegrpc.Server) apipublica.ConfigPusher {
 		return nil
 	}
 	return gw
+}
+
+// conversationDepsOfTheNewFace reúne lo que la cara NUEVA necesita para servir I1–I19 (F8 ·
+// conmutar(conversacion), FX TX.24), con los MISMOS objetos del contenedor que hasta F8 iban a la
+// cara vieja en depsDeLaAPIPublica (que murió con este commit) y que usa el resto del arranque.
+// Aquí no se construye nada.
+//
+// 🔴 Las condiciones de montaje no cambian respecto a la cara vieja: I1–I10 se montan siempre;
+// I11–I13, si hay almacén de reglas; I14–I17, si hay lector, escritor versionado y resolver de
+// derechos; I18, si hay almacén del evento y resolver; I19, si hay cancelador y resolver. Todos
+// estos punteros se construyen siempre en sus fases, así que las 19 se montan siempre. Una
+// ausencia NO da error: la ruta no se monta y responde el 404 de ruta inexistente, que desde
+// fuera es indistinguible del 404 al recurso ajeno. Lo vigila el candado de mudanzas.
+func conversationDepsOfTheNewFace(c *contenedor) conversationFaceDeps {
+	return conversationFaceDeps{
+		// I1–I4 e I11–I13 · definiciones, arranque y reglas de disparo.
+		//
+		// 🔴 Starter es c.flowRuntime, EL runtime del proceso (T-1): el mismo puntero que
+		// recibe gw.OnIncoming (fase 7), J19 (/admin/flows/start, más arriba) e I19 (más abajo).
+		// Un segundo runtime aquí partiría el candado por conversación, el limitador y las rachas.
+		flows: apipublica.FlowsDeps{
+			Flows:               c.flowStore,
+			Modules:             c.flowReg,
+			Starter:             c.flowRuntime,
+			Triggers:            c.triggerStore,
+			TriggersDurableFlow: c.durableFlowChecker,
+		},
+		// I5 · la URL de subida presignada: el MISMO presignador que firma los adjuntos del nodo
+		// media (Plan 017).
+		media: apipublica.MediaDeps{
+			Uploader: c.flowDeps.presign,
+		},
+		// I6–I10 · los blobs de tenant_content. 🔴 El techo es el MISMO número que recibe el
+		// import de catálogo de abajo: los dos escriben en la misma tabla.
+		tenantContent: apipublica.TenantContentDeps{
+			Content:  c.flowStore,
+			MaxBytes: c.cfg.TenantContent.MaxBytes,
+		},
+		// I14–I17 · el import de catálogo (Plan 041 · Ola 3). El resolver es el ÚNICO del
+		// proceso (T-2): gatea las cuatro rutas.
+		catalogImport: apipublica.CatalogImportDeps{
+			Content:         c.flowStore,
+			ContentVersions: c.flowStore,
+			Entitlements:    c.entResolver,
+			ContentMaxBytes: c.cfg.TenantContent.MaxBytes,
+			ImportMaxItems:  c.cfg.Import.MaxItems,
+		},
+		// I18 · la bandeja de EVENTOS conversacionales (Plan 043 · T3.9b) lee del MISMO store
+		// que el motor y el despachador: es la misma consulta de rescatables leída desde el lado
+		// del dueño, y una segunda instancia sería un segundo reloj opinando sobre qué está
+		// vencido.
+		events: apipublica.ConversationEventsDeps{
+			Events:       c.eventStore,
+			Entitlements: c.entResolver,
+		},
+		// I19 · la cancelación de esa bandeja (Plan 043 · T4.2/T4.3) la sirve el MISMO runtime
+		// del motor —no el store— porque cancelar orquesta tres efectos: guard del evento,
+		// puntero del flow_state y solicitud colgante. El runtime ya viene armado con
+		// WithEventStore y WithIntakeAbandoner; sin este cable la ruta no se monta.
+		eventCancel: apipublica.ConversationEventCancelDeps{
+			Canceller:    c.flowRuntime,
+			Entitlements: c.entResolver,
+		},
+	}
 }

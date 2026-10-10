@@ -93,7 +93,8 @@ F8 está hecha cuando **todo** esto es cierto y está escrito con su número en 
    (`bridge_iam` murió en F3, `bridge_gateway` en F4). `ls internal/arranque/bridge_*.go` → sin coincidencias; la lista
    de puentes (import) de `internal/modulos/fronteras_test.go` → vacía; `Conmutados` → **completa**: con cada muerte
    entró su dueño (`nucleo`, `inferencia`, `captacion`, `solicitudes`) y `conversacion` con su `conmutar`.
-   `FaseActual` sigue existiendo y no cambia.
+   `FaseActual` sigue existiendo y no cambia (✎ F8-06: **sí cambia**: TX.24 manda `FaseActual = 8` en
+   `internal/arranque/mudanzas.go`, y con 7 falla el candado de mudanzas; hallazgo 50).
 7. `internal/arranque/huella_test.go` → igual al viejo en rutas (95), rpc (2), métricas (17 + 5) y
    goroutines (5 de fondo).
 8. Candados R8.4.a–c en verde **y** comprobados por mutación local (se rompe el invariante, se ve

@@ -9,9 +9,10 @@ package stages_test
 // que aquí se fija es el contrato de `draft` ante un artefacto con esa forma. El
 // encadenado real match → draft lo recorre el proceso P4 de F9.
 //
-// 🔴 PUENTE 1: `store.Intake` y `store.FlowEvent` son del almacén VIEJO de flujos; son
-// los tipos de los puertos de producción (draft.go, draft_events.go) y entran aquí solo
-// como datos. Los dobles son propios: no se usa `store.MemoryRepository`.
+// 🔀 F8 · conmutar(conversacion): `store.Intake` y `store.FlowEvent` son del almacén
+// NUEVO de flujos (`conversacion/store`; fue el PUENTE 1 hasta T8.31); son los tipos de
+// los puertos de producción (draft.go, draft_events.go) y entran aquí solo como datos.
+// Los dobles son propios: no se usa `store.MemoryRepository`.
 
 import (
 	"bytes"
@@ -23,9 +24,9 @@ import (
 
 	"github.com/EduGoGroup/wapp-shared/llm"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/stages"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 )
 

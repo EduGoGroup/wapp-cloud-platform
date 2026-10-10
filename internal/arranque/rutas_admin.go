@@ -1,6 +1,8 @@
-// Copia de internal/bootstrap/arranque/rutas_admin.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// Copia de internal/bootstrap/arranque/rutas_admin.go @ 80807ba (F0 · 05 §6): cableaba paquetes VIEJOS,
 // salvo acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)), que son
 // internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador.
+// 🔀 F8 · conmutar(conversacion): ya no cablea ninguno. J18–J22 llegan en adminRouteDeps como
+// handlers de internal/modulos/conversacion/admin (los arma fase8_transporte.go).
 package arranque
 
 import (

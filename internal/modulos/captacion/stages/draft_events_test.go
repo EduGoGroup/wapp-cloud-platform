@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/stages"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
 )
 
 // El doble del outbox satisface el puerto de la etapa: comprobado en compilación.
