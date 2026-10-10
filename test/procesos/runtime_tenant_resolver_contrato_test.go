@@ -1,4 +1,4 @@
-//go:build integracion && pendiente
+//go:build integracion
 
 package procesos
 
@@ -28,9 +28,8 @@ import (
 // de la 0063 en SU base—, que una sesión sembrada sin perfil cae al DEFAULT passive, y que no
 // filtra por estado ni escribe nada.
 //
-// 🔴 Lleva la etiqueta `pendiente` además de `integracion` mientras runtime.PostgresTenantResolver
-// esté en rojo: un panic aborta el binario ENTERO de los procesos. El verde del adaptador (F8-04b)
-// se la quita, a este fichero y a runtime_self_numbers_contrato_test.go, que usa sus siembras.
+// Sus siembras y su observador de public.fleet_sessions los usa también
+// runtime_self_numbers_contrato_test.go.
 
 // runtimeContractTenantCases cuenta los Montajes pedidos en esta corrida: la suite llama a nuevo
 // una vez por caso (en serie) y cada uno necesita una base con nombre propio.

@@ -6,8 +6,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
@@ -74,9 +74,13 @@ var ErrSelfNumbersNoKeyProvider = errors.New("self_numbers: sin KeyProvider no s
 // número), con TTL corto.
 //
 // Solo lee: no escribe ni una fila.
-//
-// En el rojo no lleva campos. El verde le pone dos: el *sql.DB y el crypto.KeyProvider.
-type PostgresSelfNumbers struct{}
+type PostgresSelfNumbers struct {
+	db *sql.DB
+	// kp aporta la clave de índice con la que se calcula el índice ciego. Es la MISMA que usó
+	// quien escribió self_pn_bidx; si no lo fuera, ningún número casaría jamás y la guarda
+	// quedaría muda (por eso la clave del índice es estable de por vida y no rota con la KEK).
+	kp crypto.KeyProvider
+}
 
 // NewPostgresSelfNumbers construye el predicado sobre el pool y el KeyProvider dados. No toca la
 // base ni valida sus argumentos.
@@ -86,7 +90,7 @@ type PostgresSelfNumbers struct{}
 // pide por parámetro, y no se deriva de un singleton, porque el llavero es una dependencia
 // explícita, no un ambiente. Un kp nil no falla aquí: falla cada IsSelfNumber.
 func NewPostgresSelfNumbers(db *sql.DB, kp crypto.KeyProvider) *PostgresSelfNumbers {
-	panic(pendiente.Implementar("runtime.NewPostgresSelfNumbers"))
+	return &PostgresSelfNumbers{db: db, kp: kp}
 }
 
 // IsSelfNumber responde si el número YA NORMALIZADO pertenece a alguna sesión del tenant que NO
@@ -133,5 +137,45 @@ func NewPostgresSelfNumbers(db *sql.DB, kp crypto.KeyProvider) *PostgresSelfNumb
 //
 // El SQL lo prueba runtimehelpertest.ContratoSelfNumbers contra Postgres (test/procesos).
 func (r *PostgresSelfNumbers) IsSelfNumber(ctx context.Context, tenantID, normalizedNumber string) (bool, error) {
-	panic(pendiente.Implementar("runtime.PostgresSelfNumbers.IsSelfNumber"))
+	if normalizedNumber == "" {
+		// Sin número no hay pregunta que hacerle a la base. No es un error: es el entrante sin
+		// número de remitente, que el llamante ya filtra; aquí solo se blinda.
+		return false, nil
+	}
+	if r.kp == nil {
+		return false, ErrSelfNumbersNoKeyProvider
+	}
+	bidx := r.kp.BlindIndex(tenantID, normalizedNumber)
+
+	// 🧮 Equivalencia con el `GROUP BY … HAVING` que esta forma sustituyó: aquel agrupaba TODOS
+	// los números del tenant y devolvía los que cumplían bool_or(profile <> 'passive'). Aquí el
+	// WHERE self_pn_bidx = $2 SELECCIONA exactamente ese único grupo —las filas que comparten
+	// número— y se agrega sobre él sin GROUP BY: mismo conjunto de filas, misma función de
+	// agregación ⇒ mismo booleano. El caso borde es el grupo VACÍO: un agregado sin GROUP BY
+	// sobre cero filas devuelve UNA fila con NULL (no cero filas).
+	var blocks sql.NullBool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT bool_or(profile <> 'passive')
+		FROM public.fleet_sessions
+		WHERE tenant_id = $1
+		  AND self_pn_bidx = $2
+		  AND state <> 'loggedout'
+	`, tenantID, bidx).Scan(&blocks)
+	if err != nil {
+		// sql.ErrNoRows es teóricamente inalcanzable (un agregado sin GROUP BY SIEMPRE devuelve
+		// una fila), pero se contempla explícitamente y se traduce al mismo «no es número propio»
+		// que el grupo vacío: si algún día el SQL cambia a una forma que sí pueda no devolver
+		// filas, el comportamiento no se convierte en un error espurio que apague la guarda entera.
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		// El mensaje NO embebe el número ni el índice (higiene de PII): el índice no es
+		// reversible, pero sí es un identificador estable de una persona y no tiene por qué
+		// acabar en un log de errores.
+		return false, fmt.Errorf("self_numbers: consulta fleet_sessions: %w", err)
+	}
+	// NULL (grupo vacío) ⇒ false: el número no pertenece a ninguna sesión viva del tenant.
+	// Valid==false y Bool==false llevan al mismo sitio; se escribe con NullBool para no
+	// confundir «no hay filas» con «las hay y todas son pasivas».
+	return blocks.Valid && blocks.Bool, nil
 }

@@ -6,8 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
 )
 
 // ErrTenantNotResolved lo devuelve PostgresTenantResolver cuando la sesión no mapea a exactamente
@@ -24,14 +23,14 @@ var ErrTenantNotResolved = errors.New("no se pudo resolver tenant para la sesió
 // Solo lee: no escribe ni una fila. Y no filtra por state: una sesión offline o retirada
 // (loggedout) resuelve igual que una online, porque la pregunta es «¿de quién es?», no «¿está
 // viva?».
-//
-// En el rojo no lleva campos. El verde le pone uno: el *sql.DB.
-type PostgresTenantResolver struct{}
+type PostgresTenantResolver struct {
+	db *sql.DB
+}
 
 // NewPostgresTenantResolver construye el resolver sobre el pool dado. No toca la base ni valida
 // el pool: un db nil no falla aquí sino en la primera consulta.
 func NewPostgresTenantResolver(db *sql.DB) *PostgresTenantResolver {
-	panic(pendiente.Implementar("runtime.NewPostgresTenantResolver"))
+	return &PostgresTenantResolver{db: db}
 }
 
 // ResolveTenant devuelve el tenant_id (como texto) y el PERFIL efectivo de la sesión receptora en
@@ -82,5 +81,51 @@ func NewPostgresTenantResolver(db *sql.DB) *PostgresTenantResolver {
 //
 // El SQL lo prueba runtimehelpertest.ContratoTenantResolver contra Postgres (test/procesos).
 func (r *PostgresTenantResolver) ResolveTenant(ctx context.Context, sessionID string) (tenantID string, profile string, err error) {
-	panic(pendiente.Implementar("runtime.PostgresTenantResolver.ResolveTenant"))
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT tenant_id::text, bool_or(profile <> 'active') AS any_passive
+		FROM public.fleet_sessions
+		WHERE session_id = $1
+		GROUP BY tenant_id
+	`, sessionID)
+	if err != nil {
+		return "", "", fmt.Errorf("resolver tenant: consulta fleet_sessions: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("resolver tenant: cerrar filas: %w", cerr)
+		}
+	}()
+
+	type tenantProfile struct {
+		id      string
+		passive bool
+	}
+	var found []tenantProfile
+	for rows.Next() {
+		var tp tenantProfile
+		if err := rows.Scan(&tp.id, &tp.passive); err != nil {
+			return "", "", fmt.Errorf("resolver tenant: scan: %w", err)
+		}
+		found = append(found, tp)
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", fmt.Errorf("resolver tenant: iterar filas: %w", err)
+	}
+
+	switch len(found) {
+	case 1:
+		return found[0].id, profileString(found[0].passive), nil
+	case 0:
+		return "", "", fmt.Errorf("%w: session_id=%s (0 filas en fleet_sessions)", ErrTenantNotResolved, sessionID)
+	default:
+		return "", "", fmt.Errorf("%w: session_id=%s ambiguo (%d tenants)", ErrTenantNotResolved, sessionID, len(found))
+	}
+}
+
+// profileString mapea el agregado any_passive al perfil que consume el runtime.
+func profileString(passive bool) string {
+	if passive {
+		return profilePassive
+	}
+	return profileActive
 }
