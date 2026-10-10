@@ -29,6 +29,8 @@
 //   - fixtures_contrato.go: las siembras, la marca de estado (la fila ENTERA) y sus aserciones.
 //   - queue_contrato.go, queue_put_contrato.go y queue_key_contrato.go (la clave de ventana
 //     incompleta): los casos de la cola.
+//   - queue_close_contrato.go: los de su quinta operación, CloseWithSourceText. Mientras está en
+//     rojo tienen entrada propia, ContratoQueueClose; en el verde pasan a la tabla de la cola.
 //   - machine_contrato.go y machine_transitions_contrato.go: los de la máquina.
 //   - reanalysis_contrato.go: los del segundo productor.
 //

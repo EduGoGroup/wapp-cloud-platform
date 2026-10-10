@@ -56,6 +56,10 @@ SELECT id::text, tenant_id, session_id, contact_id, event_id::text,
 `
 )
 
+// La quinta operación de la cola existe con su firma (D-F7-9, D-F8-13). Su conducta —el SQL, los
+// rechazos, los fallos envueltos— está en postgres_close_test.go, en rojo hasta el verde.
+var _ func(*Postgres, context.Context, OpenJob, SourceText) (bool, error) = (*Postgres).CloseWithSourceText
+
 // pgKey es la clave de ventana de los tests del adaptador.
 var pgKey = WindowKey{TenantID: "tenant-1", SessionID: "session-1", ContactID: "contact-1", EventID: "11111111-1111-4111-8111-111111111111"}
 

@@ -122,6 +122,14 @@ func (s SourceText) Complete() bool {
 	return len(s.Enc) > 0 && len(s.DEK) > 0 && s.KEKID != ""
 }
 
+// Empty dice si el sobre está VACÍO ENTERO: ninguna de sus tres piezas. Un slice vacío no nil
+// cuenta como ausente, igual que en Complete. Es la otra forma legítima de la fila —las tres
+// columnas a NULL, la del hilo sin mensajes—: un sobre que no es ni Complete ni Empty está A
+// MEDIAS, y ese es el que no se escribe (ver JobStore.CloseWithSourceText).
+func (s SourceText) Empty() bool {
+	return len(s.Enc) == 0 && len(s.DEK) == 0 && s.KEKID == ""
+}
+
 // OpenJob es una ventana VIVA tal como la ve el barrido de cierre. Es lo mínimo
 // para decidir si le tocó la hora, y nada más: ni sobre, ni artefactos, ni error.
 type OpenJob struct {
@@ -154,21 +162,24 @@ type OpenJob struct {
 	CreatedAt    time.Time
 }
 
-// JobStore es el puerto de `intake_jobs`. CUATRO operaciones y ninguna más, a
-// propósito: son las que la Ola 1 necesita, y el tamaño del puerto es lo que impide
-// que el sink en línea con el mensaje pueda hacer algo que D-044.26 prohíbe — aquí
-// NO HAY UN SOLO MÉTODO DE LECTURA QUE EL SINK PUEDA LLAMAR. ListAggregating existe
-// para el barrido, que corre FUERA del camino del entrante.
+// JobStore es el puerto de `intake_jobs`. CINCO operaciones y ninguna más, a
+// propósito: el tamaño del puerto es lo que impide que el sink en línea con el
+// mensaje pueda hacer algo que D-044.26 prohíbe — aquí NO HAY UN SOLO MÉTODO DE
+// LECTURA QUE EL SINK PUEDA LLAMAR. ListAggregating existe para el barrido, que
+// corre FUERA del camino del entrante.
 //
 // La cuarta —PutSourceText, T1.4— es también de fuera de línea, y el sink no la
 // puede usar aunque la tenga delante: pide un sobre YA cifrado y el sink no tiene
-// cipher (ver SourceText).
+// cipher (ver SourceText). Lo mismo vale para la quinta —CloseWithSourceText,
+// D-F7-9/D-F8-13—, que además pide el OpenJob que solo da ListAggregating: sin
+// haber leído no hay con qué llamarla.
 //
-// 🔴 LA CLAVE INCOMPLETA SE RECHAZA EN LAS TRES ESCRITURAS (OpenOrAppend, CloseWindow
-// y PutSourceText): con una WindowKey que no es Valid devuelven error —cada una con su
-// texto— y no escriben nada. Vale para TODA implementación, el gemelo en memoria
-// incluido (hallazgo 7 de F7); lo afirma intakehelpertest.ContratoQueue. En
-// PutSourceText la clave se mira antes que el sobre.
+// 🔴 LA CLAVE INCOMPLETA SE RECHAZA EN LAS CUATRO ESCRITURAS (OpenOrAppend,
+// CloseWindow, PutSourceText y CloseWithSourceText): con una WindowKey que no es
+// Valid devuelven error —cada una con su texto— y no escriben nada. Vale para TODA
+// implementación, el gemelo en memoria incluido (hallazgo 7 de F7); lo afirma
+// intakehelpertest.ContratoQueue. En PutSourceText y en CloseWithSourceText la clave
+// se mira antes que el sobre.
 type JobStore interface {
 	// OpenOrAppend abre la ventana si no existía y le añade las referencias del
 	// mensaje si ya existía, en UNA SOLA SENTENCIA y sin ninguna lectura
@@ -204,6 +215,50 @@ type JobStore interface {
 	// false SIN error significa «no había dónde escribir» (la fila ya tenía sobre, o
 	// la ventana no está en `pending`): es un no-op, no un fallo.
 	PutSourceText(ctx context.Context, k WindowKey, env SourceText) (bool, error)
+	// CloseWithSourceText cierra la ventana `seen` Y le guarda su sobre en UNA SOLA
+	// SENTENCIA, y solo si la ventana no cambió desde que se leyó. Devuelve true si
+	// ESTA llamada fue la que la cerró.
+	//
+	// ✎ Divergencia deliberada del viejo (D-F7-9, D-F8-13). El viejo cierra con
+	// CloseWindow y escribe el sobre después con PutSourceText: dos sentencias, y
+	// entre las dos la fila ya está en `pending` SIN sobre, que es justo lo que el
+	// worker reclama. Si la reclama en ese hueco procesa un job sin literal, y el
+	// sobre que llega después cae sobre una fila que ya no está en `pending` (o, peor,
+	// sobre otra `pending` de la misma tupla). Con una sentencia el hueco no existe:
+	// la fila nunca es visible cerrada y sin su sobre.
+	//
+	// Lo que promete:
+	//
+	//  1. UNA sentencia y NINGUNA lectura: pasa a `pending` la fila de id `seen.ID`,
+	//     le escribe las tres columnas del sobre y refresca su `updated_at`.
+	//
+	//  2. SOLO CIERRA LO QUE SE LEYÓ. La fila tiene que seguir en `aggregating` Y su
+	//     `updated_at` tiene que ser EXACTAMENTE `seen.LastActivity`, el que devolvió
+	//     ListAggregating. Un mensaje que entró después de leer mueve `updated_at`
+	//     (OpenOrAppend) y por tanto la llamada devuelve (false, nil) y NO TOCA la
+	//     fila: el sobre que trae se compuso sin ese mensaje y ya no la representa.
+	//     La ventana sigue viva y la recoge el siguiente barrido, con el `seen` nuevo.
+	//     Una fila ya cerrada, o un id que no existe, es (false, nil) también:
+	//     idempotente, como CloseWindow.
+	//
+	//  3. EL SOBRE VA COMPLETO O VACÍO ENTERO. Completo (SourceText.Complete) se
+	//     escribe tal cual. Vacío entero (SourceText.Empty) es el hilo sin mensajes:
+	//     cierra igual y deja las tres columnas a NULL, que es una forma legítima de
+	//     la fila en la 0072. A MEDIAS —ni lo uno ni lo otro— es error, y se rechaza
+	//     ANTES de tocar la base: no se escribe nada y la ventana sigue viva.
+	//
+	//  4. Con `seen.Key` incompleta (WindowKey.Valid) o `seen.ID` vacío devuelve el
+	//     error `intake: ventana incompleta al cerrar con el literal` y no escribe
+	//     nada. La clave y el id se miran ANTES que el sobre, como en PutSourceText.
+	//     El sobre a medias lleva el texto de cada implementación: en Postgres, el
+	//     mismo de PutSourceText (`intake: sobre del literal incompleto (enc=%d dek=%d
+	//     kek_id=%t): son las tres o ninguna`); en memoria, el de su gemelo.
+	//
+	//  5. NO TOCA NINGUNA OTRA FILA: ni la ventana de otra tupla, ni la de otro
+	//     tenant, ni las otras `pending` de la MISMA tupla. Identifica por id, que es
+	//     lo que PutSourceText no puede hacer (ver su comentario): quien la llama es
+	//     el barrido, que sí leyó la fila.
+	CloseWithSourceText(ctx context.Context, seen OpenJob, env SourceText) (bool, error)
 }
 
 // Las DOS implementaciones satisfacen el puerto, comprobado en compilación. Importa

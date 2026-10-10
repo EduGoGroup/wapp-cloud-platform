@@ -29,6 +29,12 @@ var (
 	_ func(*intake.MemoryStore, context.Context, intake.Append) error = (*intake.MemoryStore).OpenOrAppend
 )
 
+// La quinta operación y su gancho de fallo (D-F7-9, D-F8-13): existen con su firma. Su conducta
+// está en close_with_source_text_test.go, en rojo hasta el verde.
+var _ func(*intake.MemoryStore, error) = (*intake.MemoryStore).FailCloseWithSourceTextWith
+
+var _ func(*intake.MemoryStore, context.Context, intake.OpenJob, intake.SourceText) (bool, error) = (*intake.MemoryStore).CloseWithSourceText
+
 // memoryClock es un reloj que solo avanza cuando el test lo mueve.
 type memoryClock struct {
 	mu  sync.Mutex
@@ -67,35 +73,40 @@ func rowOf(j intake.Job) intakehelpertest.Row {
 // TestMemoryStore_ContratoQueue corre la suite de intake.JobStore contra el gemelo, sin BD y sin
 // reloj real: cada caso monta un store nuevo con su reloj, y Advance lo adelanta un segundo.
 func TestMemoryStore_ContratoQueue(t *testing.T) {
-	intakehelpertest.ContratoQueue(t, func(*testing.T) intakehelpertest.QueueMontaje {
-		clock := newMemoryClock()
-		store := intake.NewMemoryStore(clock.Now)
-		n := memoryCases.Add(1)
-		return intakehelpertest.QueueMontaje{
-			Store:   store,
-			TenantA: fmt.Sprintf("tenant-%02d-a", n),
-			TenantB: fmt.Sprintf("tenant-%02d-b", n),
-			Rows: func(_ *testing.T, tenantID string) []intakehelpertest.Row {
-				var out []intakehelpertest.Row
-				for _, j := range store.Jobs() {
-					if j.Key.TenantID == tenantID {
-						out = append(out, rowOf(j))
-					}
+	intakehelpertest.ContratoQueue(t, newMemoryQueueMontaje)
+}
+
+// newMemoryQueueMontaje monta el gemelo para UN caso de la suite de la cola: un store nuevo con
+// su reloj y sus dos tenants. Es una función con nombre porque la usan dos tests del paquete:
+// el de arriba y, mientras esté en rojo, el de close_with_source_text_test.go.
+func newMemoryQueueMontaje(*testing.T) intakehelpertest.QueueMontaje {
+	clock := newMemoryClock()
+	store := intake.NewMemoryStore(clock.Now)
+	n := memoryCases.Add(1)
+	return intakehelpertest.QueueMontaje{
+		Store:   store,
+		TenantA: fmt.Sprintf("tenant-%02d-a", n),
+		TenantB: fmt.Sprintf("tenant-%02d-b", n),
+		Rows: func(_ *testing.T, tenantID string) []intakehelpertest.Row {
+			var out []intakehelpertest.Row
+			for _, j := range store.Jobs() {
+				if j.Key.TenantID == tenantID {
+					out = append(out, rowOf(j))
 				}
-				return out
-			},
-			// La siembra traduce al revés que rowOf: las columnas de la máquina se pierden,
-			// porque el gemelo de la cola no las guarda.
-			Seed: func(_ *testing.T, r intakehelpertest.Row) string {
-				return store.Seed(intake.Job{
-					ID: r.ID, Key: r.Key, Status: r.Status, MessageTS: r.MessageTS,
-					SourceRefs: r.SourceRefs, SourceText: r.SourceText,
-					CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				})
-			},
-			Advance: func(*testing.T) { clock.Advance(time.Second) },
-		}
-	})
+			}
+			return out
+		},
+		// La siembra traduce al revés que rowOf: las columnas de la máquina se pierden,
+		// porque el gemelo de la cola no las guarda.
+		Seed: func(_ *testing.T, r intakehelpertest.Row) string {
+			return store.Seed(intake.Job{
+				ID: r.ID, Key: r.Key, Status: r.Status, MessageTS: r.MessageTS,
+				SourceRefs: r.SourceRefs, SourceText: r.SourceText,
+				CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			})
+		},
+		Advance: func(*testing.T) { clock.Advance(time.Second) },
+	}
 }
 
 // TestMemoryStore_Seed_InsertsTheRowAsGivenAndFillsTheZeros: la siembra mete la fila tal cual

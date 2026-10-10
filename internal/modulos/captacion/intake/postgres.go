@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Postgres es la implementación real de JobStore sobre `public.intake_jobs`
@@ -193,6 +195,13 @@ func (p *Postgres) PutSourceText(ctx context.Context, k WindowKey, env SourceTex
 		return false, fmt.Errorf("intake: contar filas del literal guardado: %w", err)
 	}
 	return n > 0, nil
+}
+
+// CloseWithSourceText implementa JobStore: el cierre y el sobre en UNA sentencia, solo
+// si la fila sigue `aggregating` con el `updated_at` que se leyó (D-F7-9, D-F8-13).
+// Un *Postgres nil, o sin base, es un no-op (false, nil) como sus hermanas.
+func (p *Postgres) CloseWithSourceText(_ context.Context, _ OpenJob, _ SourceText) (bool, error) {
+	panic(pendiente.Implementar("intake.Postgres.CloseWithSourceText"))
 }
 
 // listAggregatingSQL alimenta el BARRIDO, que corre fuera del camino del entrante.

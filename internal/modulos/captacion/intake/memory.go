@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Job es una fila de `intake_jobs` tal como la guarda el store en memoria. Lleva
@@ -61,6 +63,11 @@ type Counters struct {
 	// mitad del mismo presupuesto: el literal se compone AL FLUSH, así que este
 	// contador NUNCA debe crecer durante un Observe.
 	PutSourceText int
+	// CloseWithSourceText cuenta las llamadas a CloseWithSourceText (D-F7-9, D-F8-13): el
+	// cierre con su sobre, en una sola sentencia. Cuenta LLAMADAS, como los demás: las que
+	// cierran, las que no encuentran la ventana como se leyó y las rechazadas. Tampoco debe
+	// crecer durante un Observe: es del barrido.
+	CloseWithSourceText int
 }
 
 // MemoryStore implementa JobStore en memoria, con la MISMA semántica que la
@@ -96,6 +103,10 @@ type MemoryStore struct {
 	// que un fallo del compositor NO revierte el cierre de la ventana (T1.4): el job
 	// se queda en `pending` con el sobre vacío, que es una forma legítima en la 0072.
 	failPut error
+	// failCloseWithText, cuando no es nil, hace fallar CloseWithSourceText. Es el seam para
+	// probar que un fallo de la base al cerrar con el sobre deja la ventana VIVA y entera: al
+	// ser una sola sentencia no hay medio cierre, y la recoge el siguiente barrido.
+	failCloseWithText error
 }
 
 // errIncompleteEnvelope es el equivalente en memoria del rechazo que hace Postgres
@@ -126,6 +137,15 @@ func (m *MemoryStore) FailPutWith(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.failPut = err
+}
+
+// FailCloseWithSourceTextWith hace que CloseWithSourceText devuelva `err` en las
+// siguientes llamadas (nil para volver a la normalidad). Como en FailPutWith, simula
+// la base: la clave y el id se miran antes, y el sobre después.
+func (m *MemoryStore) FailCloseWithSourceTextWith(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failCloseWithText = err
 }
 
 // Counters devuelve una copia del presupuesto consumido hasta ahora.
@@ -316,6 +336,16 @@ func (m *MemoryStore) PutSourceText(_ context.Context, k WindowKey, env SourceTe
 	j.SourceText = env
 	j.UpdatedAt = m.now()
 	return true, nil
+}
+
+// CloseWithSourceText implementa JobStore con la MISMA semántica que Postgres: cierra
+// la fila de id `seen.ID` y le escribe el sobre solo si sigue `aggregating` y su
+// `UpdatedAt` es exactamente `seen.LastActivity` (D-F7-9, D-F8-13). Y con el orden de
+// rechazos de PutSourceText: la clave y el id, el fallo de la base (aquí, el inyectado
+// con FailCloseWithSourceTextWith) y el sobre a medias (errIncompleteEnvelope). La
+// llamada cuenta siempre en Counters.CloseWithSourceText.
+func (m *MemoryStore) CloseWithSourceText(_ context.Context, _ OpenJob, _ SourceText) (bool, error) {
+	panic(pendiente.Implementar("intake.MemoryStore.CloseWithSourceText"))
 }
 
 // ListAggregating implementa JobStore.
