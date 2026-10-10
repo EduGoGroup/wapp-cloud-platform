@@ -153,6 +153,30 @@ func TestPostgres_OpenReanalysis_IncompleteRequest_SaysWhatIsMissing(t *testing.
 	}
 }
 
+// TestPostgres_OpenReanalysis_IncompleteRequest_ComesBeforeTheEnvelope: LA PETICIÓN SE MIRA ANTES
+// QUE EL SOBRE. Con las dos cosas mal —o con un sobre completo sobre una petición incompleta—, el
+// error es el de la petición, con su texto, y a la base no llega nada.
+func TestPostgres_OpenReanalysis_IncompleteRequest_ComesBeforeTheEnvelope(t *testing.T) {
+	const want = "intake: solicitud de re-análisis incompleta (ventana=true intake=false dueño=true)"
+	envelopes := map[string]SourceText{
+		"complete": {Enc: []byte("secreto"), DEK: []byte("dek"), KEKID: "k1"},
+		"no enc":   {DEK: []byte("dek"), KEKID: "k1"},
+		"no dek":   {Enc: []byte("secreto"), KEKID: "k1"},
+		"no kek":   {Enc: []byte("secreto"), DEK: []byte("dek")},
+	}
+	store, fake := newFakePostgres(t)
+	for name, env := range envelopes {
+		req := pgRequest()
+		req.IntakeID = ""
+		req.SourceText = env
+		id, err := store.OpenReanalysis(context.Background(), req)
+		if id != "" || err == nil || err.Error() != want {
+			t.Errorf("OpenReanalysis (sobre %s) = (%q, %v), quería (\"\", %q)", name, id, err, want)
+		}
+	}
+	fake.requireUntouched(t)
+}
+
 // TestPostgres_OpenReanalysis_InsertsOneRowAndReturnsItsID: UNA sentencia, la literal, con la
 // clave, la solicitud y las cuatro columnas del contexto; devuelve el id que da la base. Una
 // revisión de origen 0 —no había ninguna— viaja como NULL, no como la revisión cero.
