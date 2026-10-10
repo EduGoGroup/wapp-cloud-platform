@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime
 
 import (
@@ -130,7 +128,7 @@ func TestLogSink_Handle_LogsOneInfoLineWithMetadata(t *testing.T) {
 		t.Fatalf("se escribieron %d líneas, quería 1: %+v", len(lines), lines)
 	}
 	line := lines[0]
-	if line.level != "info" {
+	if line.level != "info" || len(log.at("info")) != 1 {
 		t.Errorf("nivel = %q, quería info", line.level)
 	}
 	if want := "runtime: efecto despachado (log-only)"; line.msg != want {
