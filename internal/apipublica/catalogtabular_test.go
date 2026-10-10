@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // catalogtabular_test.go — cubre el contrato de catalogtabular.go (MountCatalogTabular): el

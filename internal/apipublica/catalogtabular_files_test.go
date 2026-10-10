@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // catalogtabular_files_test.go — trozo de catalogtabular_test.go (05 E-13): la LECTURA del
@@ -9,7 +7,9 @@ package apipublica_test
 
 import (
 	"bytes"
+	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strconv"
 	"strings"
@@ -142,6 +142,7 @@ func TestMountCatalogTabular_CSVTransportTolerances(t *testing.T) {
 		"semicolon":                string(catalogTabularCSV(t, ';', rows)),
 		"tab":                      string(catalogTabularCSV(t, '\t', rows)),
 		"bom_and_semicolon":        "\xef\xbb\xbf" + string(catalogTabularCSV(t, ';', rows)),
+		"bom_and_quoted_header":    "\xef\xbb\xbf" + `"categoria","subcategoria","codigo","sku","nombre","precio"` + strings.TrimPrefix(short, header),
 		"crlf_line_endings":        strings.ReplaceAll(comma, "\n", "\r\n"),
 		"rows_shorter_than_header": short,
 	} {
@@ -273,6 +274,32 @@ func TestMountCatalogTabular_TwoByteCeilings(t *testing.T) {
 			catalogImportWantOneAudit(t, name, rig.h, "failure", http.StatusRequestEntityTooLarge)
 		})
 	}
+
+	// El techo del CUERPO cuenta el sobre entero, no solo el archivo: una planilla pequeña y
+	// válida que viaja junto a otro campo de 16 KiB se rechaza por el peso del formulario.
+	var form bytes.Buffer
+	mw := multipart.NewWriter(&form)
+	if err := mw.WriteField("relleno", strings.Repeat("x", 16<<10)); err != nil {
+		t.Fatalf("armando el multipart: %v", err)
+	}
+	part, err := mw.CreateFormFile(catalogTabularField, "catalogo.csv")
+	if err != nil {
+		t.Fatalf("armando el multipart: %v", err)
+	}
+	if _, err = part.Write(catalogTabularCSV(t, ',', catalogTabularRows())); err != nil {
+		t.Fatalf("escribiendo el archivo en el multipart: %v", err)
+	}
+	if err = mw.Close(); err != nil {
+		t.Fatalf("cerrando el multipart: %v", err)
+	}
+	rig = catalogImportSetup(t, apipublica.MountCatalogTabular, func(d *apipublica.CatalogImportDeps) { d.ContentMaxBytes = 4 << 10 })
+	req := httptest.NewRequest(http.MethodPost, catalogTabularTarget, &form)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+rig.h.With(tenantA, catalogImportPermWrite))
+	rec = httptest.NewRecorder()
+	rig.cara.ServeHTTP(rec, req)
+	wantCode(t, "sobre pesado", rec, http.StatusRequestEntityTooLarge)
+	wantExactBody(t, "sobre pesado", rec, catalogTabularReadFailure("el archivo excede el tamaño máximo de 4096 bytes"))
 
 	// Sin configurar, el techo es 1 MiB.
 	rig = catalogImportSetup(t, apipublica.MountCatalogTabular)
