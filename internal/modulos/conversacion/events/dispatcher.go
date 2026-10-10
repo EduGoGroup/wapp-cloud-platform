@@ -3,11 +3,13 @@
 package events
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // ErrNoResolver lo devuelve Build si el despachador se construyó sin Resolver de
@@ -57,23 +59,44 @@ type ConversationRef struct {
 	ContactID string
 }
 
+// kindMenu es el tipo del propio despachador (D-043.3: el menú es un evento
+// kind='menu'). Se nombra aquí porque el menú NO se ofrece a sí mismo.
+const kindMenu = "menu"
+
+// featureByKind mapea cada tipo de evento a la feature del Plan 040 que lo
+// habilita. Las claves son constantes del paquete entitlements, no literales:
+// un typo entre el SQL sembrado y el Go apagaría un tipo del menú en silencio, y
+// el test de integración de la siembra ata las dos puntas.
+//
+// Un tipo que NO esté aquí no se filtra: gatear con una feature inventada sería
+// peor que no gatear, porque nadie la tendría nunca y el tipo desaparecería del
+// menú sin que ninguna tabla lo explique.
+var featureByKind = map[string]string{
+	kindMenu: entitlements.FeatureMenu,
+	"cart":   entitlements.FeatureCartBasic,
+	"survey": entitlements.FeatureSurvey,
+	"media":  entitlements.FeatureMedia,
+}
+
 // Dispatcher arma el menú numérico dinámico del nivel superior (T2.3) y no hace
 // nada más: SOLO LEE. No escribe en conversation_events ni en flow_state.
 //
 // Reparto de trabajo con el runtime, que es lo que hace testeable esto sin BD:
 // aquí se decide QUÉ se le ofrece al cliente y qué significa el número que
 // responda; allí se ejecuta la consecuencia (crear, conmutar, cerrar).
-//
-// En el rojo no lleva campos. El verde le pone tres: los rescatables, la oferta y el resolver.
-type Dispatcher struct{}
+type Dispatcher struct {
+	events RescuableLister
+	kinds  KindOffer
+	feats  entitlements.Resolver
+}
 
 // NewDispatcher construye el despachador sobre sus tres fuentes: los eventos
-// rescatables del contacto, los tipos que el tenant ofrece y los derechos del
+// rescuables del contacto, los tipos que el tenant ofrece y los derechos del
 // tenant.
 //
 // No valida nada: un resolver nil se descubre al construir (ErrNoResolver en los cuatro Build*).
 func NewDispatcher(ev RescuableLister, kinds KindOffer, feats entitlements.Resolver) *Dispatcher {
-	panic(pendiente.Implementar("events.NewDispatcher"))
+	return &Dispatcher{events: ev, kinds: kinds, feats: feats}
 }
 
 // Build arma el menú de la conversación.
@@ -124,8 +147,151 @@ func NewDispatcher(ev RescuableLister, kinds KindOffer, feats entitlements.Resol
 //   - "events: listar los tipos que ofrece el tenant: %w";
 //   - "events: listar los eventos rescatables del contacto: %w".
 func (d *Dispatcher) Build(ctx context.Context, ref ConversationRef) (Menu, error) {
-	panic(pendiente.Implementar("events.Dispatcher.Build"))
+	allows, unfiltered, err := d.gate(ctx, ref.TenantID)
+	if err != nil {
+		return Menu{}, err
+	}
+	offered, err := d.kinds.OfferedKinds(ctx, ref.TenantID, ref.SessionID)
+	if err != nil {
+		return Menu{}, fmt.Errorf("events: listar los tipos que ofrece el tenant: %w", err)
+	}
+	resc, err := d.rescuables(ctx, ref, allows)
+	if err != nil {
+		return Menu{}, err
+	}
+
+	return Menu{
+		Options:    compose(byBirth(eventsOf(resc)), offered, allows),
+		Unfiltered: unfiltered,
+	}, nil
 }
+
+// byBirth devuelve los eventos en el orden en que APARECIERON, que es el del
+// menú: los números que el cliente tiene delante no pueden bailar entre dos
+// mensajes porque haya escrito en uno de sus eventos (el rescate, en cambio, los
+// quiere por última actividad — lo último que se tocó es lo primero que se ofrece
+// retomar).
+//
+// El orden se pone AQUÍ y el filtro en la consulta a propósito: filtrar es una
+// regla de negocio que tiene que valer para todos los que lean, y ordenar es una
+// decisión de quien enseña. Poner los dos en la BD costaría una segunda consulta
+// cuyo WHERE habría que mantener idéntico al primero, que es exactamente el bicho
+// que INV-17 acaba de destapar.
+func byBirth(evs []Event) []Event {
+	slices.SortStableFunc(evs, func(a, b Event) int {
+		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID) // desempate estable: dos eventos del mismo instante
+	})
+	return evs
+}
+
+// compose numera las opciones: primero lo que se puede pedir (todos los tipos
+// ofrecidos, tengan o no evento vivo) y después lo rescatable (un evento vivo,
+// una opción). La numeración es densa y arranca en 1.
+func compose(alive []Event, offered []string, allows func(string) bool) []MenuOption {
+	return number(append(startOptions(offered, allows), resumeOptions(alive, allows)...))
+}
+
+// startOptions son las opciones de PEDIR: un tipo ofrecido, una opción. Sin
+// number todavía — numera quien compone la lista final, que es quien sabe qué más
+// va a haber en ella.
+func startOptions(offered []string, allows func(string) bool) []MenuOption {
+	opts := make([]MenuOption, 0, len(offered))
+	seen := make(map[string]bool, len(offered))
+	for _, k := range offered {
+		if k == kindMenu || seen[k] || !allows(k) {
+			continue
+		}
+		seen[k] = true // dedupe: un tipo ofrecido dos veces es una opción, no dos
+		opts = append(opts, MenuOption{Action: ActionStart, Kind: k})
+	}
+	return opts
+}
+
+// resumeOptions son las opciones de RETOMAR: un evento, una opción.
+//
+// Los rescatables NO se deduplican contra los ofrecidos: aparecer dos veces es el
+// diseño. Tampoco entre sí hace falta —el único parcial (E-2) garantiza como mucho
+// un vivo por tipo—, y uno de un tipo que el tenant ya no ofrece sigue siendo
+// rescatable: lo que se dejó a medias no depende de la configuración de hoy.
+func resumeOptions(rescuable []Event, allows func(string) bool) []MenuOption {
+	opts := make([]MenuOption, 0, len(rescuable))
+	for _, ev := range rescuable {
+		if ev.Kind == kindMenu || !allows(ev.Kind) {
+			continue
+		}
+		opts = append(opts, MenuOption{Action: ActionResume, Kind: ev.Kind, EventID: ev.ID})
+	}
+	return opts
+}
+
+// number pone los números que el cliente teclea: densos y empezando en 1. Sin
+// opciones devuelve nil y no un slice vacío, porque Menu.Empty y el render razonan
+// sobre «no hay nada que ofrecer», no sobre la capacidad del slice.
+func number(opts []MenuOption) []MenuOption {
+	if len(opts) == 0 {
+		return nil
+	}
+	for i := range opts {
+		opts[i].Number = i + 1
+	}
+	return opts
+}
+
+// gate devuelve el predicado «este tipo se puede ofrecer» y si el menú quedó SIN
+// filtrar.
+//
+// Resuelve los derechos de UNA pasada con ListEffective en vez de un Has por
+// tipo: el menú se arma para un solo tenant y las cuatro preguntas comparten
+// respuesta, así que una consulta basta y el resultado no puede quedar
+// incoherente entre tipos.
+//
+// El caso «taxonomía sin poblar» (el tenant no tiene NINGUNA feature efectiva)
+// lista SIN filtro, por criterio explícito del Plan 043 · T2.3: una instalación
+// donde el Plan 040 nunca sembró planes no debe quedarse con un menú vacío y sin
+// explicación. Es la ÚNICA excepción al fail-closed, y se reporta hacia arriba
+// (Menu.Unfiltered) para que quede anotada en vez de pasar inadvertida.
+//
+// Un fallo del resolver NO es ese caso: se propaga. Un error de infraestructura
+// que abriera capacidades de pago sería peor que un menú que no sale.
+func (d *Dispatcher) gate(ctx context.Context, tenantID string) (allows func(string) bool, unfiltered bool, err error) {
+	all := func(string) bool { return true }
+	if d.feats == nil {
+		return nil, false, ErrNoResolver
+	}
+
+	_, features, err := d.feats.ListEffective(ctx, tenantID)
+	if err != nil {
+		return nil, false, fmt.Errorf("events: resolver los derechos del tenant para el menú: %w", err)
+	}
+	if len(features) == 0 {
+		return all, true, nil
+	}
+
+	return func(kind string) bool {
+		feature, gated := featureByKind[kind]
+		if !gated {
+			return true
+		}
+		return slices.Contains(features, feature)
+	}, false, nil
+}
+
+// ── Lo que se le ofrece al contacto: rescate (T3.6) y entrada (T3.8) ─────────
+
+const (
+	// rescuableCap es cuántos rescatables se le ENSEÑAN al cliente como mucho.
+	// Es la constante única del tope: si aparece un 5 suelto en otro sitio, uno de
+	// los dos está mintiendo. Cinco es propuesta nuestra (T3.8 · punto 3): una
+	// lista más larga en WhatsApp deja de leerse.
+	rescuableCap = 5
+	// rescuableBatch es cuántos se le PIDEN a la BD: uno más que el tope. Ese uno
+	// de más es todo lo que hace falta para saber que había más sin contarlos —de
+	// ahí sale el «…y N más» sin una segunda consulta.
+	rescuableBatch = rescuableCap + 1
+)
 
 // Offering es lo que hay que decirle al contacto y lo que hay que recordar para
 // entender su respuesta: el texto que se manda y el menú que se persiste.
@@ -143,9 +309,7 @@ type Offering struct {
 // llamante DEBE distinguir: sin nada que ofrecer no se emite automensaje de rescate
 // (T3.6) y la rama Fallback cae al flujo de fallback de siempre (T3.8 · punto 4,
 // INV-20). Un Offering vacío trae Text vacío: no hay «texto sin opciones».
-func (o Offering) Empty() bool {
-	panic(pendiente.Implementar("events.Offering.Empty"))
-}
+func (o Offering) Empty() bool { return o.Menu.Empty() }
 
 // BuildRescue arma el AUTOMENSAJE DE RESCATE (T3.6): «no hay nada en curso» + lo
 // que el contacto dejó a medias, numerado y ordenado por última actividad, + cómo
@@ -185,7 +349,23 @@ func (o Offering) Empty() bool {
 //
 // Nunca aparece un UUID, un history_id, el nombre técnico del tipo, «carrito» ni «evento» (E-3).
 func (d *Dispatcher) BuildRescue(ctx context.Context, ref ConversationRef) (Offering, error) {
-	panic(pendiente.Implementar("events.Dispatcher.BuildRescue"))
+	allows, unfiltered, err := d.gate(ctx, ref.TenantID)
+	if err != nil {
+		return Offering{}, err
+	}
+	resc, err := d.rescuables(ctx, ref, allows)
+	if err != nil {
+		return Offering{}, err
+	}
+
+	extra := 0
+	if len(resc) > rescuableCap {
+		extra = len(resc) - rescuableCap
+		resc = resc[:rescuableCap]
+	}
+
+	m := Menu{Options: number(resumeOptions(eventsOf(resc), allows)), Unfiltered: unfiltered}
+	return Offering{Text: m.renderList(rescueHeader, rescueMore(extra), menuFooter), Menu: m}, nil
 }
 
 // BuildOpening arma la ENTRADA de una conversación SIN evento (T3.8 · puntos 1 y
@@ -210,7 +390,29 @@ func (d *Dispatcher) BuildRescue(ctx context.Context, ref ConversationRef) (Offe
 // (como mucho 6), sin Kind ni EventID. El texto es Menu.Render() de ese menú: la entrada final se
 // lee «Retomar algo que dejaste a medias (N)». El gate y los textos de error son los de Build.
 func (d *Dispatcher) BuildOpening(ctx context.Context, ref ConversationRef) (Offering, error) {
-	panic(pendiente.Implementar("events.Dispatcher.BuildOpening"))
+	allows, unfiltered, err := d.gate(ctx, ref.TenantID)
+	if err != nil {
+		return Offering{}, err
+	}
+	offered, err := d.kinds.OfferedKinds(ctx, ref.TenantID, ref.SessionID)
+	if err != nil {
+		return Offering{}, fmt.Errorf("events: listar los tipos que ofrece el tenant: %w", err)
+	}
+	resc, err := d.rescuables(ctx, ref, allows)
+	if err != nil {
+		return Offering{}, err
+	}
+
+	opts := startOptions(offered, allows)
+	if len(resc) > 0 {
+		// El N es lo que reveló el lote (como mucho rescuableBatch): con más, dice
+		// «6» y la lista dirá «…y 1 más». Los dos números salen de la misma lectura,
+		// así que el cliente nunca lee dos cuentas que se contradigan.
+		opts = append(opts, MenuOption{Action: ActionRescue, Count: len(resc)})
+	}
+
+	m := Menu{Options: number(opts), Unfiltered: unfiltered}
+	return Offering{Text: m.Render(), Menu: m}, nil
 }
 
 // BuildTagline arma la COLETILLA del camino CON clasificador (T3.8 · punto 2): la
@@ -231,5 +433,49 @@ func (d *Dispatcher) BuildOpening(ctx context.Context, ref ConversationRef) (Off
 // «y» final, en el orden de ListRescuable). Con más de 5 se nombran 5 y se añade " y algo más".
 // El gate y sus errores son los de Build; Menu.Unfiltered no tiene aquí por dónde salir.
 func (d *Dispatcher) BuildTagline(ctx context.Context, ref ConversationRef) (string, error) {
-	panic(pendiente.Implementar("events.Dispatcher.BuildTagline"))
+	allows, _, err := d.gate(ctx, ref.TenantID)
+	if err != nil {
+		return "", err
+	}
+	resc, err := d.rescuables(ctx, ref, allows)
+	if err != nil {
+		return "", err
+	}
+	kinds := make([]string, 0, len(resc))
+	for _, r := range resc {
+		kinds = append(kinds, r.Kind)
+	}
+	return tagline(kinds), nil
+}
+
+// rescuables lee el lote de rescatables de la conversación y aparta los tipos que
+// el tenant no tiene contratados.
+//
+// El gate se aplica DESPUÉS del lote y no dentro de la consulta a propósito: las
+// features son de la nube y cambian sin tocar la BD del evento, y meterlas en el
+// SQL obligaría a la consulta —que también sirve al listado del dueño (T3.9b)— a
+// saber de planes comerciales.
+func (d *Dispatcher) rescuables(ctx context.Context, ref ConversationRef, allows func(string) bool) ([]Rescuable, error) {
+	resc, err := d.events.ListRescuable(ctx, ref.TenantID, ref.SessionID, ref.ContactID, rescuableBatch)
+	if err != nil {
+		return nil, fmt.Errorf("events: listar los eventos rescatables del contacto: %w", err)
+	}
+	out := make([]Rescuable, 0, len(resc))
+	for _, r := range resc {
+		if r.Kind == kindMenu || !allows(r.Kind) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// eventsOf desnuda los rescatables hasta el evento: la marca «vencido» informa al
+// dueño (T3.9b), no al cliente, y las opciones se componen igual con o sin ella.
+func eventsOf(resc []Rescuable) []Event {
+	evs := make([]Event, 0, len(resc))
+	for _, r := range resc {
+		evs = append(evs, r.Event)
+	}
+	return evs
 }
