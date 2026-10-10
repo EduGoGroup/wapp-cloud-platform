@@ -10,7 +10,7 @@
 > **nombre del fichero** (no se renombran: lo enlazan las specs) pero su prompt ya es local. No hay traspasos nuevos.
 > Lo que NO cambia: el código nace en una rama partida de `dev` y entra por PR sin squash (regla 6 del `CLAUDE.md`).
 >
-> **57 pasos** (✎ 2026-10-10, D-F8-11: eran 56; F8-04 se parte en F8-04 y F8-04b, paso 47, y los siguientes se renumeran). El recuento del 2026-10-04, sobre 56, era: 23 hechos y **33 pendientes** (32 💻 · 1 🧑). Recalibrado el 2026-10-03 tras la
+> **58 pasos** (✎ 2026-10-10, D-F8-13: eran 57; nace F8-06b, paso 50, para el arreglo de D-F7-9, y los siguientes se renumeran · ✎ 2026-10-10, D-F8-11: eran 56; F8-04 se parte en F8-04 y F8-04b, paso 47, y los siguientes se renumeran). El recuento del 2026-10-04, sobre 56, era: 23 hechos y **33 pendientes** (32 💻 · 1 🧑). Recalibrado el 2026-10-03 tras la
 > parada de F1 ([`../DECISIONES.md`](../DECISIONES.md) §3): eran 81; las 66 pendientes se reagruparon en 41.
 
 ## Cómo se usa
@@ -122,11 +122,12 @@ La columna «Nivel» es el **provisional** de la spec (`05` E-12); el que vale e
 | 47 | [`F8-04b-cli-runtime-1-soporte`](F8-04b-cli-runtime-1-soporte.md) | 💻 | F8 | `runtime` (1b): el verde del soporte | T8.26 | complejo | **hecha** (2026-10-10; rama `reorg/f8-04b-runtime-soporte`, `83565b4e` … `6216d1df`, PR #66 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `d80e7f56`, sin squash; ✎ D-F8-12: 9 de los 12; `welcome`, `thread` y `send` pasan a F8-05) |
 | 48 | [`F8-05-cli-runtime-2`](F8-05-cli-runtime-2.md) | 💻 | F8 | `runtime`: núcleo, con mutantes | T8.27–T8.28 | complejo | **hecha** (2026-10-10; rama `reorg/f8-05-runtime-nucleo`, `46b6a1ec` … `f5fd0374`, PR #67 a `dev`, sin squash; D-F8-12: los 14; `PENDIENTES=0 · ROJOS=0`) |
 | 49 | [`F8-06-cli-cara-http-y-conmutar`](F8-06-cli-cara-http-y-conmutar.md) | 💻 | F8 | `admin`, cara HTTP, conmutar, retirar adaptadores | T8.13, T8.29–T8.35 (TX.22–TX.24) | cara | pendiente |
-| 50 | [`F8-07-cli-cierre`](F8-07-cli-cierre.md) | 💻 | F8 | cierre | T8.36–T8.38 (T8.37 = T9.29) | — | pendiente |
-| 51 | [`F9-05-cli-cierre`](F9-05-cli-cierre.md) | 💻 | F9 | D | T9.30–T9.33 — condición del relevo | — | pendiente |
-| 52 | [`F10-01-jhoan-decisiones`](F10-01-jhoan-decisiones.md) | 🧑 | F10 | — | — | — | pendiente |
-| 53 | [`F10-02-cli-dorada`](F10-02-cli-dorada.md) | 💻 | F10 | A | T10.1–T10.3 | — | pendiente |
-| 54 | [`F10-03-cli-prueba-uat`](F10-03-cli-prueba-uat.md) | 💻 | F10 | B | T10.4–T10.6 (UAT por SSH, ventana ≥ 24 h) | — | pendiente |
-| 55 | [`F10-04-cli-relevo`](F10-04-cli-relevo.md) | 💻 | F10 | C | T10.7–T10.14, T10.23 (TX.25) | — | pendiente |
-| 56 | [`F10-05-cli-cierre-y-fuera-del-repo`](F10-05-cli-cierre-y-fuera-del-repo.md) | 💻 | F10 | D/E | T10.15–T10.21 | — | pendiente |
-| 57 | [`F10-06-cli-main`](F10-06-cli-main.md) | 💻 | F10 | F | T10.22 — solo a petición de Jhoan | — | pendiente |
+| 50 | [`F8-06b-cli-d-f7-9-cierre-y-sobre`](F8-06b-cli-d-f7-9-cierre-y-sobre.md) | 💻 | F8 | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | T8.39 | complejo | pendiente |
+| 51 | [`F8-07-cli-cierre`](F8-07-cli-cierre.md) | 💻 | F8 | cierre | T8.36–T8.38 (T8.37 = T9.29) | — | pendiente |
+| 52 | [`F9-05-cli-cierre`](F9-05-cli-cierre.md) | 💻 | F9 | D | T9.30–T9.33 — condición del relevo | — | pendiente |
+| 53 | [`F10-01-jhoan-decisiones`](F10-01-jhoan-decisiones.md) | 🧑 | F10 | — | — | — | pendiente |
+| 54 | [`F10-02-cli-dorada`](F10-02-cli-dorada.md) | 💻 | F10 | A | T10.1–T10.3 | — | pendiente |
+| 55 | [`F10-03-cli-prueba-uat`](F10-03-cli-prueba-uat.md) | 💻 | F10 | B | T10.4–T10.6 (UAT por SSH, ventana ≥ 24 h) | — | pendiente |
+| 56 | [`F10-04-cli-relevo`](F10-04-cli-relevo.md) | 💻 | F10 | C | T10.7–T10.14, T10.23 (TX.25) | — | pendiente |
+| 57 | [`F10-05-cli-cierre-y-fuera-del-repo`](F10-05-cli-cierre-y-fuera-del-repo.md) | 💻 | F10 | D/E | T10.15–T10.21 | — | pendiente |
+| 58 | [`F10-06-cli-main`](F10-06-cli-main.md) | 💻 | F10 | F | T10.22 — solo a petición de Jhoan | — | pendiente |

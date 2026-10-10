@@ -237,10 +237,20 @@ con un párrafo por tarea en el mensaje.
   - **Hecho cuando**: escrito lo que F8-07 tiene que refutar: la identidad de `entResolver`/`kp`/`gw` en ejecución, el barrido del agregador con BD real, el golden en un Edge real; las tres cosas del cierre; `dev` empujado.
   - **Commit**: `docs(reorganizacion-modular): F8 conmutada — pendiente de cierre`
 
+## Bloque 6b · D-F7-9: cierre y sobre en un solo acto · 💻 · sesión F8-06b · T8.39
+> ✎ **2026-10-10 (D-F8-13, Jhoan; hallazgo 44 del README)**: bloque nuevo, entre conmutar y el cierre. El diseño decidido y lo que queda fuera, en la ficha [`F8-06b`](../sesiones/F8-06b-cli-d-f7-9-cierre-y-sobre.md).
+
+Para cuando: un job de ventana nunca es visible para el worker en `pending` sin sobre (salvo el hilo vacío); caso de P4 verde contra el binario nuevo. Nivel **complejo**: rojo y verde, suite contra Postgres, mutantes.
+
+- [ ] **T8.39 · D-F7-9: el agregador compone antes de cerrar y cierra con el sobre en una sentencia** · 💻 · dep. T8.35
+  - **Ficheros**: `internal/modulos/captacion/intake/{store,postgres,memory}.go` y `intakehelpertest/` (operación nueva de `JobStore`, con su caso en la suite); `C/runtime/source_composer.go` (componer separado de escribir) y `C/runtime/aggregator_sweep.go` (`closeWindow`) + tests; el caso de P4 en `test/procesos/`; comentarios de D-F7-9 caducados (`aggregator_sweep.go`, `source_composer.go`, `captacion/pipeline/pipeline_chain.go`).
+  - **Hecho cuando**: cierre y sobre en **un** `UPDATE` (sin transacción, sin migración), que solo cierra si la ventana no cambió desde que se leyó; hilo vacío → cierra con sobre NULL, como hoy; `PutSourceText` intacto; D-F9-10 se sigue cumpliendo; mutantes muertos (quitar la guarda, cerrar sin sobre, sobre sin cerrar, orden viejo); suite `Contrato` de `intake` verde en memoria y en Postgres; P4 contra el binario nuevo sin ningún `failed` por «el job no trae literal que analizar»; D-F7-9 marcada arreglada en el README. **Fuera**: el mismo hueco del re-análisis; el código viejo.
+  - **Gate**: `G` · `make test-procesos` (nuevo y viejo) · **Commit**: `fix(conversacion): cierre y sobre de la ventana en un solo acto (D-F7-9)`
+
 ## Bloque 7 · cierre · 💻 · sesión F8-07 · T8.36–T8.38
 Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 entera.
 
-- [ ] **T8.36 · Gates y arranque local del binario nuevo** · 💻 · dep. T8.35 · cumple R8.8.a, R8.8.c
+- [ ] **T8.36 · Gates y arranque local del binario nuevo** · 💻 · dep. T8.35, T8.39 (✎ D-F8-13) · cumple R8.8.a, R8.8.c
   - **Hecho cuando**: `validar-antes-de-cerrar` con la toolchain fijada; las suites `Contrato` de los puertos con BD verdes contra Postgres (P4, arnés de F9-A); `cmd/server-modular` arranca en local **solo** (sin `cmd/server`), un Edge de prueba (o el e2e de `cmd/server-modular`) recorre «carrito» → línea → confirmar y el cliente recibe las pantallas; SKIP = 0; refutado lo que dejó T8.35.
   - **Gate**: `G` · e2e rc=0
 - [ ] **T8.37 · 🕐 Procesos del módulo contra el binario nuevo (= T9.29, 9C de `conversacion`)** · 💻 · dep. T8.36 · cumple R8.8.b — *con D-F9-1 = sí (recomendación); si D-F9-1 = no, se tacha y lo cubre T9.34 tras F8*

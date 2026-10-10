@@ -415,7 +415,10 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
   POR_DEBAJO=8`, de `C/runtime` solo `events_summary.go` (76,3 %). `go.mod` y `go.sum` sin tocar.
 - **No corrido**: `make test-procesos` y `make ci-docker` (el bloque no los pide: no cambia SQL ni cableado; el runtime nuevo
   aún no lo usa ningún binario, eso es F8-06); las dos suites contra Postgres de F8-04b, sin cambios desde `6216d1df`.
-- **🟡 Para Jhoan, sin bloquear** (hallazgo 44): D-F7-9 sigue **sin arreglar** y sin sesión asignada (¿F8-06 o F8-07?); las
+- **✎ D-F8-13 (Jhoan, 2026-10-10, tras la sesión)**: el arreglo de D-F7-9 va en una sesión nueva, **F8-06b** (T8.39), entre
+  F8-06 y F8-07: el sobre primero, y cierre y sobre en una sola sentencia. Ficha, bloque 6b de `tareas.md` y fila en la
+  tabla de sesiones, creados.
+- **🟡 Para Jhoan, sin bloquear** (hallazgo 44): D-F7-9 sigue **sin arreglar** (✎ ya con sesión: F8-06b); las
   rarezas 34a–34i, portadas tal cual; el test `TestObserve_ResolverErrorWinsOverItsAnswer`, que solo muerde con un resolver
   que viola su contrato.
 - **Siguiente paso: F8-06** (la cara HTTP y conmutar, T8.13 y T8.29–T8.35), cuando el PR de esta sesión esté en `dev`.
@@ -1691,7 +1694,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Para retomar
 
-0. **Siguiente sesión**: **F8-06** ([`F8-06-cli-cara-http-y-conmutar`](plan/sesiones/F8-06-cli-cara-http-y-conmutar.md): `admin`, los ficheros de conversación de `apipublica` y la conmutación del runtime; T8.13, T8.29–T8.35), sobre `dev` con el PR #67 de F8-05 (rama `reorg/f8-05-runtime-nucleo`, `46b6a1ec` … `f5fd0374`) **integrado**; la sesión lo comprueba con `git log origin/dev`. Le deja dicho F8-05: los hallazgos 41–46 del README de F8; `runtime` son 40 ficheros de producción y ninguno lleva `pendiente`; el runtime nuevo no lo cablea todavía ningún binario; 🟡 D-F7-9 sigue sin arreglar y sin sesión asignada (hallazgo 44): pregúntaselo a Jhoan antes de conmutar; un solo `runtime.New` en el arranque (T-1) y `WithQueryResolver` (T-6).
+0. **Siguiente sesión**: **F8-06** ([`F8-06-cli-cara-http-y-conmutar`](plan/sesiones/F8-06-cli-cara-http-y-conmutar.md): `admin`, los ficheros de conversación de `apipublica` y la conmutación del runtime; T8.13, T8.29–T8.35), sobre `dev` con el PR #67 de F8-05 (rama `reorg/f8-05-runtime-nucleo`, `46b6a1ec` … `f5fd0374`) **integrado**; la sesión lo comprueba con `git log origin/dev`. Le deja dicho F8-05: los hallazgos 41–46 del README de F8; `runtime` son 40 ficheros de producción y ninguno lleva `pendiente`; el runtime nuevo no lo cablea todavía ningún binario; D-F7-9 **no** se arregla en F8-06: va después, en **F8-06b** ([ficha](plan/sesiones/F8-06b-cli-d-f7-9-cierre-y-sobre.md), D-F8-13), y F8-07 pasa a depender de ella; un solo `runtime.New` en el arranque (T-1) y `WithQueryResolver` (T-6).
 1. Lee [`plan/README.md`](plan/README.md) y, si vas a ejecutar, el fichero de tu sesión en
    [`plan/sesiones/`](plan/sesiones/README.md) (él te dice qué más leer).
 2. La norma: [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md).
