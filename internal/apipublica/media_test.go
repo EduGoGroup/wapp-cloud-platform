@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // media_test.go — cubre el contrato de media.go (MediaPresignUploader, MediaDeps, MountMedia): el
@@ -246,6 +244,7 @@ func TestMountMedia_FilenameIsSanitized(t *testing.T) {
 		want     string
 	}{
 		{"safe name is kept", "Lista-2026_v1.pdf", "Lista-2026_v1.pdf"},
+		{"range edges are safe", "azAZ09.pdf", "azAZ09.pdf"},
 		{"space becomes underscore", "lista precios.pdf", "lista_precios.pdf"},
 		{"edges are trimmed", "  lista.pdf  ", "lista.pdf"},
 		{"only the last path segment", "../../etc/passwd", "passwd"},

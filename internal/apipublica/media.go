@@ -9,17 +9,24 @@
 // Zero-knowledge (ADR-0007/0009): la plataforma solo entrega una URL firmada; NUNCA expone las
 // credenciales de R2 al cliente, y quien sube o descarga lo hace sin llaves.
 //
-// En el rojo solo existen el puerto, MediaDeps y MountMedia; el handler, el cuerpo de la petición
-// y la fábrica de la key (mediaObjectKey y sanitizeFilename en la cara vieja) son no exportados y
-// nacen con el verde (05 E-4, P6). Sus promesas viven en el comentario de MountMedia.
+// En el rojo solo existían el puerto, MediaDeps y MountMedia; el handler, el cuerpo de la petición
+// y la fábrica de la key (mediaObjectKey, y mediaSanitizeFilename —sanitizeFilename en la cara
+// vieja—) son no exportados y nacieron con el verde (05 E-4, P6). Sus promesas viven en el
+// comentario de MountMedia.
 
 package apipublica
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"path"
+	"strings"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/google/uuid"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // MediaPresignUploader (PresignUploader en la cara vieja) es el puerto MÍNIMO que la cara consume
@@ -105,5 +112,115 @@ type MediaDeps struct {
 // Fallo de cableado: k.MW nil hace panic AL MONTAR (ver Common), con un mensaje que nombra
 // MountMedia. d.Uploader NO se comprueba al montar.
 func MountMedia(c *Cara, k Common, d MediaDeps) {
-	panic(pendiente.Implementar("apipublica.MountMedia"))
+	// Media por API (escritura auditada, R7): presigna una URL PUT de corta vida
+	// para subir a R2 un archivo (PDF/imagen) que luego se referencia en un flujo
+	// (nodo media / tenant_content). Reusa el PresignClient del Plan 017; el objeto
+	// se namespacea por tenant (INV-8). CERO PII en la auditoría (action/resource).
+	mustHaveMW(k, "MountMedia")
+	c.Handle("POST /api/v1/media/upload-url", protect(k,
+		"media.upload", "media", mediaUploadURLHandler(d.Uploader)))
+}
+
+// mediaKeyPrefix es el namespace de los objetos de wApp en el bucket compartido
+// (edugo-materials); espeja el prefijo de Plan 017 ("wapp/media/…"). La API añade el
+// tenant y un uuid para AISLAR el objeto por tenant (INV-8) y evitar colisiones.
+const mediaKeyPrefix = "wapp/media"
+
+// mediaUploadURLRequest (uploadURLRequest en la cara vieja) es el cuerpo de POST
+// /api/v1/media/upload-url (design.md §8): filename (nombre visible del archivo) y mime (tipo
+// de contenido). El tenant NO viaja aquí (INV-8): sale del token.
+type mediaUploadURLRequest struct {
+	Filename string `json:"filename"`
+	Mime     string `json:"mime"`
+}
+
+// mediaUploadURLResponse (uploadURLResponse en la cara vieja) es la respuesta (design.md §8): la
+// URL prefirmada PUT, la key del objeto con la que luego se referencia el archivo en un flujo
+// (misma forma que model.MediaRef.Key / content.key del nodo media) y el instante de expiración.
+type mediaUploadURLResponse struct {
+	URL       string `json:"url"`
+	Key       string `json:"key"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// mediaUploadURLHandler (uploadURLHandler en la cara vieja) devuelve el handler de POST
+// /api/v1/media/upload-url: mina una key R2 namespaceada por el tenant del token (INV-8) y
+// presigna un PUT de corta vida contra ella (reusa el PresignClient del Plan 017). La `key`
+// devuelta es EXACTAMENTE la que el autor coloca en content.key de un nodo media (o en un blob
+// de tenant_content) y que el runtime presigna VERBATIM para descargar. Respuestas:
+//
+//   - 200 con {url, key, expires_at} al firmar.
+//   - 400 si el JSON es inválido o falta filename/mime.
+//   - 401 sin identidad; 502 si el presign de R2 falla; 500 si no hay almacén.
+func mediaUploadURLHandler(uploader MediaPresignUploader) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		if uploader == nil {
+			writeError(w, http.StatusInternalServerError, "almacén de objetos no configurado")
+			return
+		}
+
+		var req mediaUploadURLRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "cuerpo JSON inválido")
+			return
+		}
+		req.Filename = strings.TrimSpace(req.Filename)
+		req.Mime = strings.TrimSpace(req.Mime)
+		if req.Filename == "" || req.Mime == "" {
+			writeError(w, http.StatusBadRequest, "filename y mime son requeridos")
+			return
+		}
+
+		key := mediaObjectKey(id.TenantID, req.Filename)
+		url, expiresAt, err := uploader.GenerateUploadURL(r.Context(), key)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "no se pudo presignar la subida")
+			return
+		}
+		writeJSON(w, http.StatusOK, mediaUploadURLResponse{
+			URL:       url,
+			Key:       key,
+			ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
+		})
+	})
+}
+
+// mediaObjectKey construye la key R2 del objeto: wapp/media/<tenant_id>/<uuid>-<safe>.
+// El segmento tenant_id namespacea el objeto por tenant (INV-8) y el uuid lo hace no
+// adivinable. La key devuelta es la que el runtime presigna sin transformar (Plan
+// 017: sendMedia pasa ref.Key verbatim a GenerateDownloadURL), así que su forma
+// coincide con lo que el Motor/Edge espera para descargar.
+func mediaObjectKey(tenantID, filename string) string {
+	return mediaKeyPrefix + "/" + tenantID + "/" + uuid.NewString() + "-" + mediaSanitizeFilename(filename)
+}
+
+// mediaSanitizeFilename (sanitizeFilename en la cara vieja) reduce el nombre a su base y
+// sustituye lo no seguro por '_' (evita separadores/traversal en la key R2). Vacío/degenerado →
+// "file".
+func mediaSanitizeFilename(name string) string {
+	base := path.Base(strings.ReplaceAll(name, "\\", "/"))
+	base = strings.TrimSpace(base)
+	if base == "" || base == "." || base == ".." {
+		return "file"
+	}
+	var b strings.Builder
+	for _, ch := range base {
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9',
+			ch == '.', ch == '-', ch == '_':
+			b.WriteRune(ch)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := b.String()
+	if out == "" {
+		return "file"
+	}
+	return out
 }
