@@ -259,7 +259,7 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     `Capas` tiene ahora `conversacion → catalogo` y `catalogo → conversacion` a la vez: no hay ciclo de paquetes.
 22. **(F8-03, `events`, E-13) Dos particiones más de las previstas.** `store.go` nace en cuatro (`store`, `store_list`,
     `store_filter`, `store_append`) y `summary.go`, que con su lógica medía 646 líneas, en dos (`summary.go` 498 +
-    `summary_render.go`: `Encode` y `Render`). `events` son **10** ficheros de producción, no 7; los 114 exportados no cambian.
+    `summary_render.go`: `Encode` y `Render`). `events` son **11** ficheros de producción (✎ 2026-10-10: aquí decía 10; el rojo `8c819b40` trajo 10 y `summary_render.go` nació en el verde `6590724e`), no 7; los 114 exportados no cambian.
     Por el lint `unused`: `menu` y `dispatcher` van verdes en un commit; `eventColumnsE`, `scanRescuable` y `nullableID` nacen en
     `store_list.go`, no en `store.go`.
 23. **(F8-03, `events`) Comentarios del viejo que no casaban con su código, corregidos en el contrato, y rarezas portadas tal
@@ -337,7 +337,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 |---|---|---|---|---|
 | F8-01 | inventario E-12 y hojas | medio · `store` complejo · `content` simple | T8.1–T8.8, T8.22 | inventario **aprobado por Jhoan** (antes no se escribe código); `model`·`trigger`·`content`·`store`·`modules` verdes; suites `Contrato` en memoria y en Postgres |
 | F8-02 ✅ | motor | medio · `menu`/`media`/`survey` simple | T8.9–T8.11, T8.14, T8.23 | `engine`·`menu`·`survey`·`media`·`turnoacotado` verdes (2026-10-09, rama `reorg/f8-02-motor`, `d8fd4ac` … `4ce435f`, PR #61 en `dev`, merge `df340a6`) |
-| F8-03 ✅ | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (10) y `cart` (20) verdes; goldens idénticos; candado de orden verde y mutado (en dos mitades: 2026-10-09, rama `reorg/f8-03-events-cart`, `8c819b40` … `790ca522`, PR #62 en `dev`, merge `8b841c8d`; 2026-10-10, rama `reorg/f8-03b-cart-verde`, `dd0771ce` … `44255a2b`, PR #63 a `dev`, abierto) |
+| F8-03 ✅ | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (11) y `cart` (20) verdes; goldens idénticos; candado de orden verde y mutado (en dos mitades: 2026-10-09, rama `reorg/f8-03-events-cart`, `8c819b40` … `790ca522`, PR #62 en `dev`, merge `8b841c8d`; 2026-10-10, rama `reorg/f8-03b-cart-verde`, `dd0771ce` … `44255a2b`, PR #63 a `dev`, abierto) |
 | F8-04 | `runtime` (1): contratos de los 23 y soporte | complejo | T8.18–T8.21, T8.26 | 23 contratos en rojo, candado de rachas escrito, los 12 de soporte verdes |
 | F8-05 | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo verdes, mutantes muertos, `pendiente` del runtime = 0 |
 | F8-06 | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo |
