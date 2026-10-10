@@ -417,7 +417,7 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
   aún no lo usa ningún binario, eso es F8-06); las dos suites contra Postgres de F8-04b, sin cambios desde `6216d1df`.
 - **✎ D-F8-13 (Jhoan, 2026-10-10, tras la sesión)**: el arreglo de D-F7-9 va en una sesión nueva, **F8-06b** (T8.39), entre
   F8-06 y F8-07: el sobre primero, y cierre y sobre en una sola sentencia. Ficha, bloque 6b de `tareas.md` y fila en la
-  tabla de sesiones, creados.
+  tabla de sesiones, creados. El mismo hueco del re-análisis entra en esa sesión como segunda tarea (T8.40).
 - **🟡 Para Jhoan, sin bloquear** (hallazgo 44): D-F7-9 sigue **sin arreglar** (✎ ya con sesión: F8-06b); las
   rarezas 34a–34i, portadas tal cual; el test `TestObserve_ResolverErrorWinsOverItsAnswer`, que solo muerde con un resolver
   que viola su contrato.

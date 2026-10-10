@@ -10,10 +10,10 @@
 | Entorno | 💻 solo local |
 | Nivel (E-12) | complejo (toca un puerto con BD y el cierre de ventana): rojo y verde, suite contra Postgres, mutantes |
 | Duración objetivo | 45–90 min |
-| Tareas | T8.39 |
+| Tareas | T8.39, T8.40 (✎ 2026-10-10, D-F8-13: el re-análisis entra como segunda tarea) |
 | Depende de | F8-06 (el binario nuevo ya cablea el agregador y el compositor NUEVOS) |
 | Decisiones | D-F8-13 (rellena) |
-| Se para cuando | el agregador nuevo compone el literal ANTES de cerrar y cierra y guarda el sobre en **una sola sentencia**; un job de ventana nunca es visible para el worker en `pending` sin sobre (salvo el hilo vacío, que es legítimo); la suite `Contrato` de `intake` verde en memoria y en Postgres; el caso de P4 verde contra el binario nuevo; mutantes muertos; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión |
+| Se para cuando | el agregador nuevo compone el literal ANTES de cerrar y cierra y guarda el sobre en **una sola sentencia**; un job de ventana nunca es visible para el worker en `pending` sin sobre (salvo el hilo vacío, que es legítimo); la suite `Contrato` de `intake` verde en memoria y en Postgres; el caso de P4 verde contra el binario nuevo; el job de **re-análisis nace ya con su sobre**, en una sentencia (T8.40); mutantes muertos; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión |
 
 ## Qué se arregla (y qué no)
 
@@ -40,9 +40,14 @@ Lo que hay que cuidar, y va con su caso:
   evidente, la propone y PARA a preguntar.
 - **D-F9-10** (contexto cancelado → sin `ERROR`) sigue cumpliéndose en el camino nuevo.
 
-Fuera de alcance, dicho para que no se cuele: **el re-análisis tiene el mismo hueco** (`captacion/reanalisis/reanalisis.go`:
-`OpenReanalysis` crea el job ya `pending` y `ComposeAtFlush` escribe después; hallazgo 1). Es un arreglo aparte y sin
-decidir. Y **el código viejo no se toca**: el binario viejo conserva el fallo hasta el relevo de F10, así que el caso de P4
+✎ **2026-10-10 (Jhoan): el re-análisis entra en esta sesión, como segunda tarea (T8.40).** Tiene el mismo hueco
+(`captacion/reanalisis/reanalisis.go`: `OpenReanalysis` crea el job ya `pending` y `ComposeAtFlush` escribe después;
+hallazgo 1): si el worker lo reclama en medio, el dueño pidió un re-análisis y no pasa nada. Mismo arreglo: componer y
+cifrar primero, y que el job **nazca con su sobre** en una sola sentencia. Va **después** de T8.39, en su propio commit; si
+la sesión se queda sin tiempo, para tras T8.39 verde y empujada y T8.40 se relanza. Si al nacer con sobre `PutSourceText`
+se queda sin llamante de producción, se dice (no se borra de paso: PARA y pregunta).
+
+**El código viejo no se toca**: el binario viejo conserva el fallo hasta el relevo de F10, así que el caso de P4
 tiene que distinguir binario (o tolerar el viejo), como ya hacen los procesos con otras divergencias deliberadas.
 
 ## Antes de pegar el prompt (Jhoan)
@@ -64,9 +69,9 @@ documentations/reorganizacion-modular/plan/sesiones/PROTOCOLO-CLI.md
 Tu encargo (y solo este):
 - Fase: F8 · conversacion → documentations/reorganizacion-modular/plan/F8-conversacion/
 - Bloque: 6b · D-F7-9: cierre y sobre en un solo acto
-- Tareas: T8.39 de plan/F8-conversacion/tareas.md
+- Tareas: T8.39 y T8.40 de plan/F8-conversacion/tareas.md, en ese orden
 - Lee ENTERA la sección «Qué se arregla (y qué no)» de plan/sesiones/F8-06b-cli-d-f7-9-cierre-y-sobre.md: es el diseño decidido.
-- Te paras cuando: el agregador nuevo compone ANTES de cerrar y cierra y guarda el sobre en una sola sentencia; la suite `Contrato` de `intake` verde en memoria y en Postgres; el caso de P4 verde contra el binario nuevo; mutantes muertos; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión.
+- Te paras cuando: el agregador nuevo compone ANTES de cerrar y cierra y guarda el sobre en una sola sentencia; el job de re-análisis nace ya con su sobre en una sentencia (T8.40); la suite `Contrato` de `intake` verde en memoria y en Postgres; el caso de P4 verde contra el binario nuevo; mutantes muertos; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión.
 - Decisiones: D-F8-13 y D-F7-9 en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
 - Skills: contrato-tdd, procesos-testcontainers, validar-antes-de-cerrar, describir-pr.
 
@@ -76,7 +81,7 @@ Es una DIVERGENCIA DELIBERADA del viejo: va en su propio commit, con el comentar
 `PutSourceText` no se toca (lo usa el re-análisis). Ni una migración: las columnas ya existen. El código viejo no se toca.
 Un mensaje que entra entre componer y cerrar: la sentencia cierra solo si la ventana no cambió; con su caso de carrera.
 Hilo vacío: cierra con el sobre a NULL, como hoy. Fallo al componer o cifrar: con duda manda el viejo; si ves una mejora evidente, PARA y pregunta.
-El re-análisis (mismo hueco) queda FUERA: no lo arregles de paso.
+El re-análisis (mismo hueco) es T8.40: DESPUÉS de T8.39 verde y empujada, en su propio commit, con el mismo método (rojo antes que verde, caso en la suite de `intake`, mutantes, caso de proceso). Si no cabe, para tras T8.39 y dilo. Si `PutSourceText` se queda sin llamante de producción, dilo y PARA: no lo borres de paso.
 Actualiza lo que el arreglo deja caducado: los comentarios de D-F7-9 en `aggregator_sweep.go`, `source_composer.go` y `captacion/pipeline/pipeline_chain.go`; `ComposeAtFlush_DoesNotOverwrite/window_not_pending` si cambia (hallazgo 35); el «Heredado» del README de F8.
 Mutantes: quitar la guarda de «la ventana no cambió»; cerrar sin sobre; escribir el sobre sin cerrar; volver al orden viejo. Cada uno mata al menos un test. Los mutantes, en serie o sobre una copia.
 Caso de P4 (F9): con `make test-procesos` contra el binario NUEVO, ningún job de ventana llega a `failed` por «el job no trae literal que analizar»; contra el viejo, el caso lo tolera o no aplica (dilo). Gates sin carga: no corras `make test-procesos` en paralelo con nada.
@@ -88,7 +93,7 @@ No empieces la sesión siguiente.
 
 ## Al terminar debe existir
 
-- En [`../F8-conversacion/tareas.md`](../F8-conversacion/tareas.md): T8.39 `[x]` con SHA.
+- En [`../F8-conversacion/tareas.md`](../F8-conversacion/tareas.md): T8.39 y T8.40 `[x]` con SHA.
 - Un bloque de la sesión en `ESTADO.md` de la reorganización.
 - Los hallazgos nuevos en el [README de la fase](../F8-conversacion/README.md), y D-F7-9 marcada como **arreglada** en «Heredado de otras fases».
 - Un PR con `--base dev` desde la rama de la sesión, con «integrar SIN squash».

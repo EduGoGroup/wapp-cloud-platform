@@ -122,7 +122,7 @@ La columna «Nivel» es el **provisional** de la spec (`05` E-12); el que vale e
 | 47 | [`F8-04b-cli-runtime-1-soporte`](F8-04b-cli-runtime-1-soporte.md) | 💻 | F8 | `runtime` (1b): el verde del soporte | T8.26 | complejo | **hecha** (2026-10-10; rama `reorg/f8-04b-runtime-soporte`, `83565b4e` … `6216d1df`, PR #66 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `d80e7f56`, sin squash; ✎ D-F8-12: 9 de los 12; `welcome`, `thread` y `send` pasan a F8-05) |
 | 48 | [`F8-05-cli-runtime-2`](F8-05-cli-runtime-2.md) | 💻 | F8 | `runtime`: núcleo, con mutantes | T8.27–T8.28 | complejo | **hecha** (2026-10-10; rama `reorg/f8-05-runtime-nucleo`, `46b6a1ec` … `f5fd0374`, PR #67 a `dev`, sin squash; D-F8-12: los 14; `PENDIENTES=0 · ROJOS=0`) |
 | 49 | [`F8-06-cli-cara-http-y-conmutar`](F8-06-cli-cara-http-y-conmutar.md) | 💻 | F8 | `admin`, cara HTTP, conmutar, retirar adaptadores | T8.13, T8.29–T8.35 (TX.22–TX.24) | cara | pendiente |
-| 50 | [`F8-06b-cli-d-f7-9-cierre-y-sobre`](F8-06b-cli-d-f7-9-cierre-y-sobre.md) | 💻 | F8 | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | T8.39 | complejo | pendiente |
+| 50 | [`F8-06b-cli-d-f7-9-cierre-y-sobre`](F8-06b-cli-d-f7-9-cierre-y-sobre.md) | 💻 | F8 | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | T8.39, T8.40 | complejo | pendiente |
 | 51 | [`F8-07-cli-cierre`](F8-07-cli-cierre.md) | 💻 | F8 | cierre | T8.36–T8.38 (T8.37 = T9.29) | — | pendiente |
 | 52 | [`F9-05-cli-cierre`](F9-05-cli-cierre.md) | 💻 | F9 | D | T9.30–T9.33 — condición del relevo | — | pendiente |
 | 53 | [`F10-01-jhoan-decisiones`](F10-01-jhoan-decisiones.md) | 🧑 | F10 | — | — | — | pendiente |

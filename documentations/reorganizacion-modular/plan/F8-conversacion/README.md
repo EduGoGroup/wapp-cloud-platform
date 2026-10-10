@@ -488,7 +488,8 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     decían «lo decide el verde (F8-05)», dicen ahora que sigue pendiente (`6c9bd1f1`). **Hace falta que Jhoan diga en qué
     sesión va** (F8-06 conmuta el runtime; F8-07 cierra). ✅ **Decidido (D-F8-13, Jhoan, 2026-10-10)**: sesión nueva
     **F8-06b** (T8.39), entre F8-06 y F8-07: el sobre primero, y cierre y sobre en una sola sentencia; leído el código, no hay
-    que tocar la guarda de `PutSourceText` (la sigue usando el re-análisis, cuyo hueco queda fuera y sin decidir). Las rarezas 34a–34i siguen portadas y con su test: el sobre de P2
+    que tocar la guarda de `PutSourceText`. El mismo hueco del re-análisis (hallazgo 1) entra en F8-06b como segunda tarea,
+    T8.40: el job nace con su sobre. Las rarezas 34a–34i siguen portadas y con su test: el sobre de P2
     sin escapar (el corpus gana cuatro casos adversarios: bloque de mensajes falsificado, bytes de control y UTF-8 inválido,
     clases casi iguales, saltos al borde; el corpus entero pasó contra el `ComposeSourceText` viejo), el id visto antes de
     `OpenOrAppend`, el `time.After(25 ms)` real del reintento, los dos panic diferidos y `Start` sin token pero contando racha
@@ -537,7 +538,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-04b ✅ | `runtime` (1b): el verde del soporte | complejo | T8.26 | **9** de los 12 de soporte verdes (✎ 2026-10-10, D-F8-12: `welcome`, `thread` y `send` pasan a F8-05), mutantes de `keyedmutex` y `streak` muertos, `pendiente` del runtime solo en los 11 del núcleo y en `welcome.go` (2026-10-10, rama `reorg/f8-04b-runtime-soporte`, `83565b4e` … `6216d1df`, PR #66 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `d80e7f56`, sin squash) |
 | F8-05 ✅ | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo y `welcome`, `thread` y `send` verdes (✎ 2026-10-10, D-F8-12: 14, no 11), mutantes muertos, `pendiente` del runtime = 0 (2026-10-10, rama `reorg/f8-05-runtime-nucleo`, `46b6a1ec` … `f5fd0374`, PR #67 a `dev`, sin squash) |
 | F8-06 | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo |
-| F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; caso de P4 verde contra el binario nuevo |
+| F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39, T8.40 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; el job de re-análisis nace con su sobre; caso de P4 verde contra el binario nuevo |
 | F8-07 | cierre | — | T8.36–T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
 
 Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (medido en el código viejo):
