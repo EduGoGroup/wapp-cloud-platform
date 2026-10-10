@@ -34,7 +34,7 @@ Tu encargo (y solo este):
 - Decisiones: D-F8-3 (goldens), D-F8-6 en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, contrato-tdd, validar-antes-de-cerrar, procesos-testcontainers (arnés de la suite de `events.Store`), describir-pr.
 
-- Base: F8-02 integrada en `dev` (PR #61). Trabaja en TU rama partida de `origin/dev` (p. ej. `reorg/f8-03-events-cart`), nunca en `dev` (regla 6 del `CLAUDE.md`).
+- Base: F8-02 integrada en `dev` (PR #61, merge `df340a6`). Trabaja en TU rama partida de `origin/dev` (p. ej. `reorg/f8-03-events-cart`), nunca en `dev` (regla 6 del `CLAUDE.md`).
 
 Nivel de ceremonia: el del inventario E-12 aprobado, que está en el README de F8 (§ «Inventario E-12») y manda sobre `diseno.md` §0.1: `events` — `events`, `kinds` simple; `summary`, `dispatcher`, `menu` medio; `store` y `thread_reader` complejo (suite con casos de carrera, mutantes). `cart` — `effects`, `variants`, `resume`, `validate` simple; `cart`, `troceo`, `preresolutor`, `screens`, `prime`, `state`, `revalidate`, `buyer`, `consulta` medio; `projection` complejo. Nacen partidos (E-13): `events/store.go` y `cart/cart.go` (re-anclar el candado AST de `Step`). No hace falta volver a pedir aprobación.
 

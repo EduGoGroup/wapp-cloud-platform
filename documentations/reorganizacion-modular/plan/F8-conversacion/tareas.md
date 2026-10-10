@@ -109,7 +109,7 @@ Para cuando: `engine`, `menu`, `survey`, `media`, `turnoacotado` verdes; `G`, `V
   - **Ficheros**: los 9
   - **Hecho cuando**: `go test -race` rc=0 por paquete; un test por promesa del contrato.
   - **Gate**: `G` por commit · **Commit**: `verde(conversacion): <fichero>` (según nivel, como T8.22)
-- [x] **T8.14 · Cierre del bloque 2** · 💻 · dep. T8.9–T8.11, T8.23 — commit de cierre de F8-02 (el que trae esta línea): `pendiente` = 0, `G` `GATE_RC=0` sobre `4ce435f`, rama `reorg/f8-02-motor` empujada y PR #61 a `dev`
+- [x] **T8.14 · Cierre del bloque 2** · 💻 · dep. T8.9–T8.11, T8.23 — commit de cierre de F8-02 (el que trae esta línea): `pendiente` = 0, `G` `GATE_RC=0` sobre `4ce435f`, rama `reorg/f8-02-motor` empujada y PR #61 integrado en `dev` (merge `df340a6`)
   - **Hecho cuando**: `pendiente` del módulo = 0; las tres cosas del cierre; `dev` empujado.
   - **Gate**: `validar-antes-de-cerrar`
 
