@@ -53,14 +53,72 @@ package runtime
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
+
+// Delimitadores del `source_text`: SON EL CONTRATO CON EL PROMPT DE P2. Se escriben
+// con `###` y en MAYÚSCULAS porque tienen que sobrevivir dentro de un prompt junto a
+// texto libre de un cliente: un separador que un cliente pueda escribir por accidente
+// no separa nada. (Por accidente: a propósito sí puede, ver ComposeSourceText.)
+const (
+	// sourceContextHeader abre el bloque de CONTEXTO: lo que el sistema resumió y lo
+	// que el negocio dijo por su cuenta. Todo lo que hay aquí dentro es antecedente,
+	// NO es lo que el cliente está pidiendo.
+	sourceContextHeader = "### CONTEXTO PREVIO — NO es lo que el cliente está pidiendo ###"
+	sourceContextFooter = "### FIN DEL CONTEXTO PREVIO ###"
+	// sourceLiteralHeader abre el HILO LITERAL: lo que se escribió de verdad en esta
+	// conversación, en orden. Es el ÚNICO bloque del que puede salir una `evidence`.
+	sourceLiteralHeader = "### MENSAJES DE LA CONVERSACIÓN (literal, en orden) ###"
+	sourceLiteralFooter = "### FIN DE LOS MENSAJES ###"
+)
+
+// contextKinds ES EL MECANISMO ÚNICO de las dos clases de contexto: la clave dice
+// QUÉ es contexto y el valor con qué rótulo entra. Las dos clases no son dos
+// caminos, son dos FILAS de esta tabla — y añadir una tercera clase de contexto el
+// día que exista es añadir una fila, no escribir una rama.
+//
+// La prueba es grepeable: fuera de los comentarios, events.KindSummary y
+// events.KindMessageOutOfTurn aparecen en este fichero EXACTAMENTE en estas dos
+// líneas. Si aparece una tercera, alguien ha abierto el segundo camino que T1.4
+// prohíbe —y dos caminos gemelos que divergen en un dato son la forma clásica de que
+// uno de los dos se quede atrás—.
+//
+// EL RÓTULO NO ES DECORATIVO: el automensaje de rescate LISTA PRODUCTOS. Un LLM que
+// lea esa lista sin saber quién la escribió extrae como pedido del cliente lo que
+// imprimió nuestro propio automensaje. El rótulo compra la continuidad —el «sí, esas
+// dos» del cliente sigue teniendo antecedente— sin comprar el bucle.
+var contextKinds = map[events.EntryKind]string{
+	events.KindSummary:          "resumen del sistema",
+	events.KindMessageOutOfTurn: "mensaje del negocio fuera de turno",
+}
+
+// contextLabel responde LA pregunta —¿esta entrada es contexto, y cómo se rotula?—
+// para las dos clases a la vez. Es la función por la que pasan ambas.
+func contextLabel(kind events.EntryKind) (string, bool) {
+	label, ok := contextKinds[kind]
+	return label, ok
+}
+
+// speakerOf traduce el rol a la palabra que lee el LLM en el hilo literal.
+//
+// 🔴 SOLO `client` es «cliente»; TODO lo demás —incluido un `system` que no
+// debería aparecer nunca con entry_kind='message'— cae a «negocio». La asimetría es
+// deliberada y es la misma que gobierna el resto del fichero: si hay duda sobre
+// quién habló, la respuesta segura es la que NO convierte texto ajeno en pedido del
+// cliente.
+func speakerOf(role events.Role) string {
+	if role == events.RoleClient {
+		return "cliente"
+	}
+	return "negocio"
+}
 
 // Composed es el resultado de componer un hilo. Se devuelve entero —y no solo el
 // texto— porque los efectos que T1.4 tiene que garantizar son NÚMEROS y hay que
@@ -92,7 +150,7 @@ type Composed struct {
 // 0. Se mide por MENSAJES, no por longitud del texto: un Composed con contexto y sin
 // mensajes tiene Text no vacío y aun así está Empty (ver ComposeAtFlush).
 func (c Composed) Empty() bool {
-	panic(pendiente.Implementar("runtime.Composed.Empty"))
+	return c.Messages == 0
 }
 
 // ComposeSourceText reparte las entradas del hilo en los dos bloques y arma el
@@ -159,7 +217,62 @@ func (c Composed) Empty() bool {
 //     Unicode, como U+00A0 o U+2003— NO es "" y entra como una línea más; los dígitos
 //     no ASCII no se traducen.
 func ComposeSourceText(entries []events.ThreadEntry) Composed {
-	panic(pendiente.Implementar("runtime.ComposeSourceText"))
+	var (
+		out          Composed
+		contextLines []string
+		literalLines []string
+	)
+	for _, e := range entries {
+		// 🔴 SE MIRA `Kind` ANTES DE TOCAR `Text`, SIEMPRE: `e.Text` no se usa fuera de
+		// los dos brazos del switch.
+		label, isContext := contextLabel(e.Kind)
+		switch {
+		case isContext:
+			// EL ÚNICO SITIO QUE PRODUCE CONTEXTO. Las dos clases pasan por aquí.
+			if e.Text == "" {
+				continue
+			}
+			contextLines = append(contextLines, "["+label+"] "+e.Text)
+			out.ContextEntries++
+		case e.Kind == events.KindMessage:
+			if e.Text == "" {
+				continue
+			}
+			literalLines = append(literalLines, speakerOf(e.Role)+": "+e.Text)
+			out.Messages++
+		default:
+			// FAIL-CLOSED, y cubre dos casos: `decision` —que es estructura, no prosa—
+			// y cualquier `entry_kind` que se invente después de escribir esto. Lo
+			// desconocido NO entra como literal del cliente: entrar por defecto al hilo
+			// es exactamente cómo el rescate se convertiría en un pedido. Si algún día
+			// un grado nuevo debe aportar contexto, se añade su fila a `contextKinds` y
+			// no una rama aquí.
+			continue
+		}
+	}
+	out.Context = strings.Join(contextLines, "\n")
+	out.Literal = strings.Join(literalLines, "\n")
+
+	// ⚠️ Rareza portada tal cual: el Text no se escapa. Un cliente que teclea las
+	// cabeceras las deja escritas dentro del bloque de mensajes.
+	var b strings.Builder
+	if out.Context != "" {
+		b.WriteString(sourceContextHeader)
+		b.WriteString("\n")
+		b.WriteString(out.Context)
+		b.WriteString("\n")
+		b.WriteString(sourceContextFooter)
+		b.WriteString("\n")
+	}
+	if out.Literal != "" {
+		b.WriteString(sourceLiteralHeader)
+		b.WriteString("\n")
+		b.WriteString(out.Literal)
+		b.WriteString("\n")
+		b.WriteString(sourceLiteralFooter)
+	}
+	out.Text = b.String()
+	return out
 }
 
 // ThreadReader es la lectura del hilo del evento, DESCIFRADA en el borde. Interfaz
@@ -190,10 +303,16 @@ const DefaultThreadLimit = 200
 
 // SourceTextComposer implementa SourceComposer (aggregator.go): lee el hilo, compone,
 // cifra y guarda.
-//
-// En el rojo no lleva campos. El verde le pone cinco: el logger, el lector del hilo,
-// el escritor del sobre, el cipher y el límite de entradas.
-type SourceTextComposer struct{}
+type SourceTextComposer struct {
+	log    logger.Logger
+	thread ThreadReader
+	jobs   SourceTextWriter
+	// cipher es el MISMO stack de claves que cifra el hilo, los contactos y los
+	// datos del comprador (keyring versionado del Plan 012). Un segundo cipher sería
+	// una segunda rotación que gestionar.
+	cipher *crypto.FieldCipher
+	limit  int
+}
 
 // SourceTextComposerOption configura el compositor al construirlo.
 type SourceTextComposerOption func(*SourceTextComposer)
@@ -202,7 +321,11 @@ type SourceTextComposerOption func(*SourceTextComposer)
 // <= 0 se ignora (se queda el límite que hubiera: DefaultThreadLimit si es la única
 // opción).
 func WithThreadLimit(n int) SourceTextComposerOption {
-	panic(pendiente.Implementar("runtime.WithThreadLimit"))
+	return func(c *SourceTextComposer) {
+		if n > 0 {
+			c.limit = n
+		}
+	}
 }
 
 // NewSourceTextComposer construye el compositor. Nunca devuelve nil. El límite de
@@ -217,7 +340,11 @@ func WithThreadLimit(n int) SourceTextComposerOption {
 // NULL, que es una forma legítima en la 0072. No lee ni escribe nada al construir.
 func NewSourceTextComposer(log logger.Logger, thread ThreadReader, jobs SourceTextWriter,
 	cipher *crypto.FieldCipher, opts ...SourceTextComposerOption) *SourceTextComposer {
-	panic(pendiente.Implementar("runtime.NewSourceTextComposer"))
+	c := &SourceTextComposer{log: log, thread: thread, jobs: jobs, cipher: cipher, limit: DefaultThreadLimit}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // ComposeAtFlush implementa SourceComposer. El agregador la llama UNA vez por
@@ -267,7 +394,56 @@ func NewSourceTextComposer(log logger.Logger, thread ThreadReader, jobs SourceTe
 // atomicidad con él, y PutSourceText exige que la fila esté ya en `pending`. Entre las
 // dos, el job es visible para el worker SIN sobre. Ver IntakeAggregator.Sweep.
 func (c *SourceTextComposer) ComposeAtFlush(ctx context.Context, key intake.WindowKey) error {
-	panic(pendiente.Implementar("runtime.SourceTextComposer.ComposeAtFlush"))
+	if c == nil || c.log == nil || c.thread == nil || c.jobs == nil || c.cipher == nil {
+		return nil
+	}
+	if !key.Valid() {
+		return fmt.Errorf("compositor: clave de ventana incompleta")
+	}
+
+	entries, err := c.thread.ListThread(ctx, key.EventID, c.limit)
+	if err != nil {
+		return fmt.Errorf("compositor: leer el hilo del evento %s: %w", key.EventID, err)
+	}
+
+	composed := ComposeSourceText(entries)
+	if composed.Empty() {
+		// 🔴 CERO MENSAJES ⇒ NO SE ESCRIBE NADA, ni siquiera si hubo contexto, y esto
+		// es una decisión y no un atajo (ver el paso 4 del contrato). El sobre se queda
+		// NULL —forma legítima en la 0072— y el worker verá un job sin literal. Es Warn
+		// y no Error: no hay nada roto.
+		c.log.Warn("compositor: la ventana cerró sin una sola línea del hilo; el sobre se queda vacío",
+			"tenant_id", key.TenantID, "session_id", key.SessionID, "event_id", key.EventID,
+			"entradas_de_contexto", composed.ContextEntries)
+		return nil
+	}
+
+	// EL CIFRADO, y es lo último que toca el literal. A partir de aquí solo viajan
+	// bytes. El error de Encrypt no se enriquece con nada del texto.
+	enc, dek, kekID, err := c.cipher.Encrypt(composed.Text)
+	if err != nil {
+		return fmt.Errorf("compositor: cifrar el literal de la ventana del evento %s: %w", key.EventID, err)
+	}
+
+	written, err := c.jobs.PutSourceText(ctx, key, intake.SourceText{Enc: enc, DEK: dek, KEKID: kekID})
+	if err != nil {
+		return fmt.Errorf("compositor: guardar el literal de la ventana del evento %s: %w", key.EventID, err)
+	}
+	if !written {
+		// No había dónde escribir: la fila ya tenía sobre, o la ventana no está en
+		// `pending`. No es un error —es idempotencia— pero se dice, porque si pasa
+		// siempre significa que alguien está componiendo dos veces.
+		c.log.Debug("compositor: la ventana ya tenía literal; no se sobrescribe",
+			"tenant_id", key.TenantID, "event_id", key.EventID)
+		return nil
+	}
+
+	// EL LOG LLEVA NÚMEROS, NUNCA CONTENIDO (REQ-10c). `bytes` es un tamaño, no un
+	// texto; `mensajes` y `contexto` son los contadores de Composed.
+	c.log.Debug("compositor: literal compuesto y cifrado",
+		"tenant_id", key.TenantID, "session_id", key.SessionID, "event_id", key.EventID,
+		"mensajes", composed.Messages, "contexto", composed.ContextEntries, "bytes", len(composed.Text))
+	return nil
 }
 
 // El compositor satisface el hueco que declara el agregador, comprobado en
