@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package engine_test
 
 import (

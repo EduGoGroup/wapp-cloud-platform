@@ -30,11 +30,12 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"sort"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Input es la entrada normalizada del usuario. En este corte, el texto del
@@ -61,7 +62,25 @@ type Output struct {
 // uso concurrente (no guarda estado por conversación; el estado lo lleva el
 // Conversation que recibe cada llamada): la misma llamada con la misma entrada
 // da el mismo resultado, la haga quien la haga y las veces que la haga.
-type Engine struct{}
+type Engine struct {
+	registry *modules.Registry
+	// content resuelve el model.Content de cada nodo ANTES del Render (Plan 015,
+	// T1). Nunca es nil: New lo inicializa al adapter estático (PURO) si no se
+	// inyecta otro con WithContentSource, de modo que el engine sigue testeable
+	// sin BD y el observable es idéntico al placeholder inline de T0.
+	content content.Source
+	// queryResolver resuelve las Query que los módulos elevan (Plan 044 · Ola 3.5 ·
+	// T3.5-2, ver consulta.go). Es OPCIONAL y nil por defecto: sin él, un módulo
+	// que pida recibe un veredicto «sin_resolutor» y su segunda pasada produce la
+	// pantalla de siempre. NO se inicializa a un doble en New —a diferencia de
+	// content— porque «no hay a quién preguntar» es un estado que el módulo tiene
+	// que poder distinguir, y un resolutor que siempre dice que no lo escondería.
+	queryResolver QueryResolver
+	// queryObserver observa el desenlace de cada consulta. También OPCIONAL: el
+	// engine no tiene logger ni conoce prometheus, así que la única forma de que
+	// una degradación no sea indistinguible de un turno normal es este callback.
+	queryObserver QueryObserver
+}
 
 // Option configura el Engine al construirlo (patrón functional-options, igual
 // que gatewaygrpc.Server). Las opciones se aplican en el orden en que se pasan.
@@ -71,15 +90,21 @@ type Option func(*Engine)
 // ella —o con una fuente nil—, New usa el adapter estático (PURO) por defecto:
 // contenido copiado del propio nodo, sin I/O. Si se pasa más de una vez, manda la
 // última.
-func WithContentSource(src content.Source) Option {
-	panic(pendiente.Implementar("engine.WithContentSource"))
-}
+func WithContentSource(src content.Source) Option { return func(e *Engine) { e.content = src } }
 
 // New construye el engine con el registro de módulos ya poblado. La fuente de
 // contenido es OPCIONAL (WithContentSource); por defecto es el adapter estático,
 // con el que un nodo se renderiza byte a byte con su propio Prompt.
 func New(reg *modules.Registry, opts ...Option) *Engine {
-	panic(pendiente.Implementar("engine.New"))
+	e := &Engine{registry: reg}
+	for _, opt := range opts {
+		opt(e)
+	}
+	// La fuente de contenido nunca es nil: estática (PURA) por defecto (T1).
+	if e.content == nil {
+		e.content = content.NewStatic()
+	}
+	return e
 }
 
 // FlowProducesDurableContent decide si f exige un evento padre para arrancar
@@ -117,7 +142,12 @@ func New(reg *modules.Registry, opts ...Option) *Engine {
 // tiene inyectado— sin que bootstrap.go necesite una sola línea nueva de
 // wiring.
 func (e *Engine) FlowProducesDurableContent(f model.Flow) bool {
-	panic(pendiente.Implementar("engine.Engine.FlowProducesDurableContent"))
+	for _, n := range f.Nodes {
+		if m, ok := e.registry.Get(n.Type); ok && m.ProducesDurableContent() {
+			return true
+		}
+	}
+	return false
 }
 
 // NodeProducesDurableContent es FlowProducesDurableContent acotado a UN tipo de
@@ -132,7 +162,8 @@ func (e *Engine) FlowProducesDurableContent(f model.Flow) bool {
 // cuenta como NO durable (D-054.3(a): «no hay módulo que pueda producir
 // nada»).
 func (e *Engine) NodeProducesDurableContent(nodeType string) bool {
-	panic(pendiente.Implementar("engine.Engine.NodeProducesDurableContent"))
+	m, ok := e.registry.Get(nodeType)
+	return ok && m.ProducesDurableContent()
 }
 
 // DurableNodeType nombra a QUIÉN culpar cuando FlowProducesDurableContent(f) da
@@ -148,7 +179,18 @@ func (e *Engine) NodeProducesDurableContent(nodeType string) bool {
 // durables se reporta uno cualquiera (determinista): saber que el flujo exige
 // evento ya basta para corregirlo, no hace falta enumerarlos todos en cada línea.
 func (e *Engine) DurableNodeType(f model.Flow) string {
-	panic(pendiente.Implementar("engine.Engine.DurableNodeType"))
+	ids := make([]string, 0, len(f.Nodes))
+	for id := range f.Nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		n := f.Nodes[id]
+		if m, ok := e.registry.Get(n.Type); ok && m.ProducesDurableContent() {
+			return n.Type
+		}
+	}
+	return ""
 }
 
 // Enter posiciona la conversación en el nodo inicial del flujo y produce su
@@ -175,7 +217,10 @@ func (e *Engine) DurableNodeType(f model.Flow) string {
 //
 // ctx se propaga hacia la resolución de contenido del render (Plan 015).
 func (e *Engine) Enter(ctx context.Context, def model.Flow, st model.Conversation) (model.Conversation, []Output, error) {
-	panic(pendiente.Implementar("engine.Engine.Enter"))
+	st.FlowID = def.FlowID
+	st.FlowVersion = def.Version
+	st.CurrentNode = def.Initial
+	return e.renderFrom(ctx, def, st)
 }
 
 // EnterPrimed es como Enter pero, si el nodo inicial es interactivo, su módulo
@@ -202,7 +247,67 @@ func (e *Engine) Enter(ctx context.Context, def model.Flow, st model.Conversatio
 // nil y lo demás es Enter, errores incluidos. Vale también cuando solo viaja
 // VarIntentName.
 func (e *Engine) EnterPrimed(ctx context.Context, def model.Flow, st model.Conversation) (model.Conversation, []Output, []modules.Effect, error) {
-	panic(pendiente.Implementar("engine.Engine.EnterPrimed"))
+	st.FlowID = def.FlowID
+	st.FlowVersion = def.Version
+	st.CurrentNode = def.Initial
+	if outs, effects, handled, err := e.tryPrime(ctx, def, &st); err != nil {
+		return st, nil, nil, err
+	} else if handled {
+		// El módulo consumió la señal y produjo su propio estado/pantalla. El carrito
+		// es de un solo nodo (Next==nil): permanece en el nodo inicial esperando input.
+		return st, outs, effects, nil
+	}
+	// 🔒 AQUÍ, Y NO EN CADA FIN DE PASO (Plan 046 · Ola 4 · T4.3, REQ-18).
+	//
+	// Llegar a esta línea significa que la señal de intención NO la consumió nadie, y
+	// las SEIS ramas por las que se llega pasan todas por aquí: sin VarIntentParams,
+	// nodo desconocido, módulo no registrado, módulo sin capacidad Primer, contenido no
+	// resoluble, y el propio Prime devolviendo handled=false. En todas ellas las claves
+	// seguían intactas en Vars, y de aquí caían al renderFrom y al Save del runtime:
+	// el TEXTO DEL CLIENTE, en claro y para siempre, en el JSONB de public.flow_state.
+	//
+	// Este es el ÚNICO productor de esas claves y su consumo ocurre entero dentro de
+	// EnterPrimed, así que barrer aquí cierra el 100 % de la fuga. Un barrido «al
+	// finalizar cada paso» sería no-op en todos los pasos menos el primero: un Step
+	// posterior no las siembra ni las lee.
+	st.Vars = modules.StripIntentSignal(st.Vars)
+	st, outs, err := e.renderFrom(ctx, def, st)
+	return st, outs, nil, err
+}
+
+// tryPrime intenta la pre-carga del nodo inicial (EnterPrimed). Devuelve handled=true
+// solo si hay intent_params en Vars, el nodo tiene un módulo con capacidad Primer y
+// ese módulo consumió la señal. Un error de resolución de contenido NO aborta: degrada
+// a handled=false ⇒ renderFrom resuelve el contenido por su camino uniforme (si falla,
+// devuelve el mismo error una sola vez).
+func (e *Engine) tryPrime(ctx context.Context, def model.Flow, st *model.Conversation) ([]Output, []modules.Effect, bool, error) {
+	if _, ok := st.Vars[modules.VarIntentParams]; !ok {
+		return nil, nil, false, nil
+	}
+	node, ok := def.Nodes[st.CurrentNode]
+	if !ok {
+		return nil, nil, false, nil
+	}
+	mod, ok := e.registry.Get(node.Type)
+	if !ok {
+		return nil, nil, false, nil
+	}
+	primer, ok := mod.(modules.Primer)
+	if !ok {
+		return nil, nil, false, nil
+	}
+	content, err := e.content.Resolve(ctx, st.TenantID, node)
+	if err != nil {
+		//nolint:nilerr // degradación intencional: sin content, renderFrom lo resuelve por su
+		// camino uniforme y devuelve el mismo error una sola vez (no se pre-carga, no se aborta).
+		return nil, nil, false, nil
+	}
+	res, handled := primer.Prime(node, content, st.Vars)
+	if !handled {
+		return nil, nil, false, nil
+	}
+	st.Vars = res.Vars
+	return toOutputs(res.Outputs), res.Effects, true, nil
 }
 
 // Step evalúa el nodo actual con la entrada del usuario (design.md §3):
@@ -248,5 +353,168 @@ func (e *Engine) EnterPrimed(ctx context.Context, def model.Flow, st model.Conve
 // si venía nil), y el desenlace se sella en el mapa que devolvió el módulo, que
 // suele ser ese mismo. Es el comportamiento del viejo, portado tal cual.
 func (e *Engine) Step(ctx context.Context, def model.Flow, st model.Conversation, in Input) (model.Conversation, []Output, []modules.Effect, error) {
-	panic(pendiente.Implementar("engine.Engine.Step"))
+	if st.Finished() {
+		// Nodo terminal: la entrada se ignora, sin salida (documentado §6).
+		return st, nil, nil, nil
+	}
+
+	node, ok := def.Nodes[st.CurrentNode]
+	if !ok {
+		return st, nil, nil, fmt.Errorf("%w: nodo actual %q no existe en la definición", model.ErrInvalidFlow, st.CurrentNode)
+	}
+
+	// Delegación genérica: cualquier módulo interactivo (menu, survey_question,
+	// …) recorre la misma ruta. Si el nodo actual no tiene módulo registrado o
+	// su módulo no espera input (p. ej. "message"), es un estado inconsistente:
+	// tras un Enter/renderFrom el estado siempre queda en un nodo interactivo o
+	// en el centinela.
+	mod, ok := e.registry.Get(node.Type)
+	if !ok || !mod.WaitsForInput() {
+		return st, nil, nil, fmt.Errorf("%w: nodo actual %q de tipo %q no espera entrada", model.ErrInvalidFlow, st.CurrentNode, node.Type)
+	}
+	// Best-effort: resuelve el contenido del nodo y EXPONE su blob crudo
+	// (Content.Raw) en Vars ANTES del Step, para que un módulo cuya sub-máquina
+	// navega en Step —que NO recibe el content resuelto, a diferencia de Render—
+	// pueda leer datos de dominio sin hacer I/O (Plan 015/016, design.md §4.1).
+	// Genérico: el engine no conoce el dominio (cart parsea su catálogo desde ahí).
+	// Un error de resolución NO aborta el Step (se degrada: el módulo verá Raw
+	// ausente); Raw nil (static: menú/encuesta) no siembra nada ⇒ sin regresión.
+	if resolved, rerr := e.content.Resolve(ctx, st.TenantID, node); rerr == nil && resolved.Raw != nil {
+		if st.Vars == nil {
+			st.Vars = map[string]any{}
+		}
+		st.Vars[modules.VarContentRaw] = resolved.Raw
+	}
+	res := mod.Step(node, st, in.Text)
+	// RE-ENTRY (Plan 044 · Ola 3.5 · T3.5-2, ver consulta.go). El módulo es PURO y
+	// no puede preguntarle nada a nadie; si su camino determinista no resolvió,
+	// PIDE en un campo aditivo del Result y termina su turno sin mutar nada. Aquí
+	// —que es donde hay ctx— se resuelve la consulta y se le vuelve a llamar UNA
+	// vez con el veredicto sembrado en Vars. El Result de la primera pasada se
+	// descarta ENTERO, efectos incluidos.
+	//
+	// Sin consulta (el 100 % de los turnos hasta esta tarea, y el 99 % después) esta
+	// rama no existe: res sigue siendo el de la única pasada.
+	if res.Query != nil {
+		res = e.reenterWithVerdict(ctx, mod, node, st, in.Text, *res.Query)
+	}
+	st.Vars = res.Vars
+	if res.Next != nil {
+		if *res.Next == model.NodeTerminal {
+			// FIN DE FLUJO declarado por el propio módulo (hallazgo #24, Plan 043 ·
+			// Ola 6): un módulo de UN SOLO NODO que espera input siempre (WaitsForInput
+			// == true, p. ej. "cart") no puede terminar por la cadena normal de
+			// renderFrom —no hay un SEGUNDO nodo al que apuntar, y de haberlo,
+			// renderFrom llamaría a Render, no reusaría el Outputs de ESTE Step—. El
+			// módulo señala el fin apuntando Result.Next al centinela él mismo; el
+			// engine lo reconoce AQUÍ, sin buscarlo en def.Nodes (está reservado,
+			// model.Validate lo rechaza como id real), y termina con la pantalla que
+			// el propio módulo ya produjo. closeIfFinished (runtime/event_lifecycle.go)
+			// ve st.Finished()==true en este mismo turno y cierra el evento que posea
+			// el flujo — el mecanismo NO cambia, solo gana quien puede activarlo.
+			st.CurrentNode = model.NodeTerminal
+			// El DESENLACE viaja junto al centinela (hallazgo #29, Plan 043 · Ola 6):
+			// el módulo declara CÓMO terminó y el engine lo sella en el estado, que es
+			// lo que closeIfFinished lee para traducirlo al `status` del evento. Se
+			// escribe SOLO en esta rama —el fin de flujo declarado por el módulo— y
+			// nunca en la transición normal ni en el reprompt: un flujo que sigue vivo
+			// no tiene desenlace, y sellarle uno «por si acaso» dejaría un valor que
+			// mentiría en cuanto la conversación siguiera por otro lado.
+			//
+			// res.Outcome == OutcomeUndeclared BORRA la clave (ver SetOutcome), así que
+			// un módulo que declara el fin sin declarar el desenlace deja el estado byte
+			// a byte como antes de esta ola.
+			st.SetOutcome(res.Outcome)
+			return st, toOutputs(res.Outputs), res.Effects, nil
+		}
+		// Transición válida: renderiza el destino (encadenando messages).
+		st.CurrentNode = *res.Next
+		st2, outs, err := e.renderFrom(ctx, def, st)
+		return st2, outs, res.Effects, err
+	}
+	// Permanece: reprompt o ayuda.
+	return st, toOutputs(res.Outputs), res.Effects, nil
+}
+
+// renderFrom produce la salida desde st.CurrentNode: emite los "message" (y los
+// nodos de SALIDA no interactivos, p. ej. "media": Render + adjunto declarado)
+// encadenados por Next y se detiene al llegar a un nodo INTERACTIVO (menu/survey/
+// cart, cuyo render delega en el módulo) o a Next == nil (marca el fin con el
+// centinela NodeTerminal).
+//
+// El content de cada nodo interactivo lo RESUELVE la fuente inyectada (puerto
+// ContentSource, Plan 015 T1) ANTES del Render; por defecto es el adapter estático
+// (PURO), cuyo observable es idéntico al render previo.
+func (e *Engine) renderFrom(ctx context.Context, def model.Flow, st model.Conversation) (model.Conversation, []Output, error) {
+	var outs []Output
+	// Cota de seguridad ante ciclos message→message no detectables por Validate.
+	for guard := 0; guard <= len(def.Nodes); guard++ {
+		node, ok := def.Nodes[st.CurrentNode]
+		if !ok {
+			return st, outs, fmt.Errorf("%w: nodo %q no existe en la definición", model.ErrInvalidFlow, st.CurrentNode)
+		}
+		// El tipo "message" es trivial y NO es un módulo: su lógica (emitir el
+		// texto y encadenar por Next o terminar) vive inline aquí. Cualquier
+		// otro tipo se delega al módulo registrado; si es interactivo, se
+		// renderiza y el flujo se detiene esperando input.
+		if node.Type == model.NodeTypeMessage {
+			outs = append(outs, Output{Text: node.Text})
+			if node.Next == nil {
+				st.CurrentNode = model.NodeTerminal
+				return st, outs, nil
+			}
+			st.CurrentNode = *node.Next
+			continue
+		}
+
+		mod, ok := e.registry.Get(node.Type)
+		if !ok {
+			return st, outs, fmt.Errorf("%w: nodo %q: tipo desconocido %q", model.ErrInvalidFlow, st.CurrentNode, node.Type)
+		}
+		// Resolución de contenido por fuente (Plan 015, T1): la Source inyectada
+		// produce el model.Content del nodo ANTES del Render. El default (static,
+		// PURO) copia Prompt/Options del propio nodo ⇒ observable idéntico a T0.
+		content, err := e.content.Resolve(ctx, st.TenantID, node)
+		if err != nil {
+			return st, outs, fmt.Errorf("%w: resolver contenido de %q: %w", model.ErrInvalidFlow, st.CurrentNode, err)
+		}
+		outs = append(outs, toOutputs(mod.Render(node, content))...)
+		if mod.WaitsForInput() {
+			// Nodo INTERACTIVO (menu, survey, cart): se renderiza y el flujo se
+			// detiene aquí esperando la entrada del usuario.
+			return st, outs, nil
+		}
+		// Nodo de SALIDA (emite y avanza), NO interactivo (p. ej. "media", Plan 017
+		// §9.A): además del texto de Render puede DECLARAR un adjunto opaco
+		// (model.MediaRef) por la capacidad OPCIONAL modules.MediaEmitter; el runtime
+		// lo interpreta (presign + SendMedia, §9.C). El engine consulta la CAPACIDAD,
+		// no node.Type ⇒ sigue genérico (sin switch por tipo). Tras emitir, encadena
+		// por Next (o termina con el centinela) igual que un "message".
+		if em, ok := mod.(modules.MediaEmitter); ok {
+			ref, merr := em.EmitMedia(node, content)
+			if merr != nil {
+				return st, outs, fmt.Errorf("%w: emitir media de %q: %w", model.ErrInvalidFlow, st.CurrentNode, merr)
+			}
+			if ref != nil {
+				outs = append(outs, Output{Media: ref})
+			}
+		}
+		if node.Next == nil {
+			st.CurrentNode = model.NodeTerminal
+			return st, outs, nil
+		}
+		st.CurrentNode = *node.Next
+	}
+	return st, outs, fmt.Errorf("%w: cadena de mensajes demasiado larga (¿ciclo?) desde %q", model.ErrInvalidFlow, st.CurrentNode)
+}
+
+func toOutputs(texts []string) []Output {
+	if len(texts) == 0 {
+		return nil
+	}
+	outs := make([]Output, 0, len(texts))
+	for _, t := range texts {
+		outs = append(outs, Output{Text: t})
+	}
+	return outs
 }

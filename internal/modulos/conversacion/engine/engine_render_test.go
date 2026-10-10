@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package engine_test
 
 // engine_render_test.go — el render que comparten Enter, EnterPrimed y las
@@ -72,34 +70,36 @@ func bannerNode(text, key string, next *string) model.Node {
 	return node
 }
 
-func TestEnter_OutputNodes(t *testing.T) {
-	t.Run("emits text then media and chains by Next", func(t *testing.T) {
-		flow := model.Flow{FlowID: "envio", Version: 1, Initial: "b1", Nodes: map[string]model.Node{
-			"b1":   bannerNode("mira esto", "wapp/media/x.pdf", ptr("done")),
-			"done": {Type: model.NodeTypeMessage, Text: "listo"},
-		}}
-		st, outs, err := newEngine([]modules.Module{banner(nil)}).Enter(context.Background(), flow, model.Conversation{})
-		if err != nil {
-			t.Fatalf("Enter: %v", err)
-		}
-		if !st.Finished() {
-			t.Errorf("CurrentNode = %q, quiero el centinela (un nodo de salida no espera)", st.CurrentNode)
-		}
-		if len(outs) != 3 {
-			t.Fatalf("salidas = %+v, quiero texto del render, adjunto y texto terminal", outs)
-		}
-		if outs[0].Text != "mira esto" || outs[0].Media != nil {
-			t.Errorf("outs[0] = %+v, quiero el texto del Render", outs[0])
-		}
-		want := model.MediaRef{Key: "wapp/media/x.pdf", Filename: "f.pdf", Mime: "application/pdf", Kind: "document", Caption: "hola"}
-		if outs[1].Media == nil || *outs[1].Media != want || outs[1].Text != "" {
-			t.Errorf("outs[1] = %+v, quiero solo el adjunto declarado, sin interpretar", outs[1])
-		}
-		if outs[2].Text != "listo" || outs[2].Media != nil {
-			t.Errorf("outs[2] = %+v, quiero el texto terminal", outs[2])
-		}
-	})
+// Un nodo de salida emite el texto de su Render, después su adjunto, y sigue por Next
+// sin detenerse.
+func TestEnter_OutputNodeEmitsTextThenMediaAndChains(t *testing.T) {
+	flow := model.Flow{FlowID: "envio", Version: 1, Initial: "b1", Nodes: map[string]model.Node{
+		"b1":   bannerNode("mira esto", "wapp/media/x.pdf", ptr("done")),
+		"done": {Type: model.NodeTypeMessage, Text: "listo"},
+	}}
+	st, outs, err := newEngine([]modules.Module{banner(nil)}).Enter(context.Background(), flow, model.Conversation{})
+	if err != nil {
+		t.Fatalf("Enter: %v", err)
+	}
+	if !st.Finished() {
+		t.Errorf("CurrentNode = %q, quiero el centinela (un nodo de salida no espera)", st.CurrentNode)
+	}
+	if len(outs) != 3 {
+		t.Fatalf("salidas = %+v, quiero texto del render, adjunto y texto terminal", outs)
+	}
+	if outs[0].Text != "mira esto" || outs[0].Media != nil {
+		t.Errorf("outs[0] = %+v, quiero el texto del Render", outs[0])
+	}
+	want := model.MediaRef{Key: "wapp/media/x.pdf", Filename: "f.pdf", Mime: "application/pdf", Kind: "document", Caption: "hola"}
+	if outs[1].Media == nil || *outs[1].Media != want || outs[1].Text != "" {
+		t.Errorf("outs[1] = %+v, quiero solo el adjunto declarado, sin interpretar", outs[1])
+	}
+	if outs[2].Text != "listo" || outs[2].Media != nil {
+		t.Errorf("outs[2] = %+v, quiero el texto terminal", outs[2])
+	}
+}
 
+func TestEnter_OutputNodes(t *testing.T) {
 	t.Run("without Next ends the flow", func(t *testing.T) {
 		flow := model.Flow{FlowID: "envio", Version: 1, Initial: "b1", Nodes: map[string]model.Node{
 			"b1": bannerNode("", "wapp/media/y.pdf", nil),
@@ -122,7 +122,10 @@ func TestEnter_OutputNodes(t *testing.T) {
 			t.Errorf("nodo = %q, salidas = %+v, err = %v; quiero el fin sin salidas", st.CurrentNode, outs, err)
 		}
 	})
+}
 
+// La capacidad MediaEmitter es opcional, y solo se consulta en los nodos de salida.
+func TestEnter_MediaCapabilityIsOptional(t *testing.T) {
 	t.Run("output module without the capability just chains", func(t *testing.T) {
 		plain := stubModule{nodeType: typeBanner}
 		flow := model.Flow{FlowID: "envio", Version: 1, Initial: "b1", Nodes: map[string]model.Node{
@@ -135,7 +138,6 @@ func TestEnter_OutputNodes(t *testing.T) {
 		}
 	})
 
-	// La capacidad solo se consulta en los nodos de salida.
 	t.Run("interactive module is never asked for media", func(t *testing.T) {
 		interactive := banner(errors.New("no debe llamarse"))
 		interactive.waits = true

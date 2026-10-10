@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package engine_test
 
 // engine_enter_primed_test.go — EnterPrimed: la pre-carga por la señal de intención

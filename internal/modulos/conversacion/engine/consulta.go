@@ -61,8 +61,8 @@ package engine
 import (
 	"context"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // QueryResolver (`ConsultaResolver` en el viejo; su método era `ResolverConsulta`)
@@ -160,7 +160,11 @@ const (
 // disciplina que WithLogger del carrito): cablear a medias no puede dejar el engine
 // en un estado peor que no cablear, ni quitar el que ya hubiera.
 func WithQueryResolver(r QueryResolver) Option {
-	panic(pendiente.Implementar("engine.WithQueryResolver"))
+	return func(e *Engine) {
+		if r != nil {
+			e.queryResolver = r
+		}
+	}
 }
 
 // WithQueryObserver (`WithConsultaObserver` en el viejo) inyecta el observador de
@@ -169,5 +173,84 @@ func WithQueryResolver(r QueryResolver) Option {
 // que este plan no quiere repetir. Un observador nil se ignora, igual que el
 // resolutor.
 func WithQueryObserver(fn QueryObserver) Option {
-	panic(pendiente.Implementar("engine.WithQueryObserver"))
+	return func(e *Engine) {
+		if fn != nil {
+			e.queryObserver = fn
+		}
+	}
+}
+
+// reenterWithVerdict (`reentrarConVeredicto` en el viejo) ejecuta la SEGUNDA (y
+// última) pasada del módulo, con las tres reglas de la cabecera de este fichero.
+func (e *Engine) reenterWithVerdict(ctx context.Context, mod modules.Module, node model.Node, st model.Conversation, text string, q modules.Query) modules.Result {
+	st.Vars = modules.WithVerdict(st.Vars, e.resolveQuery(ctx, st.TenantID, st.SessionID, q))
+	res := mod.Step(node, st, text)
+	if res.Query != nil {
+		e.observeQuery(q, QueryOutcomeLoop)
+		res.Query = nil
+	}
+	res.Vars = modules.StripQueryVerdict(res.Vars)
+	return res
+}
+
+// resolveQuery pregunta al resolutor y traduce cualquier desenlace —incluido
+// «no hay resolutor»— a un Verdict que el módulo pueda leer. NUNCA devuelve
+// error: la degradación es el contrato, no una excepción.
+func (e *Engine) resolveQuery(ctx context.Context, tenantID, sessionID string, q modules.Query) modules.Verdict {
+	if e.queryResolver == nil {
+		e.observeQuery(q, QueryOutcomeNoResolver)
+		return modules.Verdict{Reason: modules.QueryReasonNoResolver}
+	}
+	v, err := e.queryResolver.ResolveQuery(ctx, tenantID, sessionID, q)
+	if err != nil {
+		// El error NO se propaga hacia arriba a propósito: abortar el Step dejaría a
+		// la clienta sin respuesta por un servicio auxiliar que solo iba a MEJORAR la
+		// interpretación de su mensaje. Se degrada al camino de siempre y el fallo se
+		// ve por el observador, que es donde tiene que verse.
+		e.observeQuery(q, QueryOutcomeFailure)
+		return modules.Verdict{Reason: modules.QueryReasonFailure}
+	}
+	if !v.ResolvedAny() {
+		e.observeQuery(q, QueryOutcomeInconclusive)
+		// Se respeta el motivo que declare el resolutor y solo se rellena el que
+		// falte: «no supe» es una respuesta legítima y el módulo puede querer
+		// distinguirla de un fallo.
+		if v.Reason == "" {
+			v.Reason = modules.QueryReasonInconclusive
+		}
+		return v
+	}
+	e.observeQuery(q, queryOutcomeOf(q, v))
+	// El Code llega SIN validar contra Query.Options: valida el MÓDULO, que
+	// es el dueño de su catálogo y el único que sabe qué es admisible en su nivel.
+	// El engine no interpreta el dominio ni aquí ni en ningún otro sitio.
+	return v
+}
+
+// observeQuery avisa al observador si lo hay. Un observador que entre en pánico
+// se lleva el turno por delante: es el mismo trato que reciben los demás hooks del
+// repo, y la alternativa —tragarse el pánico— escondería un bug de quien observa
+// dentro del camino de quien vende.
+func (e *Engine) observeQuery(q modules.Query, outcome string) {
+	if e.queryObserver == nil {
+		return
+	}
+	e.queryObserver(string(q.Class), q.Level, outcome)
+}
+
+// queryOutcomeOf (`desenlaceDe` en el viejo) distingue el troceado COMPLETO del
+// PARCIAL. Para una consulta de un solo texto siempre es `resuelto`, que es lo que
+// era antes de T3.5-3.
+//
+// Se mide contra los TROZOS QUE SE PIDIERON y no contra los que se contestaron: un
+// veredicto que trae menos códigos que trozos —porque el resolutor cortó por tope o
+// por presupuesto— es exactamente el caso que hay que poder ver, y compararlo consigo
+// mismo lo dejaría siempre en verde.
+func queryOutcomeOf(q modules.Query, v modules.Verdict) string {
+	for i := range q.Chunks {
+		if i >= len(v.Codes) || v.Codes[i] == "" {
+			return QueryOutcomePartial
+		}
+	}
+	return QueryOutcomeResolved
 }

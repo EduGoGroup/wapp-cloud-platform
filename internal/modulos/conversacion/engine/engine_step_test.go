@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package engine_test
 
 // engine_step_test.go — Step sin consulta: la ruta genérica, la permanencia, la
@@ -260,15 +258,16 @@ func TestStep_ModuleDeclaresTheEnd(t *testing.T) {
 	}
 }
 
+// probe anota lo que el módulo ve bajo la clave del blob crudo y permanece.
+func probe(seen *[]any) stubModule {
+	return stubModule{nodeType: typeChoice, waits: true, step: func(_ model.Node, conv model.Conversation, _ string) modules.Result {
+		*seen = append(*seen, conv.Vars[modules.VarContentRaw])
+		return modules.Result{Vars: conv.Vars}
+	}}
+}
+
 func TestStep_ExposesRawContentBeforeTheModuleRuns(t *testing.T) {
 	raw := map[string]any{"items": []any{"empanada"}}
-	// probe anota lo que el módulo ve bajo la clave del blob y permanece.
-	probe := func(seen *[]any) stubModule {
-		return stubModule{nodeType: typeChoice, waits: true, step: func(_ model.Node, conv model.Conversation, _ string) modules.Result {
-			*seen = append(*seen, conv.Vars[modules.VarContentRaw])
-			return modules.Result{Vars: conv.Vars}
-		}}
-	}
 	withRaw := func(tenants *[]string) engine.Option {
 		return engine.WithContentSource(sourceFunc(func(_ context.Context, tenantID string, _ model.Node) (model.Content, error) {
 			*tenants = append(*tenants, tenantID)
@@ -305,7 +304,10 @@ func TestStep_ExposesRawContentBeforeTheModuleRuns(t *testing.T) {
 			t.Errorf("mapa del llamante = %v, quiero sus claves más el blob", caller)
 		}
 	})
+}
 
+// Sembrar el blob es best-effort: sin blob, o si la fuente falla, el módulo corre igual.
+func TestStep_WithoutRawContentSowsNothing(t *testing.T) {
 	t.Run("no raw blob sows nothing", func(t *testing.T) {
 		var seen []any
 		e := newEngine([]modules.Module{probe(&seen)}) // estática: Raw nil

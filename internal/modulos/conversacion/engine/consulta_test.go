@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package engine_test
 
 // consulta_test.go — EL MECANISMO del re-entry, probado donde vive (Plan 044 · Ola
@@ -25,12 +23,12 @@ import (
 )
 
 const (
-	typeAsker        = "asker"
-	levelUnderTest   = "nivel-de-prueba"
-	firstPassScreen  = "pantalla de la PRIMERA pasada"
-	firstPassEffect  = "efecto_de_la_PRIMERA_pasada"
-	secondPassEffect = "efecto_de_la_segunda_pasada"
-	clientText       = "mejor la primera, la de PINO"
+	typeAsker      = "asker"
+	levelUnderTest = "nivel-de-prueba"
+	firstScreen    = "pantalla de la PRIMERA pasada"
+	firstEffect    = "efecto_de_la_PRIMERA_pasada"
+	secondEffect   = "efecto_de_la_segunda_pasada"
+	clientText     = "mejor la primera, la de PINO"
 )
 
 // pass es lo que el módulo vio en una llamada a Step.
@@ -62,8 +60,8 @@ func (a asker) Step(_ model.Node, conv model.Conversation, input string) modules
 	if !ok || a.stubborn {
 		return modules.Result{
 			Vars:    conv.Vars,
-			Outputs: []string{firstPassScreen},
-			Effects: []modules.Effect{{Kind: "event", Name: firstPassEffect}},
+			Outputs: []string{firstScreen},
+			Effects: []modules.Effect{{Kind: "event", Name: firstEffect}},
 			Query: &modules.Query{
 				Class: modules.QueryClassOption, Level: levelUnderTest, Text: input, Chunks: a.chunks,
 				Options: []modules.QueryOption{{Code: "1", Label: "Confirmar y finalizar"}},
@@ -76,7 +74,7 @@ func (a asker) Step(_ model.Node, conv model.Conversation, input string) modules
 	// Devuelve las Vars que recibió, CON el veredicto dentro: no lo limpia.
 	if v.ResolvedAny() {
 		return modules.Result{Vars: conv.Vars, Outputs: []string{"resuelto:" + v.Code},
-			Effects: []modules.Effect{{Kind: "event", Name: secondPassEffect}}}
+			Effects: []modules.Effect{{Kind: "event", Name: secondEffect}}}
 	}
 	return modules.Result{Vars: conv.Vars, Outputs: []string{"degradado:" + string(v.Reason)}}
 }
@@ -193,8 +191,8 @@ func TestQuery_ReentryResolvesAndDiscardsTheFirstPass(t *testing.T) {
 	if !slices.Equal(texts(outs), []string{"resuelto:1"}) {
 		t.Errorf("salidas = %q, quiero solo las de la segunda pasada", texts(outs))
 	}
-	if len(effects) != 1 || effects[0].Name != secondPassEffect {
-		t.Errorf("efectos = %v, quiero solo %q", effects, secondPassEffect)
+	if len(effects) != 1 || effects[0].Name != secondEffect {
+		t.Errorf("efectos = %v, quiero solo %q", effects, secondEffect)
 	}
 	if !maps.Equal(st.Vars, map[string]any{"session_var": "intacto"}) || st.CurrentNode != "n1" {
 		t.Errorf("estado = %+v, quiero las Vars originales y el mismo nodo", st)
@@ -289,7 +287,7 @@ func TestQuery_ModuleAskingTwiceDoesNotLoop(t *testing.T) {
 		t.Errorf("el resolutor se llamó %d veces, quiero 1: la petición de la segunda pasada se ignora", len(calls))
 	}
 	// Lo que el módulo produjo en la segunda pasada se entrega: solo se ignora la petición.
-	if !slices.Equal(texts(outs), []string{firstPassScreen}) || len(effects) != 1 || st.CurrentNode != "n1" {
+	if !slices.Equal(texts(outs), []string{firstScreen}) || len(effects) != 1 || st.CurrentNode != "n1" {
 		t.Errorf("nodo = %q, salidas = %q, efectos = %v", st.CurrentNode, texts(outs), effects)
 	}
 	want := observations{{"opcion", levelUnderTest, "resuelto"}, {"opcion", levelUnderTest, "bucle"}}
@@ -427,6 +425,6 @@ func TestQueryObserver_PanicIsNotSwallowed(t *testing.T) {
 			t.Errorf("recover = %v, quiero el pánico del observador", got)
 		}
 	}()
-	_, _, _, _ = e.Step(context.Background(), askerFlow(), askerConversation(), engine.Input{Text: clientText})
-	t.Error("Step volvió sin propagar el pánico del observador")
+	st, _, _, err := e.Step(context.Background(), askerFlow(), askerConversation(), engine.Input{Text: clientText})
+	t.Errorf("Step volvió (nodo %q, err %v) sin propagar el pánico del observador", st.CurrentNode, err)
 }
