@@ -166,6 +166,11 @@ func openedBy(m *cloudlinkv1.IncomingMessage) openingTurn {
 // limitador de auto-respuestas (lo pulsa un humano, no es una reacción), no pega coletilla,
 // no escribe hilo ni abre ventana de captación, y no pasa por las guardas del entrante
 // (perfil pasivo, anti-self-loop, dedupe). Sí cuenta en la racha (ST-H).
+//
+// Que no cobre token y sí cuente racha NO es una incoherencia, es deliberado (D-F8-17): el
+// limitador protege de responder de más a lo que escribe el cliente, y un arranque que lanza
+// el dueño no responde a nadie (cobrarle token podría dejarlo sin salida); la racha mide
+// mensajes que salen sin un humano al otro lado escribiendo, y el de Start lo es.
 func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string, ref contact.Ref) (*cloudlinkv1.Ack, error) {
 	// Resuelve la ref del admin a un contact_id OPACO antes de clavar la key: el
 	// motor opera por contact_id, no por el JID/ref crudo (Plan 010, design.md §6).

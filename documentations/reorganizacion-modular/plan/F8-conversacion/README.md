@@ -496,7 +496,7 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     vuelve a intentarlo; divergencia deliberada del viejo, con dos casos y dos mutantes muertos), el `time.After(25 ms)` real del reintento
     (✎ **34c, la mitad que duplicaba, arreglada**: D-F8-15, `6eb31a3d`, el reintento retoma donde falló y ya no repite el outbox ni
     el hilo cuando lo que falló fue la proyección; los 25 ms de reloj real siguen), los dos panic diferidos (✎ **34e
-    arreglada**: D-F8-16, `a9da0105`, el nil se ignora) y `Start` sin token pero contando racha
+    arreglada**: D-F8-16, `a9da0105`, el nil se ignora) y `Start` sin token pero contando racha (✎ **34g decidida**: se queda y es deliberado, D-F8-17)
     (cobrar token en `Start` lo matan `TestStart_SkipsTheIncomingMachinery` y `TestStart_DurableFlowIsRejectedWithoutATrace`).
     D-F9-10 está en `logSweepError` (`aggregator_sweep.go`), con cinco mutantes muertos por
     `TestRun_ContextCancelled_ReturnsWithoutLoggingAtError`.
