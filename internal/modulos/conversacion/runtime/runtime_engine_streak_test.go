@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // runtime_engine_streak_test.go prueba (*Runtime).MaxAutoreplyStreak, la fuente del gauge de

@@ -33,7 +33,7 @@ type EffectContext struct {
 	// survey_results.event_id): el hijo declara a su padre.
 	//
 	// ⚠️ Quien lo rellena es el runtime, con dos matices que su contrato tiene que
-	// llevar (ola siguiente): en el camino de arranque NO sale del estado guardado
+	// llevar (lo lleva incoming.go): en el camino de arranque NO sale del estado guardado
 	// (ahí todavía es "": el puntero se estampa DESPUÉS de arrancar) sino del evento
 	// recién nacido o conmutado que el runtime tiene en la mano; y en el turno que
 	// TERMINA el flujo se captura ANTES del cierre, porque los efectos pertenecen al
@@ -110,7 +110,7 @@ type EventSink interface {
 // fichero, con su test). La conducta de extremo a extremo —los tres sinks reciben el
 // efecto en el orden proyecta-A, proyecta-B, notifica; y el WebhookSink registrado
 // PRIMERO encola igualmente el intake_id que generó la proyección— se prueba con el
-// Runtime, en la ola siguiente.
+// Runtime (los tests de `incoming` y de `resume`).
 //
 // Es un entero para que quepan fases intermedias: los valores dejan hueco a propósito.
 type SinkPhase int

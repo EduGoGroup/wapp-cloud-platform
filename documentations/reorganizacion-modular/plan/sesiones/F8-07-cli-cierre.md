@@ -7,13 +7,13 @@
 | Nivel (E-12) | no aplica (no se escribe código de producción) |
 | Duración objetivo | 45–90 min |
 | Tareas | T8.36–T8.38 (T8.37 = T9.29) |
-| Depende de | F8-06 |
+| Depende de | F8-06b (✎ 2026-10-10, D-F8-13: antes F8-06) |
 | Decisiones | D-F9-1 (adelantar F9) |
 | Se para cuando | la definición de hecho de [`reglas.md`](../F8-conversacion/reglas.md) §4 entera: suites de los puertos con BD verdes contra Postgres · `cmd/server-modular` arranca solo y recorre una conversación · `make test-procesos` y `make ci-local` rc=0 con 0 SKIP · PR a `dev` abierto desde la rama de la sesión |
 
 ## Antes de pegar el prompt (Jhoan)
 
-- [ ] La sesión anterior (F8-06) está integrada y empujada en `dev`.
+- [ ] La sesión anterior (F8-06b; ✎ D-F8-13: el arreglo de D-F7-9) está integrada y empujada en `dev`.
 - [ ] Decisiones rellenas en [`../DECISIONES.md`](../DECISIONES.md): D-F9-1 (adelantar F9).
 - [ ] Docker encendido en el Mac.
 - [ ] `go1.26.5` y `golangci-lint v2.12.2` disponibles (`make toolchain`).

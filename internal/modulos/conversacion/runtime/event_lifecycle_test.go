@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // event_lifecycle_test.go prueba la MUERTE EXPLÍCITA del evento (event_lifecycle.go): el

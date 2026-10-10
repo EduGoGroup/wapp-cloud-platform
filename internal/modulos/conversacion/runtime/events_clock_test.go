@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // events_clock_test.go prueba EL reloj de conversación aplicado al entrante que llega con un

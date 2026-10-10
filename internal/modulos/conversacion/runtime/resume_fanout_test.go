@@ -1,9 +1,8 @@
-//go:build pendiente
-
 package runtime_test
 
 // resume_fanout_test.go prueba, por HandleIncoming, el FAN-OUT de efectos del contrato de
-// resume.go (FO-1…FO-7) y el orden por fase que fija New (RT-18, la promesa de event_sink.go
+// resume.go (FO-1…FO-6; FO-7, el reintento que retoma donde falló, está en
+// resume_retry_test.go) y el orden por fase que fija New (RT-18, la promesa de event_sink.go
 // que quedó anotada para esta ola). Los dobles son los de resume_test.go.
 //
 // Los tests del reintento esperan los 25 ms REALES del contrato (FO-4): a lo sumo 50 ms.
@@ -289,44 +288,4 @@ func TestFanOut_CancelledContextAbandonsTheRetry(t *testing.T) {
 		t.Errorf("entregas = %v, con el contexto cancelado no se reintenta", got)
 	}
 	assertFanOutCut(t, h, context.Canceled)
-}
-
-// fanOutProjector es un modules.Projector que falla las primeras failTimes proyecciones.
-type fanOutProjector struct {
-	failTimes int
-	calls     int
-}
-
-func (*fanOutProjector) Handles(string) bool { return true }
-
-func (p *fanOutProjector) Project(context.Context, modules.EffectMeta, modules.Effect) error {
-	p.calls++
-	if p.calls <= p.failTimes {
-		return errResumeCause
-	}
-	return nil
-}
-
-// FO-7 · Se reintenta el Handle ENTERO del sink: la fila de flow_events que ya se había
-// escrito se duplica (compromiso asumido y portado).
-func TestFanOut_RetryRepeatsTheWholeHandle(t *testing.T) {
-	projector := &fanOutProjector{failTimes: 1}
-	h := newHarness(t,
-		withModules(resumeProbe{durable: true, finish: true, effects: []modules.Effect{resumeEffect("e1")}}),
-		withSinks(func(h *harness) []runtime.EventSink {
-			return []runtime.EventSink{runtime.NewPersistSink(h.repo, projector)}
-		}),
-	)
-	h.seedFlow(resumeProbeFlow(resumeProbeScreen))
-	resumeSeed(h, nil)
-
-	h.say("wa-1", "confirmar")
-
-	if projector.calls != 2 {
-		t.Errorf("proyecciones = %d, quería 2 (el fallo y el reintento que cede)", projector.calls)
-	}
-	if got := len(h.flowEvents("e1")); got != 2 {
-		t.Errorf("filas de flow_events = %d, quería 2: el reintento repite el Handle entero", got)
-	}
-	assertFanOutCompleted(t, h)
 }

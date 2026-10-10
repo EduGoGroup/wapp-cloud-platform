@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // events_menu_test.go prueba el MENÚ del despachador y la OFERTA de entrada (events.go, EV-7)

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime
 
 import (
@@ -111,6 +109,9 @@ var (
 	_ EventSink         = (*PersistSink)(nil)
 	_ DecisionAppender  = (*persistThread)(nil)
 	_ modules.Projector = (*persistProjector)(nil)
+	// RetryProjection: sus casos están en persist_sink_retry_test.go (E-13).
+	_ projectionRetrier = (*PersistSink)(nil)
+	_                   = (*PersistSink).RetryProjection
 )
 
 // persistRig es un sink con sus tres colaboradores y la traza común.

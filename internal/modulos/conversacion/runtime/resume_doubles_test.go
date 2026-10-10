@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // resume_doubles_test.go son los dobles y ayudantes que comparten los tests de resume,

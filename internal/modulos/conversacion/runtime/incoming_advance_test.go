@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // incoming_advance_test.go: el AVANCE —un entrante sobre una conversación viva (incoming.go

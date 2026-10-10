@@ -2,15 +2,25 @@
 
 package runtime
 
-// send.go no exporta nada, ni en el viejo ni aquí: su contrato en rojo es este comentario.
-// Las funciones no exportadas nacen en el verde (F8-04b) y los tests de la ola siguiente
-// prueban estas promesas por Start y por HandleIncoming, leyendo el doble del Sender.
+import (
+	"context"
+	"fmt"
+
+	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/engine"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
+)
+
+// send.go no exporta nada, ni en el viejo ni aquí: su contrato es este comentario, y los
+// tests (send_test.go) prueban estas promesas por Start y por HandleIncoming, leyendo el doble del Sender.
 //
-// # Qué hará este fichero
+// # Qué hace este fichero
 //
 // El envío: el embudo por el que sale toda auto-respuesta del motor de flujos.
 //
-// Piezas (nombres del viejo; los que estaban en español pasan a inglés en el verde, E-11):
+// Piezas (nombres del viejo; los que estaban en español pasaron a inglés, E-11):
 // send, emit, sendSystemText, countAutoreplyStreak, sendMedia, sendReply y destino (→
 // destination).
 //
@@ -71,3 +81,238 @@ package runtime
 // Las notificaciones de cambio de estado del pedido salen por el dominio de solicitudes, no
 // por aquí: son auto-respuestas y no se cuentan. Los envíos humanos (API, consola) quedan
 // fuera con razón.
+
+// send empuja cada salida por el Sender en orden y devuelve el último Ack. Una
+// salida con Media (nodo media, Plan 017 §4.2) se PRESIGNA y despacha por
+// SendMedia; el resto por SendText. Ante el primer error corta y lo devuelve
+// (con el último Ack logrado). El estado ya se persistió antes de llamar a send
+// (orden Save-antes-de-Send), así que un fallo aquí NO corrompe el estado: se
+// devuelve para que el llamante lo LOGUEE (OnIncoming) o lo surface (Start).
+//
+// # POR QUÉ LLEVA store.Key (Plan 049 · Opción A)
+//
+// Esta función es el embudo por el que sale toda auto-respuesta DEL MOTOR DE FLUJOS
+// —arranque, avance, escape, menú, oferta, resumen del rescate, reinicio— y por eso
+// es donde se cuenta la racha. La `key` no la necesita el envío: la necesita el
+// contador, que indexa por conversación (tenant|sesión|contacto). Contar en
+// sendReply, que sí la traía de serie, habría cubierto 3 de los ~10 puntos de
+// emisión y habría publicado una métrica que SUBCUENTA — el Plan 049 §2.1 avisa
+// explícitamente contra las métricas que mienten, y una racha que no cuenta el menú
+// ni la oferta ni el rescate no sirve para calibrar ningún umbral después.
+//
+// ⚠️ PERO NO ES EL EMBUDO ÚNICO DE LA PLATAFORMA, y decirlo importa porque la métrica
+// hereda el agujero. Fuera de este runtime hay tres SendText más:
+//
+//   - publicapi/messages.go y platform/httpapi/admin.go — envíos HUMANOS (alguien
+//     teclea desde la API o desde la consola). Quedan fuera CON RAZÓN: no son
+//     auto-respuestas y contarlos falsearía la racha hacia arriba.
+//   - 🔴 intakes/notifier.go — NO es humano. Son las notificaciones de cambio de
+//     estado del pedido: el motor hablándole AL MISMO CONTACTO de la conversación
+//     (resuelve el destino con contacts.Destino(tenantID, in.ContactID), igual que
+//     `destino` de aquí) sin que nadie haya tecleado nada. Es auto-respuesta por
+//     naturaleza y NO SE CUENTA, así que la racha SUBCUENTA en las conversaciones con
+//     pedido vivo. Cablear el contador en el Notifier es alcance nuevo (habría que
+//     inyectárselo y darle una store.Key que hoy no maneja) y el Plan 049 · Opción A
+//     no lo abre: se DOCUMENTA la exclusión —aquí y en el Help de la métrica— en vez
+//     de dejar que el docstring afirme una cobertura que no existe.
+func (rt *Runtime) send(ctx context.Context, sessionID, to string, key store.Key, outs []engine.Output) (*cloudlinkv1.Ack, error) {
+	last, emitted, err := rt.emit(ctx, sessionID, to, outs)
+	if err != nil {
+		return last, err
+	}
+	// 🔴 SE CUENTA UNA VEZ POR EMISIÓN —una llamada a `send`—, NO POR MENSAJE Y
+	// TAMPOCO POR TURNO, y el matiz es el que da sentido a toda la métrica. Agrupar
+	// aquí los varios engine.Output que puede llevar un solo `send` (el aviso del
+	// reinicio + el nodo inicial, un texto + su adjunto, la página del catálogo…) sí
+	// evita contar cada mensaje por separado DENTRO de una llamada; lo que NO evita es
+	// que un mismo turno conversacional haga VARIAS llamadas a `send`: sendResumeSummary
+	// (events.go) emite el resumen del rescate y, acto seguido, la pantalla del flujo, y
+	// eso son dos incrementos para un único entrante — presentMenu y sendOfferNow tienen
+	// el mismo patrón, y también emiten cosas que no son conversación (el aviso de fallo
+	// del sink durable, el error de arranque de start.go). Consecuencia: la racha es una
+	// COTA SUPERIOR del número de turnos. El §5 del plan estima el recorrido legítimo
+	// más largo —catálogo paginado de 5 en 5— en «20-30 auto-respuestas», y esas son
+	// 20-30 TURNOS, así que en esta métrica ese mismo recorrido puede salir algo más
+	// alto: al leer el p99 contra los buckets finos del histograma (13-55) hay que
+	// aplicar ese ajuste. Afinar el contador a turnos reales exige un concepto de
+	// «turno» que hoy el runtime no tiene: es TRABAJO FUTURO, no de la Opción A.
+	//
+	// Y se cuenta DESPUÉS del envío y solo si de verdad salió algo: un `send` sin
+	// salidas (len(outs)==0, p. ej. sendReply llamado con outs vacío) no es ninguna
+	// auto-respuesta, y un intento fallido tampoco. ⚠️ Una emisión que falló A MEDIAS
+	// —una salida enviada y la siguiente con error— tampoco cuenta: el `return` de
+	// arriba se lleva la llamada antes de llegar aquí. Es una SUBCUENTA acotada y
+	// asumida — un envío que falla no es un bucle, y el fenómeno que esta métrica
+	// existe para ver (la racha que no para) es justo el que NO falla.
+	if emitted {
+		rt.countAutoreplyStreak(key)
+	}
+	return last, nil
+}
+
+// emit es el DESPACHO PURO: empuja cada salida por el Sender en orden, presignando
+// las que llevan Media, y devuelve el último Ack y si de verdad salió algo. Ante el
+// primer error corta y lo devuelve (con el último Ack logrado).
+//
+// 🔴 SE EXTRAJO DE `send` PARA QUE HAYA UN CAMINO DE ENVÍO QUE **NO** CUENTE RACHA
+// (Plan 044 · T1.8-2). Es el cuerpo que `send` tenía inline; lo único que se quedó
+// arriba —y lo único que separa a los dos llamantes— es la llamada a
+// countAutoreplyStreak. La alternativa, un booleano `contar bool` en la firma de
+// `send`, habría dejado ~10 llamantes escribiendo `true` sin saber qué significa;
+// esto obliga a elegir función, y el nombre dice cuál eliges.
+//
+// ⚠️ QUIEN LLAME A `emit` DIRECTAMENTE SE SALE DE LA MÉTRICA DEL PLAN 049, y eso
+// tiene que ser una decisión escrita, no una comodidad. Hoy tiene UN solo llamante
+// fuera de `send`: sendSystemText, ver su docstring. Añadir un segundo sin explicar
+// por qué su saliente no es una auto-respuesta conversacional convierte la racha en
+// una métrica que subcuenta en silencio — exactamente lo que la cabecera de `send`
+// documenta que ya pasa con intakes/notifier.go, y que no queremos repetir a ciegas.
+func (rt *Runtime) emit(ctx context.Context, sessionID, to string, outs []engine.Output) (*cloudlinkv1.Ack, bool, error) {
+	var last *cloudlinkv1.Ack
+	emitted := false
+	for _, out := range outs {
+		if out.Media != nil {
+			ack, err := rt.sendMedia(ctx, sessionID, to, out.Media)
+			if err != nil {
+				return last, emitted, err
+			}
+			last = ack
+			emitted = true
+			continue
+		}
+		ack, err := rt.sender.SendText(ctx, sessionID, to, out.Text)
+		if err != nil {
+			return last, emitted, fmt.Errorf("runtime: enviar texto: %w", err)
+		}
+		last = ack
+		emitted = true
+	}
+	return last, emitted, nil
+}
+
+// sendSystemText despacha UN texto FIJO DEL SISTEMA por el mismo camino de envío que
+// todo lo demás, pero FUERA de la racha de auto-respuestas del Plan 049.
+//
+// # POR QUÉ LA BIENVENIDA NO ES UNA AUTO-RESPUESTA (Plan 044 · T1.8-2)
+//
+// La racha existe para ver UNA cosa: la conversación en la que el motor no para de
+// contestar —el bucle contra un autorespondedor, el catálogo paginado que no acaba—.
+// Lo que la hace legible es que cada incremento sea un TURNO conversacional: entrante
+// → el motor decide → saliente. La bienvenida no es eso. Es un acuse de recibo fijo
+// que se manda como mucho una vez por conversación (y otra tras N horas de silencio),
+// no la responde ningún nodo, no depende de lo que el cliente dijo y no puede
+// repetirse dentro de un episodio.
+//
+// Contarla haría dos daños, los dos al mismo dato:
+//
+//   - DESPLAZA LA DISTRIBUCIÓN UN ESCALÓN ENTERO. Toda conversación de un tenant con
+//     `llm_intake` empezaría en 1 sin que el motor haya contestado nada, así que el
+//     p99 —que el Plan 049 · Opción B va a usar para calibrar un umbral de CORTE con
+//     2-4 semanas de datos reales (§9)— saldría inflado por un mensaje que no es
+//     conversación. Un umbral calibrado sobre eso silencia clientes de verdad.
+//   - INFLA JUSTO LAS RACHAS CORTAS. Una conversación de un solo turno pasaría de 1 a
+//     2: el ruido cae en el tramo donde más pesa la forma de la distribución.
+//
+// ⚠️ TAMPOCO CONSUME TOKEN DEL LIMITADOR ANTI-LOOP (Plan 020 · T0), y también es
+// deliberado: el tope acota las auto-respuestas de una conversación, y gastarle uno a
+// la bienvenida podría dejar MUDA la primera respuesta real del motor por un acuse de
+// recibo. La bienvenida no puede entrar en bucle por construcción —su emisión está
+// sellada en `conversation_welcomes` y solo se repite tras horas de silencio—, así
+// que no necesita esa red.
+func (rt *Runtime) sendSystemText(ctx context.Context, sessionID, to, text string) (*cloudlinkv1.Ack, error) {
+	ack, _, err := rt.emit(ctx, sessionID, to, []engine.Output{{Text: text}})
+	return ack, err
+}
+
+// countAutoreplyStreak registra UNA auto-respuesta emitida en la racha de esa
+// conversación (Plan 049 · Opción A) y deja rastro a Debug. Nil-safe: sin contador
+// construido, streakCounter.Inc devuelve 0 y no hace nada.
+//
+// ⚠️ NO HAY UMBRAL AQUÍ, y no es un olvido: la Opción A OBSERVA y no decide. El valor
+// que devuelve Inc se usa SOLO para el log; ningún `if streak > N` corta, silencia ni
+// frena nada. Cortar es la Opción B del Plan 049, aplazada hasta tener 2-4 semanas de
+// la distribución con la que calibrar el umbral (§9) — fijarlo hoy, a ojo, es cómo se
+// deja mudo a un cliente a mitad de un pedido (§5, §6).
+//
+// El log va a DEBUG a propósito: es una línea por CADA auto-respuesta del sistema
+// (~1 por turno de cada conversación viva), así que a Info inundaría el log igual que
+// hacía el corte por passive antes de logPassiveSkip. Quien quiera la distribución
+// mira /metrics; quien esté depurando UNA conversación concreta sube el nivel.
+//
+// PII: solo IDs OPACOS —session_id, contact_id, tenant_id—, jamás el número ni el
+// texto. Es exactamente el juego de campos que ya loguea replyAllowed (incoming.go),
+// que es el log hermano de este: mismo store.Key y mismo asunto (auto-respuestas de
+// una conversación). Los tres salen de la MISMA `key`: pedir el session_id aparte
+// abría la puerta a loguear uno y contar en otro.
+//
+// El instante sale del reloj INYECTABLE del runtime (rt.now, WithClock), no de
+// time.Now: es el patrón del repo —lo mismo hace conversationExpired— y es lo que
+// hace testeable el vencimiento por inactividad desde el motor. Con time.Now, un test
+// que adelantara el reloj falso media hora vería que el contador sigue en hora de
+// pared y el caso no se podría cubrir.
+func (rt *Runtime) countAutoreplyStreak(key store.Key) {
+	streak := rt.autoreplyStreaks.Inc(key, rt.now())
+	if streak <= 0 {
+		return
+	}
+	rt.log.Debug("runtime: auto-respuesta emitida (racha del episodio)",
+		"racha", streak,
+		"tenant_id", key.TenantID,
+		"session_id", key.SessionID,
+		"contact_id", key.ContactID,
+	)
+}
+
+// sendMedia presigna la key del adjunto y lo despacha por Sender.SendMedia (Plan
+// 017 §4.2/§9.C): el runtime presigna, el módulo no. Exige un Presigner cableado
+// (WithPresignClient); su ausencia es un error de configuración explícito (un nodo
+// media sin almacén), no un pánico. La URL prefirmada es un capability token de
+// corta vida; el binario nunca viaja por la nube ni por gRPC (zero-knowledge).
+func (rt *Runtime) sendMedia(ctx context.Context, sessionID, to string, ref *model.MediaRef) (*cloudlinkv1.Ack, error) {
+	if rt.presigner == nil {
+		return nil, fmt.Errorf("runtime: nodo media sin PresignClient configurado (usa WithPresignClient)")
+	}
+	url, _, err := rt.presigner.GenerateDownloadURL(ctx, ref.Key)
+	if err != nil {
+		return nil, fmt.Errorf("runtime: presignar media %q: %w", ref.Key, err)
+	}
+	ack, err := rt.sender.SendMedia(ctx, sessionID, to, url, ref.Filename, ref.Mime, ref.Caption, ref.Kind)
+	if err != nil {
+		return nil, fmt.Errorf("runtime: enviar media %q: %w", ref.Key, err)
+	}
+	return ack, nil
+}
+
+// sendReply auto-responde al avance de un entrante respetando el tope anti-loop
+// (Plan 020 · T0): SOLO si hay salidas consume un token de la conversación antes de
+// resolver el destino y enviar; agotado ⇒ no envía (corta el bucle; el estado ya
+// avanzó y se persistió, así que no se corrompe). Sin salidas es un no-op que NO
+// gasta cuota. Extraído de HandleIncoming para acotar su complejidad ciclomática.
+func (rt *Runtime) sendReply(ctx context.Context, tenantID, sessionID, contactID string, key store.Key, outs []engine.Output) error {
+	if len(outs) == 0 {
+		return nil
+	}
+	if !rt.replyAllowed(key) {
+		return nil
+	}
+	to, err := rt.destination(ctx, tenantID, contactID)
+	if err != nil {
+		return err
+	}
+	_, err = rt.send(ctx, sessionID, to, key, outs)
+	return err
+}
+
+// destination resuelve el contact_id a una cadena de destino DIRECCIONABLE por el
+// Edge (design.md §10.E): desacopla el envío del JID entrante (doble rol, R4).
+func (rt *Runtime) destination(ctx context.Context, tenantID, contactID string) (string, error) {
+	dst, err := rt.contacts.Destino(ctx, tenantID, contactID)
+	if err != nil {
+		return "", fmt.Errorf("runtime: resolver destino: %w", err)
+	}
+	to, err := dst.Sendable()
+	if err != nil {
+		return "", fmt.Errorf("runtime: destino no direccionable: %w", err)
+	}
+	return to, nil
+}

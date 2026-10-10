@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // incoming_doubles_test.go: los dobles PROPIOS de los tests del entrante que el arnés no trae

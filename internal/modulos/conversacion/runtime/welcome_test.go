@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // welcome_test.go: la BIENVENIDA ÚNICA (welcome.go, WL-1…WL-16; RT-20). La mecánica no está

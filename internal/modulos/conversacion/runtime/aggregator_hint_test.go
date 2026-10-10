@@ -1,11 +1,12 @@
-//go:build pendiente
-
 package runtime
 
 import (
 	"context"
 	"slices"
+	"strconv"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
@@ -239,28 +240,49 @@ func TestOnClassified_LateAnswerClosesTheNextWindowEarly(t *testing.T) {
 }
 
 // TestOnClassified_NeverBlocks es AG-4: sin Run escuchando, el despertador no tiene lector. Mil
-// avisos vuelven igual (que el test acabe ES la aserción) y no se pierde la pista: el barrido
-// siguiente cierra la ventana. Sobre un receptor nil no hace nada.
+// avisos vuelven igual y no se pierde la pista: el barrido siguiente cierra la ventana. Sobre un
+// receptor nil no hace nada. Corre en una burbuja para que «no bloquea» tenga aserción propia: un
+// aviso que se quedara esperando a un lector deja su goroutine bloqueada en el canal, y
+// synctest.Wait lo ve en el acto en vez de colgar el test.
 func TestOnClassified_NeverBlocks(t *testing.T) {
-	rig := newAggregatorRig()
-	agg := rig.aggregator()
-	key := aggregatorKey("event-1")
-	aggregatorObserveAt(rig, agg, key, "wa-1", 0)
-	aggregatorObserveAt(rig, agg, aggregatorKey("event-2"), "wa-1", 0)
+	synctest.Test(t, func(t *testing.T) {
+		rig := newAggregatorRigAt(time.Now)
+		agg := rig.aggregator()
+		key := aggregatorKey("event-1")
+		agg.Observe(context.Background(), aggregatorRef(key, "wa-1", time.Now()))
+		agg.Observe(context.Background(), aggregatorRef(aggregatorKey("event-2"), "wa-1", time.Now()))
 
-	for range 1000 {
-		agg.OnClassified(key, IntentIntakeRequest, 0.9)
-	}
-	agg.OnClassified(aggregatorKey("event-2"), IntentIntakeRequest, 0.9)
-	var nilAggregator *IntakeAggregator
-	nilAggregator.OnClassified(key, IntentIntakeRequest, 0.9)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for range 1000 {
+				agg.OnClassified(key, IntentIntakeRequest, 0.9)
+			}
+			agg.OnClassified(aggregatorKey("event-2"), IntentIntakeRequest, 0.9)
+			var nilAggregator *IntakeAggregator
+			nilAggregator.OnClassified(key, IntentIntakeRequest, 0.9)
+		}()
+		synctest.Wait()
 
-	if got := agg.Sweep(context.Background()); got != 2 {
-		t.Fatalf("el barrido cerró %d ventanas, quería las 2: descartar avisos no descarta pistas", got)
-	}
-	if got := agg.Sweep(context.Background()); got != 0 {
-		t.Errorf("mil avisos dejaron trabajo repetido: el segundo barrido cerró %d", got)
-	}
+		select {
+		case <-done:
+		default:
+			for stuck := true; stuck; { // se le hace de lector para que la burbuja pueda cerrar
+				select {
+				case <-done:
+					stuck = false
+				case <-agg.wake:
+				}
+			}
+			t.Fatal("OnClassified se quedó bloqueado esperando a un lector del despertador: el aviso tiene que ser no bloqueante")
+		}
+		if got := agg.Sweep(context.Background()); got != 2 {
+			t.Fatalf("el barrido cerró %d ventanas, quería las 2: descartar avisos no descarta pistas", got)
+		}
+		if got := agg.Sweep(context.Background()); got != 0 {
+			t.Errorf("mil avisos dejaron trabajo repetido: el segundo barrido cerró %d", got)
+		}
+	})
 }
 
 // TestSweep_ConsumesEveryHintEachPass: una pasada se lleva TODAS las pistas, también la de una
@@ -305,5 +327,52 @@ func TestSweep_KeepsTheHintsWhenListingFails(t *testing.T) {
 
 	if got := agg.Sweep(context.Background()); got != 1 {
 		t.Errorf("tras recuperarse el listado el barrido cerró %d ventanas, quería 1: la pista seguía ahí", got)
+	}
+}
+
+// TestOnClassified_ConcurrentHintsAndSweeps: las respuestas del clasificador llegan desde sus
+// goroutines mientras el barrido corre en la suya, despertado por ellas. Las pistas las protege el candado: ninguna se
+// pierde ni se gasta dos veces, y cada ventana adelantada se cierra exactamente una vez. (Con
+// -race, además, es quien delata un acceso sin candado.)
+func TestOnClassified_ConcurrentHintsAndSweeps(t *testing.T) {
+	const windows = 16
+	rig := newAggregatorRig()
+	agg := rig.aggregator()
+	keys := make([]intake.WindowKey, 0, windows)
+	for i := range windows {
+		key := aggregatorKey("event-" + strconv.Itoa(i))
+		keys = append(keys, key)
+		aggregatorObserveAt(rig, agg, key, "wa-1", 0)
+	}
+
+	var hinters sync.WaitGroup
+	for _, key := range keys {
+		hinters.Go(func() {
+			for range 20 {
+				agg.OnClassified(key, IntentIntakeRequest, 0.9)
+			}
+		})
+	}
+	hinted := make(chan struct{})
+	go func() {
+		hinters.Wait()
+		close(hinted)
+	}()
+	closed := 0
+	for sweeping := true; sweeping; { // el barrido es de UNA goroutine y atiende al despertador, como Run
+		select {
+		case <-agg.wake:
+			closed += agg.Sweep(context.Background())
+		case <-hinted:
+			sweeping = false
+		}
+	}
+	closed += agg.Sweep(context.Background())
+
+	if closed != windows {
+		t.Errorf("entre todos los barridos se cerraron %d ventanas, quería %d: una por pista", closed, windows)
+	}
+	if got := agg.Sweep(context.Background()); got != 0 {
+		t.Errorf("quedaron pistas sin gastar: un barrido más cerró %d ventanas", got)
 	}
 }

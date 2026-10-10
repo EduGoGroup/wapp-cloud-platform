@@ -368,6 +368,56 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   no se puede sin cambiar lo que se prueba o se promete, queda con motivo y aprobada por Jhoan. **Mientras tanto**: en
   lo que se escriba nuevo no se añade un `//nolint` sin plantearlo antes.
 
+### D-32 · 🟡 El sobre de P2 no escapa lo que escribe el cliente
+
+> Abierta el 2026-10-10 por decisión de Jhoan tras F8-05 (D-F8-18; hallazgo 34a de
+> `reorganizacion-modular/plan/F8-conversacion/README.md`): **se queda como está hasta después del relevo de F10**.
+
+- **Dónde**: `internal/modulos/conversacion/runtime/source_composer.go` (`ComposeSourceText`), igual que en el viejo
+  (`internal/flujos/runtime/source_composer.go:208-261`). El sobre que recibe P2 lleva secciones con cabecera (contexto y
+  mensajes) y el texto del cliente se pega tal cual en la de mensajes.
+- **Consecuencia**: un cliente que teclea una línea idéntica a una cabecera deja dentro del bloque de mensajes lo que
+  parece una sección nueva, y puede simular un bloque de contexto. Acotado: el modelo no ejecuta nada (solo extrae un
+  borrador, y el Cloud valida la forma de la salida), el borrador lo revisa el dueño antes de ser presupuesto, y el recuento
+  interno no se engaña (un bloque falsificado no cuenta como mensajes: caso del corpus adversario,
+  `source_composer_test.go`). El daño realista es un borrador con datos inventados por el propio cliente.
+- **Veredicto**: riesgo aceptado por ahora, no defecto que arreglar en F8. Escapar **cambia la entrada del modelo**, y el
+  prompt de P2 está calibrado en campo contra el formato actual: no se valida con tests unitarios, hay que medirlo contra el
+  banco de casos reales. **Se ataca después del relevo de F10**, cuando solo corra el código nuevo: escapar (o reforzar el
+  prompt de P2, que se ajusta por fichero y sin release) **y medir** antes de darlo por bueno. El corpus adversario ya fija
+  la conducta de hoy; cambiará con el arreglo.
+
+### D-33 · 🟡 El resolver de tenant no filtra por el estado de la sesión
+
+> Abierta el 2026-10-10 por decisión de Jhoan tras F8-05 (D-F8-19; hallazgo 34f de
+> `reorganizacion-modular/plan/F8-conversacion/README.md`): **mejora para después de la migración**. No investigada a fondo.
+
+- **Dónde**: `internal/modulos/conversacion/runtime/tenant_resolver.go` (`PostgresTenantResolver`), igual que en el viejo
+  (`internal/flujos/runtime/tenant_resolver.go`). La consulta no mira `state`: una sesión `loggedout` resuelve su tenant
+  y pesa en el perfil igual que una viva. Lo fija el caso `AnyState_ResolvesTheSame` de la suite contra Postgres; el
+  mutante que añade `AND state <> 'loggedout'` muere por él (hallazgo 39).
+- **Consecuencia**: **sin medir**. Depende de dos cosas que nadie ha mirado: si puede llegar un entrante por una sesión
+  cerrada (si el Edge ya no tiene socket, no debería), y si el perfil se agrega por tenant o por sesión (si es por tenant,
+  una sesión muerta en pasiva podría volver pasivo a un tenant con otra viva y activa).
+- **Veredicto**: se porta tal cual. **Después del relevo de F10**: leer la consulta, contar en UAT las sesiones `loggedout`
+  que comparten tenant con una viva, y decidir si se filtra. Si se filtra, `AnyState_ResolvesTheSame` cambia con la
+  decisión.
+
+### D-34 · 🟡 Un `item_added` reentregado tras el cierre reescribe las líneas de la solicitud cerrada
+
+> Abierta el 2026-10-10 por decisión de Jhoan tras F8-05 (D-F8-20; hallazgos 25 y 27 de
+> `reorganizacion-modular/plan/F8-conversacion/README.md`): **para después de la migración**. La vía de entrada no está
+> confirmada.
+
+- **Dónde**: el proyector del carrito, `internal/modulos/conversacion/modules/cart/projection*.go`, igual que en el viejo
+  (`internal/flujos/modules/cart/projection.go:218-228`): la segunda búsqueda de la solicitud del evento **no filtra por
+  estado**, así que encuentra una `closed` y le reescribe las líneas.
+- **Consecuencia**: si un `item_added` se vuelve a entregar después de que el cliente confirmó, el pedido que el dueño ya
+  vio cambia sin que nadie lo toque. **Sin confirmar que hoy ocurra**: la fuente más obvia de re-entregas (el reintento del
+  sink durable, que repetía todo) quedó cerrada en F8-05 (D-F8-15); no se investigó si queda otra.
+- **Veredicto**: se porta tal cual. El arreglo es pequeño (no escribir sobre una cerrada), pero **qué hacer con el hecho
+  tardío** (descartarlo, avisar, abrir otra solicitud) es una regla de negocio. Después del relevo de F10.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes

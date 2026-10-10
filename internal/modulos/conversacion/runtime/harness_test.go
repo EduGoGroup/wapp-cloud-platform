@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // harness_test.go es el ARNÉS de los tests de comportamiento del runtime: monta un *Runtime

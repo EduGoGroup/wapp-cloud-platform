@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // runtime_engine_test.go prueba el contrato de runtime_engine.go: New, las opciones (RT-12:
@@ -231,19 +229,26 @@ func TestWithClock_NilKeepsThePreviousClock(t *testing.T) {
 // WithClock (RT-15) · El reloj del runtime decide el vencimiento del TTL conversacional del
 // limbo: a exactamente el TTL sigue viva; pasado, se suelta (cerrando su racha) y el entrante
 // se trata como nuevo.
+//
+// El TTL del guion (10 min) es MÁS CORTO que la ventana de inactividad de la racha
+// (streakIdleTTL, 30 min; streak.go, igual que el viejo), y es a propósito: con un TTL de una
+// hora, el entrante «a exactamente el TTL» ya encuentra la racha vencida por inactividad y la
+// cierra él solo ([1]) antes de que nadie suelte el estado, y el test mediría la racha y no el
+// TTL. El TTL no tiene mínimo ni saneo en el runtime (conversationExpired solo aparta el <= 0).
 func TestWithClock_GovernsTheConversationTTL(t *testing.T) {
+	const engineShortTTL = 10 * time.Minute
 	h := engineKeywordHarness(t)
-	h.seedSettings(func(s *store.TenantSettings) { s.ConversationTTL = time.Hour })
+	h.seedSettings(func(s *store.TenantSettings) { s.ConversationTTL = engineShortTTL })
 	prompt := menuFlow(startFlowID).Nodes["root"].Prompt
 	h.say("wa-0", "hola")
 
-	h.clock.Advance(time.Hour)
+	h.clock.Advance(engineShortTTL)
 	h.say("wa-1", "zzz")
 	if st, found := h.state(); !found || st.LastWaMessageID != "wa-1" || len(h.closedStreaks()) != 0 {
 		t.Fatalf("a exactamente el TTL la conversación tenía que seguir viva: estado = (%+v, %v), cerradas = %v", st, found, h.closedStreaks())
 	}
 
-	h.clock.Advance(time.Hour + time.Second)
+	h.clock.Advance(engineShortTTL + time.Second)
 	h.say("wa-2", "hola")
 
 	texts := h.texts()

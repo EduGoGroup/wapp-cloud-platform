@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // events_start_new_test.go prueba StartNewOfKind (events.go), la TERCERA puerta del
@@ -303,4 +301,30 @@ func TestEvents_FlowForKindDecidesTheFlowOfTheChosenKind(t *testing.T) {
 			t.Errorf("eventos = %+v, sin flujo resuelto no nace ninguno", rows)
 		}
 	})
+}
+
+// TestStartNewOfKind_OverTheActiveEventIsNotTheGoToNoOp (EV-3, caminos 1 y 2): el no-op «ya
+// estás en ese evento» es SOLO del gesto «ve». Con el gesto «nuevo», elegir el tipo cuyo
+// evento vivo es además el ACTIVO —y sigue dentro de su ventana— consume el turno: cobra su
+// token y conmuta (event_switched) sobre el mismo evento, sin cerrarlo ni parir otro.
+func TestStartNewOfKind_OverTheActiveEventIsNotTheGoToNoOp(t *testing.T) {
+	h := eventsCartHarness(t)
+	ev := lifecycleLiveCart(t, h)
+	charged := len(h.limiter.Calls())
+
+	consumed, err := h.rt.StartNewOfKind(t.Context(), h.key(), harnessSession, trigger.EventKindCart, eventsCartFlow, ev.ID)
+
+	if !consumed || err != nil {
+		t.Fatalf("StartNewOfKind sobre el evento activo = (%v, %v), quería (true, nil): «nuevo» no es el no-op del «ve»", consumed, err)
+	}
+	if got := len(h.limiter.Calls()) - charged; got != 1 {
+		t.Errorf("tokens pedidos al limitador = %d, quería 1: el turno se consume y se habla", got)
+	}
+	rows := h.events.Events(harnessTenant)
+	if len(rows) != 1 || rows[0].ID != ev.ID || rows[0].Status != events.StatusOpen {
+		t.Fatalf("eventos = %+v, quería el mismo y único evento, todavía open", rows)
+	}
+	eventsRequireRowOf(t, eventsRequireLifecycle(t, h, runtime.EffectEventSwitched, 1)[0], ev, 0)
+	eventsRequireLifecycle(t, h, runtime.EffectEventCancelled, 0)
+	lifecycleRequirePointers(t, h, ev.ID, ev.ID)
 }

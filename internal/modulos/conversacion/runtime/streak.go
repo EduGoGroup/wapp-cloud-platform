@@ -5,7 +5,7 @@ package runtime
 // streak.go no exporta nada, ni en el viejo ni aquí: su contrato es este comentario, y
 // sus tests y mutantes (streak_test.go) salen de él. La puerta exportada por la que el
 // arranque lee el máximo —(*Runtime).MaxAutoreplyStreak— y el hook que publica cada
-// racha cerrada son de runtime_engine.go (ola siguiente).
+// racha cerrada son de runtime_engine.go y runtime_engine_streak.go.
 //
 // # Qué hace este fichero: rachas de auto-respuestas (Plan 049 · Opción A, OBSERVAR)
 //
@@ -138,8 +138,8 @@ package runtime
 // RT-11 pide además que TODO store.Delete del runtime cierre la racha (6 caminos en el
 // viejo). Eso lo vigila el candado AST streak_invariante_test.go (trampa T-12: un Delete
 // nuevo sin su Close infla wapp_flow_autoreply_streak_max media hora, y cinco de los seis
-// cierres se podían borrar con la suite en verde); nace con los ficheros que hacen los
-// Delete, y su constante se RE-MIDE sobre el código nuevo.
+// cierres se podían borrar con la suite en verde); su constante está RE-MEDIDA sobre el
+// código nuevo (6, los mismos caminos).
 //
 // # Comentario del viejo que no casa con su código
 //

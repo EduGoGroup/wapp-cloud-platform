@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime_test
 
 // incoming_limiter_test.go: lo que cruza todos los caminos del entrante (incoming.go §5): el

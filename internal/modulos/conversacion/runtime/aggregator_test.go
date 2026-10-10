@@ -1,14 +1,14 @@
-//go:build pendiente
-
 package runtime
 
 import (
 	"context"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
@@ -393,5 +393,42 @@ func TestIntentHint_HasOnlyNameAndConfidence(t *testing.T) {
 	}
 	if IntentIntakeRequest != "intake_request" {
 		t.Errorf("IntentIntakeRequest = %q, quería %q", IntentIntakeRequest, "intake_request")
+	}
+}
+
+// TestWithAggregatorClock_NilKeepsTheRealClock: nil se ignora y queda time.Now. En la burbuja,
+// time.Now es el reloj simulado: el barrido tiene que decidir con él, a los 45 s exactos.
+func TestWithAggregatorClock_NilKeepsTheRealClock(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		rig := newAggregatorRigAt(time.Now)
+		agg := NewIntakeAggregator(rig.log, rig.jobs, rig.settings, rig.ents, WithAggregatorClock(nil))
+		agg.Observe(context.Background(), aggregatorRef(aggregatorKey("event-1"), "wa-1", time.Now()))
+
+		<-time.After(44 * time.Second)
+		if got := agg.Sweep(context.Background()); got != 0 {
+			t.Fatalf("a los 44 s el barrido cerró %d ventanas, quería 0", got)
+		}
+		<-time.After(time.Second)
+		if got := agg.Sweep(context.Background()); got != 1 {
+			t.Errorf("a los 45 s el barrido cerró %d ventanas, quería 1: sin reloj inyectado manda time.Now", got)
+		}
+	})
+}
+
+// TestNewIntakeAggregator_DefaultSweepBatchIs200: sin WithSweepBatch, una pasada pide al almacén
+// 200 ventanas, el default de plataforma. Con 201 vencidas, la primera pasada cierra 200 y la que
+// quedó fuera sale en la siguiente.
+func TestNewIntakeAggregator_DefaultSweepBatchIs200(t *testing.T) {
+	rig := newAggregatorRig()
+	agg := rig.aggregator()
+	for i := range 201 {
+		agg.Observe(context.Background(), aggregatorRef(aggregatorKey("event-"+strconv.Itoa(i)), "wa-1", aggregatorStart))
+	}
+	rig.clock.advance(45 * time.Second)
+
+	first, second := agg.Sweep(context.Background()), agg.Sweep(context.Background())
+
+	if first != 200 || second != 1 {
+		t.Errorf("cierres por pasada = %d y %d, quería 200 y 1", first, second)
 	}
 }
