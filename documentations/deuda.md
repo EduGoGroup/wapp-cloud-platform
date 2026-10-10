@@ -418,6 +418,23 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 - **Veredicto**: se porta tal cual. El arreglo es pequeño (no escribir sobre una cerrada), pero **qué hacer con el hecho
   tardío** (descartarlo, avisar, abrir otra solicitud) es una regla de negocio. Después del relevo de F10.
 
+### D-35 · 🟡 `PutSourceText` y `ComposeAtFlush` sin llamante de producción en el árbol nuevo
+
+> Abierta el 2026-10-10 por decisión de Jhoan al planificar F8-06b (hallazgo 55 de
+> `reorganizacion-modular/plan/F8-conversacion/README.md`): **se dejan y se anota; no se borran de paso**.
+
+- **Dónde**: `(*SourceTextComposer).ComposeAtFlush` (`internal/modulos/conversacion/runtime/source_composer_flush.go`), la
+  interfaz `runtime.SourceTextWriter` y el campo `SourceTextComposer.jobs` (`source_composer.go`), e
+  `intake.JobStore.PutSourceText` con sus dos implementaciones (`internal/modulos/captacion/intake/postgres.go` y
+  `memory.go`); más sus tests y los casos `PutSourceText_*` de la suite (`intakehelpertest/queue_put_contrato.go`).
+- **Por qué**: el arreglo de D-F7-9 (F8-06b) hizo que la ventana cierre con su sobre (`CloseWithSourceText`) y que el job
+  de re-análisis nazca con el suyo (`OpenReanalysis`). Eran los dos únicos llamantes. El arranque sigue cableando
+  `composer.jobs` con `c.intakeJobStore`, y los tests de cableado siguen afirmando esa identidad.
+- **Consecuencia**: código vivo en el puerto que ningún camino de producción ejercita; la suite contra Postgres lo sigue
+  probando. Sin riesgo funcional.
+- **Veredicto**: decidir en F8-07 o tras el relevo de F10 entre **borrar** (la operación, `SourceTextWriter`,
+  `composer.jobs`, sus casos de suite y las aserciones de cableado, en su propio commit) o **conservar** con un motivo.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes

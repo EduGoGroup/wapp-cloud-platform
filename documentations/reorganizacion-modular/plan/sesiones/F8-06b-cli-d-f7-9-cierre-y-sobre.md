@@ -1,5 +1,8 @@
 # F8-06b · F8 · D-F7-9: cierre y sobre en un solo acto · 💻 CLI
 
+> ✎ **Hecha el 2026-10-10** (rama `reorg/f8-06b-d-f7-9-cierre-y-sobre`, `a0144628` … `42a06574`): bloque F8-06b de [`ESTADO.md`](../../ESTADO.md) y
+> hallazgos 52–59 del [README de F8](../F8-conversacion/README.md).
+
 > ✎ **2026-10-10 (D-F8-13, Jhoan, tras F8-05)**: sesión nueva, para que el arreglo de D-F7-9 no se pierda. Va **después** de
 > conmutar ([`F8-06`](F8-06-cli-cara-http-y-conmutar.md)) y **antes** del cierre ([`F8-07`](F8-07-cli-cierre.md)). Motivo:
 > hallazgo 44 del [README de F8](../F8-conversacion/README.md) y D-F8-13 en [`../DECISIONES.md`](../DECISIONES.md).
@@ -49,6 +52,8 @@ se queda sin llamante de producción, se dice (no se borra de paso: PARA y pregu
 
 **El código viejo no se toca**: el binario viejo conserva el fallo hasta el relevo de F10, así que el caso de P4
 tiene que distinguir binario (o tolerar el viejo), como ya hacen los procesos con otras divergencias deliberadas.
+✎ **2026-10-10 (Jhoan, al planificar la sesión)**: ningún proceso ramifica por binario y R9.8.b de F9 lo prohíbe; el caso
+es una aserción igual para los dos, con el foco en el nuevo (el viejo está congelado y se borra al acabar el plan). Hallazgo 56.
 
 ## Antes de pegar el prompt (Jhoan)
 
