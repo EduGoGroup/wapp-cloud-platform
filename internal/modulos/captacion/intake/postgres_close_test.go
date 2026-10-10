@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intake
 
 import (
@@ -9,8 +7,9 @@ import (
 	"time"
 )
 
-// ROJO de (*Postgres).CloseWithSourceText, la quinta operación de la cola (D-F7-9, D-F8-13),
-// sobre el driver de mentira de postgres_fakedb_test.go. En el verde pierde la etiqueta.
+// Los tests de (*Postgres).CloseWithSourceText, la quinta operación de la cola (D-F7-9, D-F8-13),
+// sobre el driver de mentira de postgres_fakedb_test.go. Van aparte de postgres_test.go por
+// tamaño (E-13); el no-op del receptor nil está allí, con el de sus hermanas.
 
 // wantCloseWithSourceTextSQL es la sentencia, escrita APARTE y byte a byte como las cuatro de
 // postgres_test.go. 🔴 Sus tres guardas viven en SQL y este texto es lo único que las custodia sin
@@ -43,16 +42,6 @@ var pgSeen = OpenJob{
 
 // pgEnvelope es un sobre completo.
 var pgEnvelope = SourceText{Enc: []byte("enc-bytes"), DEK: []byte("dek-bytes"), KEKID: "k1"}
-
-// TestPostgres_CloseWithSourceText_NilReceiverOrNilDB_IsANoOp: un *Postgres nil, o uno sin base,
-// no tiene dónde escribir: (false, nil), sin panic, como sus hermanas.
-func TestPostgres_CloseWithSourceText_NilReceiverOrNilDB_IsANoOp(t *testing.T) {
-	for name, p := range map[string]*Postgres{"nil receiver": nil, "nil db": NewPostgres(nil)} {
-		if ok, err := p.CloseWithSourceText(context.Background(), pgSeen, pgEnvelope); ok || err != nil {
-			t.Errorf("CloseWithSourceText (%s) = (%v, %v), quería (false, nil)", name, ok, err)
-		}
-	}
-}
 
 // TestPostgres_CloseWithSourceText_OneStatement_TrueOnlyIfItTouchedARow: UNA sentencia, la
 // literal, sin lectura previa; con el id, la marca que se leyó TAL CUAL (sin truncar) y las tres
