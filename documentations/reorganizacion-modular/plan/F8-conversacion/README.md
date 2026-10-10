@@ -682,7 +682,7 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
 
 ## Bloques de sesión
 
-Nueve sesiones (✎ 2026-10-10, D-F8-13: eran ocho; nace F8-06b para D-F7-9, hallazgo 44 · ✎ D-F8-11: eran siete; F8-04 se parte en F8-04 y F8-04b, hallazgo 29), **todas 💻**: cada una en **su rama partida de `dev`** y con PR a `dev` sin squash (regla 6 del `CLAUDE.md`, 2026-10-03; ✎ corregido en F8-01: aquí decía «sin PR, `git push origin dev`»).
+Once sesiones (✎ 2026-10-10, Jhoan tras F8-06b: eran nueve; F8-07 se parte en F8-07a, F8-07b y F8-07 · ✎ 2026-10-10, D-F8-13: eran ocho; nace F8-06b para D-F7-9, hallazgo 44 · ✎ D-F8-11: eran siete; F8-04 se parte en F8-04 y F8-04b, hallazgo 29), **todas 💻**: cada una en **su rama partida de `dev`** y con PR a `dev` sin squash (regla 6 del `CLAUDE.md`, 2026-10-03; ✎ corregido en F8-01: aquí decía «sin PR, `git push origin dev`»).
 Cada una es un bloque de 45–90 min (objetivo, **sin medir**) y cierra con las tres cosas: tareas `[x]` con SHA,
 bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../sesiones/README.md).
 
@@ -695,8 +695,10 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-04b ✅ | `runtime` (1b): el verde del soporte | complejo | T8.26 | **9** de los 12 de soporte verdes (✎ 2026-10-10, D-F8-12: `welcome`, `thread` y `send` pasan a F8-05), mutantes de `keyedmutex` y `streak` muertos, `pendiente` del runtime solo en los 11 del núcleo y en `welcome.go` (2026-10-10, rama `reorg/f8-04b-runtime-soporte`, `83565b4e` … `6216d1df`, PR #66 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `d80e7f56`, sin squash) |
 | F8-05 ✅ | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo y `welcome`, `thread` y `send` verdes (✎ 2026-10-10, D-F8-12: 14, no 11), mutantes muertos, `pendiente` del runtime = 0 (2026-10-10, rama `reorg/f8-05-runtime-nucleo`, `46b6a1ec` … `f5fd0374` y tres arreglos decididos después (`c44c212f`, `6eb31a3d`, `a9da0105`), PR #67 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash) |
 | F8-06 ✅ | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo (2026-10-10, rama `reorg/f8-06-cara-http-y-conmutar`, `5ba7f419` … `fe6305b9`; hallazgos 47–51) |
-| F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39, T8.40 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; el job de re-análisis nace con su sobre; caso de P4 verde contra el binario nuevo. ✎ **hecha** (2026-10-10; `a0144628` … `42a06574`; hallazgos 52–59) |
-| F8-07 | cierre | — | T8.36–T8.38, T8.41–T8.43 (✎ 2026-10-10) | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
+| F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39, T8.40 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; el job de re-análisis nace con su sobre; caso de P4 verde contra el binario nuevo. ✎ **hecha** (2026-10-10; `a0144628` … `42a06574`; hallazgos 52–59; PR #69 en `dev`, merge `2902ec40`) |
+| F8-07a | limpieza tras D-F7-9 (✎ 2026-10-10, Jhoan: F8-07 se parte en tres) | medio | T8.41–T8.43 | `PutSourceText` y `ComposeAtFlush` borrados (D-35), tests de cableado al día sin debilitarse; el caso adversario del callback del CRM tolera el corte; los siete mutantes de D-F7-9 repetidos y muertos |
+| F8-07b | Docker y arranque real (✎ 2026-10-10) | — | T8.36, T8.37 | `make ci-docker` rc=0 (no corre desde F8-01); suites `Contrato` contra Postgres; `cmd/server-modular` arranca solo y recorre una conversación con el Edge falso; hallazgo 51 refutado |
+| F8-07 | cierre | — | T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
 
 Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (medido en el código viejo):
 `admin` importa `runtime` (`handlers.go:24,306,308`), así que no puede nacer antes que sus contratos y va con la cara

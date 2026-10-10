@@ -252,15 +252,13 @@ Para cuando: un job de ventana nunca es visible para el worker en `pending` sin 
   - **Hecho cuando**: un job de re-análisis nunca es visible en `pending` sin sobre; fallo al componer → no se abre job y la petición lo dice (hoy: job abierto sin literal que el worker mata); mutantes muertos; suite `Contrato` de `intake` verde en memoria y en Postgres; si `PutSourceText` queda sin llamante de producción, dicho y preguntado, no borrado.
   - **Gate**: `G` · `make test-procesos` (nuevo y viejo) · **Commit**: `fix(captacion): el job de re-análisis nace con su sobre (D-F7-9)`
 
-## Bloque 7 · cierre · 💻 · sesión F8-07 · T8.36–T8.38, T8.41–T8.43 (✎ 2026-10-10: tres tareas nuevas tras F8-06b)
+## Bloque 7a · limpieza tras D-F7-9 · 💻 · sesión F8-07a · T8.41–T8.43
+
+> ✎ **2026-10-10 (Jhoan, tras F8-06b)**: el bloque 7 se parte en **tres sesiones**. Este, con lo que salió del repaso de
+> pendientes de F8-06b; el **7b**, con Docker y el arranque real; y el **7**, que solo cierra la fase. Lo que queda debajo
+> de esta línea y antes de T8.41 es la cabecera del bloque 7 original.
 Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 entera.
 
-- [ ] **T8.36 · Gates y arranque local del binario nuevo** · 💻 · dep. T8.35, T8.39, T8.40 (✎ D-F8-13) · cumple R8.8.a, R8.8.c
-  - **Hecho cuando**: `validar-antes-de-cerrar` con la toolchain fijada; las suites `Contrato` de los puertos con BD verdes contra Postgres (P4, arnés de F9-A); `cmd/server-modular` arranca en local **solo** (sin `cmd/server`), un Edge de prueba (o el e2e de `cmd/server-modular`) recorre «carrito» → línea → confirmar y el cliente recibe las pantallas; SKIP = 0; refutado lo que dejó T8.35.
-  - **Gate**: `G` · e2e rc=0
-- [ ] **T8.37 · 🕐 Procesos del módulo contra el binario nuevo (= T9.29, 9C de `conversacion`)** · 💻 · dep. T8.36 · cumple R8.8.b — *con D-F9-1 = sí (recomendación); si D-F9-1 = no, se tacha y lo cubre T9.34 tras F8*
-  - **Hecho cuando**: T9.29 (9C de `conversacion`, [`../F9-procesos/tareas.md`](../F9-procesos/tareas.md)) pasa: «Entrante a respuesta», «De mensaje a borrador», «Re-análisis», con las aserciones de BD de `diseno.md` §4.2 (D-054.4, 23502, `ON CONFLICT` de la ventana); `make test-procesos` rc=0 y 0 SKIP con `-v`.
-  - **Gate**: `make test-procesos > /tmp/p.log 2>&1; echo RC=$? >> /tmp/p.log; tail -1 /tmp/p.log`
 - [ ] **T8.41 · Borrar `PutSourceText` y `ComposeAtFlush` (deuda D-35)** · 💻 · dep. T8.40 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgo 55 del README)
   - **Ficheros**: `C/runtime/source_composer_flush.go` y su test (`ComposeAtFlush`), `C/runtime/source_composer.go` (`SourceTextWriter`, el campo `jobs` y el argumento del constructor), `internal/modulos/captacion/intake/{store,postgres,memory}.go` y sus tests (`PutSourceText`), `intakehelpertest/` (los casos `PutSourceText_*` y lo que solo ellos usen), `internal/arranque/fase5_captacion.go` y las aserciones de cableado que miran `composer.jobs`.
   - **Hecho cuando**: ninguna de las dos operaciones existe en el árbol nuevo; `intake.JobStore` vuelve a cuatro operaciones; los tests de cableado se actualizan en el mismo commit **sin debilitarse** (lo que afirmaba la identidad de `composer.jobs` desaparece con el campo, no se relaja); `G` rc=0 con 0 SKIP; suite `Contrato` de `intake` verde en memoria y en Postgres; D-35 marcada cerrada en `deuda.md`. **Fuera**: el código viejo.
@@ -277,6 +275,20 @@ Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 entera.
   - **Los siete**: en `C/runtime/aggregator_sweep.go` — (1) volver al orden viejo (cerrar y después componer y escribir), (2) cerrar sin sobre, (3) escribir el sobre sin cerrar, (4) quitar la guarda de «la ventana no cambió» (en el gemelo `intake/memory.go`, corriendo los tests de `runtime`); en `captacion/reanalisis/reanalisis.go` — (5) abrir el job y componer después, (6) abrir el job pese al fallo de composición, (7) tragarse el fallo de composición.
   - **Hecho cuando**: cada uno **compila** y mata al menos un test, con el nombre del test anotado; un mutante que no compila no cuenta como muerto; en serie y por `go test -overlay` sobre copias fuera del repo, nunca editando el checkout; si alguno sobrevive, nace su caso en un commit `test(…)`.
   - **Gate**: la tabla mutante → test en el hallazgo de cierre · **Commit**: ninguno si todos mueren
+
+## Bloque 7b · Docker y arranque real · 💻 · sesión F8-07b · T8.36–T8.37
+
+Para cuando: `make ci-docker` rc=0; las suites `Contrato` de los puertos con BD verdes contra Postgres; `cmd/server-modular` arranca solo y recorre una conversación con el Edge falso; refutado el hallazgo 51.
+
+- [ ] **T8.36 · Gates y arranque local del binario nuevo** · 💻 · dep. T8.35, T8.39, T8.40 (✎ D-F8-13), T8.41–T8.43 (✎ 2026-10-10) · cumple R8.8.a, R8.8.c
+  - **Hecho cuando**: `validar-antes-de-cerrar` con la toolchain fijada; las suites `Contrato` de los puertos con BD verdes contra Postgres (P4, arnés de F9-A); `cmd/server-modular` arranca en local **solo** (sin `cmd/server`), un Edge de prueba (o el e2e de `cmd/server-modular`) recorre «carrito» → línea → confirmar y el cliente recibe las pantallas; SKIP = 0; refutado lo que dejó T8.35.
+  - ✎ **2026-10-10 (Jhoan)**: incluye **`make ci-docker`** (los gates dentro de un contenedor Linux limpio), que **no corre desde F8-01** (2026-10-09): ninguna sesión de F8-02 a F8-06b lo corrió, así que la conmutación y el arreglo de D-F7-9 no se han validado fuera del Mac. Va **el primero**. El «Edge de prueba» es el Edge falso de `test/procesos` (habla el contrato real de CloudLink, sin WhatsApp); la sesión de WhatsApp del Edge real no hace falta.
+  - **Gate**: `make ci-docker` rc=0 · `G` · e2e rc=0
+- [ ] **T8.37 · 🕐 Procesos del módulo contra el binario nuevo (= T9.29, 9C de `conversacion`)** · 💻 · dep. T8.36 · cumple R8.8.b — *con D-F9-1 = sí (recomendación); si D-F9-1 = no, se tacha y lo cubre T9.34 tras F8*
+  - **Hecho cuando**: T9.29 (9C de `conversacion`, [`../F9-procesos/tareas.md`](../F9-procesos/tareas.md)) pasa: «Entrante a respuesta», «De mensaje a borrador», «Re-análisis», con las aserciones de BD de `diseno.md` §4.2 (D-054.4, 23502, `ON CONFLICT` de la ventana); `make test-procesos` rc=0 y 0 SKIP con `-v`.
+  - **Gate**: `make test-procesos > /tmp/p.log 2>&1; echo RC=$? >> /tmp/p.log; tail -1 /tmp/p.log`
+
+## Bloque 7 · cierre · 💻 · sesión F8-07 · T8.38
 
 - [ ] **T8.38 · Cerrar F8** · 💻 · dep. T8.36, T8.41, T8.42, T8.43 (y T8.37 si aplica)
   - **Ficheros**: `ESTADO.md`, este `README.md` (estado «cerrada», SHA, hallazgos)

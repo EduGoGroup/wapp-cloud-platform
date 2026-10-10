@@ -1,19 +1,24 @@
 # F8-07 · F8 · cierre · 💻 CLI
 
+> ✎ **2026-10-10 (Jhoan, tras F8-06b)**: esta sesión se **partió en tres**. Lo que tenía delante va ahora en
+> [`F8-07a`](F8-07a-cli-limpieza-d-f7-9.md) (T8.41–T8.43: limpieza tras D-F7-9) y en
+> [`F8-07b`](F8-07b-cli-docker-y-arranque-real.md) (T8.36–T8.37: `ci-docker`, suites contra Postgres y arranque real).
+> Aquí queda **solo cerrar la fase** (T8.38).
+
 | | |
 |---|---|
 | Fase · bloque | [F8 · conversacion](../F8-conversacion/README.md) · 7 · cierre |
 | Entorno | 💻 solo local |
 | Nivel (E-12) | no aplica (no se escribe código de producción) |
 | Duración objetivo | 45–90 min |
-| Tareas | T8.36–T8.38 (T8.37 = T9.29), T8.41, T8.42 y T8.43 (✎ 2026-10-10, Jhoan tras F8-06b: borrar `PutSourceText`/`ComposeAtFlush`, deuda D-35; el caso adversario del callback del CRM; y repetir los siete mutantes que sostienen D-F7-9) |
-| Depende de | F8-06b (✎ 2026-10-10, D-F8-13: antes F8-06) |
+| Tareas | T8.38 (✎ 2026-10-10: T8.41–T8.43 pasan a F8-07a y T8.36–T8.37 a F8-07b) |
+| Depende de | F8-07b (✎ 2026-10-10: antes F8-06b) |
 | Decisiones | D-F9-1 (adelantar F9) |
 | Se para cuando | la definición de hecho de [`reglas.md`](../F8-conversacion/reglas.md) §4 entera: suites de los puertos con BD verdes contra Postgres · `cmd/server-modular` arranca solo y recorre una conversación · `make test-procesos` y `make ci-local` rc=0 con 0 SKIP · PR a `dev` abierto desde la rama de la sesión |
 
 ## Antes de pegar el prompt (Jhoan)
 
-- [ ] La sesión anterior (F8-06b; ✎ D-F8-13: el arreglo de D-F7-9) está integrada y empujada en `dev`.
+- [ ] La sesión anterior (F8-07b; ✎ 2026-10-10: antes F8-06b) está integrada y empujada en `dev`.
 - [ ] Decisiones rellenas en [`../DECISIONES.md`](../DECISIONES.md): D-F9-1 (adelantar F9).
 - [ ] Docker encendido en el Mac.
 - [ ] `go1.26.5` y `golangci-lint v2.12.2` disponibles (`make toolchain`).
@@ -30,14 +35,13 @@ documentations/reorganizacion-modular/plan/sesiones/PROTOCOLO-CLI.md
 Tu encargo (y solo este):
 - Fase: F8 · conversacion → documentations/reorganizacion-modular/plan/F8-conversacion/
 - Bloque: 7 · cierre
-- Tareas: T8.36–T8.38 (T8.37 = T9.29 de plan/F9-procesos/tareas.md), T8.41, T8.42 y T8.43 de plan/F8-conversacion/tareas.md (T8.41 y T8.42, cada una en su propio commit, ANTES de los gates de cierre; T8.43, los mutantes, después de T8.41)
+- Tareas: T8.38 de plan/F8-conversacion/tareas.md (T8.41–T8.43 son de F8-07a y T8.36–T8.37 de F8-07b: tienen que estar `[x]` con SHA; si no, PARA y dilo)
 - Te paras cuando: se cumple entera la definición de hecho de plan/F8-conversacion/reglas.md §4: las suites de los puertos con BD pasan contra Postgres, `cmd/server-modular` arranca solo y recorre una conversación, `make test-procesos` y `make ci-local` dan rc=0 con 0 SKIP, y `dev` está empujado.
 - Decisiones: D-F9-1 (adelantar F9) en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
 - Skills: validar-antes-de-cerrar, procesos-testcontainers.
 
 No hay rama web que integrar ni traspaso que cerrar: creas TU rama desde `dev` (`git checkout -b <rama> dev`) y trabajas en ella, nunca sobre `dev` (regla 6 del `CLAUDE.md`).
-Corre las suites `Contrato` de `store`, `trigger`, `events.Store`, `self_numbers` y `tenant_resolver` contra Postgres con el mismo `Montaje` que en memoria (P4) y los procesos del módulo (T9.29: «Entrante a respuesta», «De mensaje a borrador», «Re-análisis») contra el binario NUEVO. Nunca contra un Postgres vivo: testcontainers. Nunca `cmd/server` y `cmd/server-modular` a la vez.
-Refuta lo que T8.35 dejó anotado en ESTADO.md (identidad de `entResolver`/`kp`/`gw`, barrido del agregador con BD real, golden).
+✎ 2026-10-10: las suites contra Postgres, los procesos, `make ci-docker`, el arranque real y la refutación del hallazgo 51 los hizo F8-07b. Aquí NO se repiten enteros: se comprueba que F8-07b los dejó escritos con su rc, se repite el gate corto sobre la cabeza de `dev` (`make ci-local` y `BINARIO=nuevo make test-procesos`, rc sin pipe, 0 SKIP) y se cierra la fase: los 10 puntos de plan/F8-conversacion/reglas.md §4, cada uno con su número y su evidencia, en ESTADO.md. Si alguno no se cumple, la fase NO se cierra: dilo.
 
 Nivel de ceremonia: el del inventario aprobado (`05` E-12). Sin umbral de cobertura: un test por promesa del contrato; mutantes en lo complejo.
 
@@ -47,7 +51,7 @@ No empieces la sesión siguiente.
 
 ## Al terminar debe existir
 
-- En [`../F8-conversacion/tareas.md`](../F8-conversacion/tareas.md): T8.36–T8.38 (T8.37 = T9.29) `[x]` con SHA.
+- En [`../F8-conversacion/tareas.md`](../F8-conversacion/tareas.md): T8.38 `[x]` con SHA (✎ 2026-10-10: T8.36–T8.37 y T8.41–T8.43 los cierran F8-07b y F8-07a).
 - Un bloque de la sesión en `ESTADO.md` de la reorganización.
 - Los hallazgos nuevos en el [README de la fase](../F8-conversacion/README.md).
 - `ESTADO.md` y el README de la fase con F8 «cerrada» y los SHA.
