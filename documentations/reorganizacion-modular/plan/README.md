@@ -13,7 +13,7 @@
 > (eran 81: las 66 pendientes se reagruparon en 41 de tamaño medio, 45–90 min).
 > La norma de fondo sigue siendo `05`: si el plan choca con ella, manda `05` y el plan se corrige.
 >
-> **Siguiente paso** (al 2026-10-10, con F8-01, F8-02, F8-03, F8-04 y F8-04b hechas): [`sesiones/F8-05`](sesiones/F8-05-cli-runtime-2.md), el verde del núcleo de `runtime` y de `welcome`, `thread` y `send` (T8.27–T8.28; 14 ficheros, D-F8-12), con el PR de F8-04b (`reorg/f8-04b-runtime-soporte`: 9 de soporte en verde, T8.26) integrado en `dev`. El PR #65 de F8-04 está integrado (merge `cbebf10c`, sin squash). ✎ 2026-10-10 (D-F8-11, Jhoan): F8-04 se parte en dos sesiones antes de lanzarla. `events` y `cart` ya están verdes; la segunda mitad de F8-03 (T8.25) va por PR a `dev` desde `reorg/f8-03b-cart-verde`.
+> **Siguiente paso** (al 2026-10-10, con F8-01, F8-02, F8-03, F8-04 y F8-04b hechas): [`sesiones/F8-05`](sesiones/F8-05-cli-runtime-2.md), el verde del núcleo de `runtime` y de `welcome`, `thread` y `send` (T8.27–T8.28; 14 ficheros, D-F8-12), con el PR #66 de F8-04b (`reorg/f8-04b-runtime-soporte`: 9 de soporte en verde, T8.26) integrado en `dev`. El PR #65 de F8-04 está integrado (merge `cbebf10c`, sin squash). ✎ 2026-10-10 (D-F8-11, Jhoan): F8-04 se parte en dos sesiones antes de lanzarla. `events` y `cart` ya están verdes; la segunda mitad de F8-03 (T8.25) va por PR a `dev` desde `reorg/f8-03b-cart-verde`.
 > Después, la tabla de [`sesiones/README.md`](sesiones/README.md), en orden: es ella la que dice cuál toca.
 
 ## Cómo está escrito (a lo *spec-driven*, estilo Kiro)
