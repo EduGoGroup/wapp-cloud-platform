@@ -49,7 +49,7 @@ Lo que F8-03 y F8-04 te dejan dicho (léelo antes de empezar): hallazgos 21–29
 No hay rama web que integrar ni traspaso que cerrar: creas TU rama desde `dev` (`git checkout -b <rama> dev`) y trabajas en ella, nunca sobre `dev` (regla 6 del `CLAUDE.md`).
 Un commit `verde(conversacion): <fichero>` por fichero, con `go test -race` rc=0 en cada uno. `send.go`, `thread.go` y `welcome.go` cuelgan de `*Runtime`.
 Reloj siempre inyectado (`streak.go`, T-7 de `reglas.md`); prohibido `time.Sleep`. Mutantes donde haya estado o concurrencia: `keyedmutex.go` y `streak.go`; cada mutante mata al menos un test.
-La verdad de `self_numbers.go` y `tenant_resolver.go` la da su suite `Contrato` contra Postgres (P4), con testcontainers (skill `procesos-testcontainers`): nunca un Postgres vivo, nunca `WAPP_TEST_DB_DSN`, nunca `t.Skip`.
+La verdad de `self_numbers.go` y `tenant_resolver.go` la da su suite `Contrato` contra Postgres (P4), con testcontainers (skill `procesos-testcontainers`): nunca un Postgres vivo, nunca `WAPP_TEST_DB_DSN`, nunca `t.Skip`. F8-04 las dejó escritas con `//go:build integracion && pendiente`: al poner verde cada adaptador, quítale `pendiente` a su suite (queda `integracion`) y córrela.
 Nombres en inglés en lo nuevo (E-11); solo comentarios y documentación en español; los textos observables se copian literales.
 Orquesta con sub-agentes y protege tu contexto. Sub-agentes en worktrees: nacen de `origin/main`; diles que se pongan en el SHA de tu rama y corran `make tools`. Sus commits entran en tu rama por `cherry-pick`. Borra los worktrees antes de `make test-pendiente`.
 Gates sin carga: no corras `make test-procesos` ni `make ci-docker` en paralelo con nada.

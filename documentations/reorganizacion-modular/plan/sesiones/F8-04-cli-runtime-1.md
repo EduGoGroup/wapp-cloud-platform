@@ -14,7 +14,7 @@
 | Tareas | T8.18–T8.21 |
 | Depende de | F8-03 |
 | Decisiones | D-F8-4 (regla «`events` sin clasificador»), D-F8-5 (lista blanca), D-F8-11 (F8-04 en dos sesiones) |
-| Se para cuando | los 23 contratos de `runtime` en rojo (12 de soporte + 11 de núcleo); `runtimehelpertest` verde con sus dobles y sus suites `Contrato` (contra el doble y contra Postgres para `self_numbers` y `tenant_resolver`); candado de rachas escrito tras `pendiente`; D-F8-4 en `fronteras_test.go` y lista blanca de `conversacion` completa; `make vet-pendiente` rc=0; `make test-pendiente` cuenta solo `runtime`; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión. **Ningún verde de `runtime`** |
+| Se para cuando | los 23 contratos de `runtime` en rojo (12 de soporte + 11 de núcleo); `runtimehelpertest` verde con sus dobles y sus suites `Contrato` de `self_numbers` y `tenant_resolver`: verdes contra el doble; contra Postgres, ESCRITAS en `test/procesos/…_contrato_test.go` (patrón de `events_contrato_test.go`) con `//go:build integracion && pendiente` (así `make test-procesos` no las corre en rojo entre las dos sesiones) hasta F8-04b, que les quita `pendiente` y las pone verdes; candado de rachas escrito tras `pendiente`; D-F8-4 en `fronteras_test.go` y lista blanca de `conversacion` completa; `make vet-pendiente` rc=0; `make test-pendiente` cuenta solo `runtime`; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión. **Ningún verde de `runtime`** |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -35,9 +35,9 @@ Tu encargo (y solo este):
 - Fase: F8 · conversacion → documentations/reorganizacion-modular/plan/F8-conversacion/
 - Bloque: 4a · `runtime` (1a): los contratos de los 23
 - Tareas: T8.18–T8.21 de plan/F8-conversacion/tareas.md
-- Te paras cuando: los 23 contratos de `runtime` están en rojo (12 de soporte + 11 de núcleo); `runtimehelpertest` está en verde con sus dobles y sus suites `Contrato` (contra el doble y contra Postgres para `self_numbers` y `tenant_resolver`); el candado de rachas está escrito tras `pendiente`; D-F8-4 está aplicado en `fronteras_test.go` y la lista blanca de `conversacion` está completa; `make vet-pendiente` rc=0; `make test-pendiente` cuenta solo `runtime`; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión. Ningún verde de `runtime` en esta sesión.
+- Te paras cuando: los 23 contratos de `runtime` están en rojo (12 de soporte + 11 de núcleo); `runtimehelpertest` está en verde con sus dobles y sus suites `Contrato` de `self_numbers` y `tenant_resolver`: verdes contra el doble; contra Postgres, ESCRITAS en `test/procesos/…_contrato_test.go` (patrón de `events_contrato_test.go`) con `//go:build integracion && pendiente` (así `make test-procesos` no las corre en rojo entre las dos sesiones) hasta F8-04b, que les quita `pendiente` y las pone verdes; el candado de rachas está escrito tras `pendiente`; D-F8-4 está aplicado en `fronteras_test.go` y la lista blanca de `conversacion` está completa; `make vet-pendiente` rc=0; `make test-pendiente` cuenta solo `runtime`; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión. Ningún verde de `runtime` en esta sesión.
 - Decisiones: D-F8-4 (regla «`events` sin clasificador»), D-F8-5 (lista blanca), D-F8-11 (F8-04 en dos sesiones) en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
-- Skills: reconstruir-modulo, contrato-tdd, validar-antes-de-cerrar.
+- Skills: reconstruir-modulo, contrato-tdd, validar-antes-de-cerrar, procesos-testcontainers (el arnés de las dos suites contra Postgres), describir-pr.
 
 - Base: F8-03 integrada en `dev` con sus dos mitades (la primera, PR #62, merge `8b841c8d`; la segunda, PR #63, integrado el 2026-10-10: compruébalo con `git log origin/dev` y, si no está, PARA y dilo). Trabaja en TU rama partida de `origin/dev`, nunca en `dev` (regla 6 del `CLAUDE.md`).
 
