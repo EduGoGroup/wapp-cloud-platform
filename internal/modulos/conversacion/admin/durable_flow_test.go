@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package admin_test
 
 // durable_flow_test.go — el adaptador EngineDurableFlowChecker, con dobles de sus dos

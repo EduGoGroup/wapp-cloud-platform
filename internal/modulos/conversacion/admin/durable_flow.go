@@ -4,9 +4,10 @@ package admin
 
 import (
 	"context"
+	"errors"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
 )
 
 // DurableFlowChecker es el puerto ESTRECHO que la marca derivada del listado (T2.6) y
@@ -42,14 +43,17 @@ type DurableFlowEngine interface {
 // pregunta al motor si ALGÚN nodo produce contenido durable, el mismo predicado que el
 // runtime hace cumplir al arrancar (D-054.5), consultado aquí en tiempo de
 // CONFIGURACIÓN. No guarda estado de llamada.
-type EngineDurableFlowChecker struct{}
+type EngineDurableFlowChecker struct {
+	defs   FlowDefinitionReader
+	engine DurableFlowEngine
+}
 
 // NewEngineDurableFlowChecker construye el adaptador sobre el lector de definiciones y
 // el motor ya cableados en el arranque. Devuelve siempre un puntero no nil; no valida
 // sus argumentos y NO los consulta al construir: la primera lectura ocurre en
 // FlowHasDurableContent.
 func NewEngineDurableFlowChecker(defs FlowDefinitionReader, eng DurableFlowEngine) *EngineDurableFlowChecker {
-	panic(pendiente.Implementar("admin.NewEngineDurableFlowChecker"))
+	return &EngineDurableFlowChecker{defs: defs, engine: eng}
 }
 
 // FlowHasDurableContent implementa DurableFlowChecker. Pide UNA vez la definición
@@ -64,5 +68,20 @@ func NewEngineDurableFlowChecker(defs FlowDefinitionReader, eng DurableFlowEngin
 //   - ante CUALQUIER otro error devuelve (false, ese mismo error) y no consulta al
 //     motor: «no pude averiguarlo» no se comporta igual que «no es durable».
 func (c *EngineDurableFlowChecker) FlowHasDurableContent(ctx context.Context, tenantID, flowID string) (bool, error) {
-	panic(pendiente.Implementar("admin.EngineDurableFlowChecker.FlowHasDurableContent"))
+	def, err := c.defs.LatestDefinition(ctx, tenantID, flowID)
+	if err != nil {
+		// Fail-open si el flujo no existe: este plan NO introduce una validación de
+		// existencia de flow_id —el CRUD «no resuelve la configuración por el usuario»—
+		// y añadirla de rebote sería un cambio de comportamiento que nadie pidió. Un
+		// flow_id inexistente sigue aceptándose con 201, EXACTAMENTE como siempre (H2).
+		if errors.Is(err, store.ErrDefinitionNotFound) {
+			return false, nil
+		}
+		// Cualquier OTRO error (fallo de BD, etc.) SÍ se propaga: ahí no se sabe la
+		// respuesta, y «no pude averiguarlo» no debe comportarse igual que «no es
+		// durable» — el mismo principio fail-closed-ante-la-duda que
+		// entitlements.RequireFeature aplica a la resolución de features.
+		return false, err
+	}
+	return c.engine.FlowProducesDurableContent(def), nil
 }
