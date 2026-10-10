@@ -5,15 +5,15 @@
 > F3 cerradas y en `dev`; F4 y F5 cerradas el 2026-10-07 (F45-03); F6 cerrada el 2026-10-08 (F6-06) y F7 el
 > 2026-10-09 (F7-05), las dos por PR a `dev`; `FaseActual = 7`, `Conmutados` = `acceso`, `edge` y `catalogo`;
 > F9-A y F9-B hechos, F9-D pendiente; **F8 en curso** (F8-01 y F8-02 hechas el 2026-10-09: las hojas y el motor de
-> `conversacion` en verde, sin conmutar; F8-03 hecha el 2026-10-10, en dos mitades: `events` y `cart` en verde; quedan F8-04 … F8-07); F10 sin empezar. **Recalibrado el 2026-10-03** tras la parada
+> `conversacion` en verde, sin conmutar; F8-03 hecha el 2026-10-10, en dos mitades: `events` y `cart` en verde; quedan F8-04, F8-04b y F8-05 … F8-07; F8-04 se partió en dos el 2026-10-10, D-F8-11); F10 sin empezar. **Recalibrado el 2026-10-03** tras la parada
 > de F1 ([`DECISIONES.md`](DECISIONES.md) §3; `05` E-12, §4.2, E-9, E-4). Escrito el 2026-09-28. Es el plan **ejecutable** que pedía
 > [`../ESTADO.md`](../ESTADO.md): convierte las fases F0–F10 de
 > [`05-metodo-contratos-y-tdd.md`](../05-metodo-contratos-y-tdd.md) §6 en *specs* con sus historias
-> de usuario, su arquitectura, su diseño, sus reglas y sus tareas, y en **56 sesiones** con su prompt
+> de usuario, su arquitectura, su diseño, sus reglas y sus tareas, y en **57 sesiones** (✎ 2026-10-10: eran 56; F8-04 se parte en dos, D-F8-11) con su prompt
 > (eran 81: las 66 pendientes se reagruparon en 41 de tamaño medio, 45–90 min).
 > La norma de fondo sigue siendo `05`: si el plan choca con ella, manda `05` y el plan se corrige.
 >
-> **Siguiente paso** (al 2026-10-10, con F8-01, F8-02 y F8-03 hechas): [`sesiones/F8-04`](sesiones/F8-04-cli-runtime-1.md), `runtime` (1): los contratos de los 23 y el verde de los 12 de soporte (T8.18–T8.21 y T8.26). `events` y `cart` ya están verdes; la segunda mitad de F8-03 (T8.25) va por PR a `dev` desde `reorg/f8-03b-cart-verde`.
+> **Siguiente paso** (al 2026-10-10, con F8-01, F8-02 y F8-03 hechas): [`sesiones/F8-04`](sesiones/F8-04-cli-runtime-1.md), `runtime` (1a): **solo** los contratos de los 23 (T8.18–T8.21); le sigue [`sesiones/F8-04b`](sesiones/F8-04b-cli-runtime-1-soporte.md), el verde de los 12 de soporte (T8.26). ✎ 2026-10-10 (D-F8-11, Jhoan): F8-04 se parte en dos sesiones antes de lanzarla. `events` y `cart` ya están verdes; la segunda mitad de F8-03 (T8.25) va por PR a `dev` desde `reorg/f8-03b-cart-verde`.
 > Después, la tabla de [`sesiones/README.md`](sesiones/README.md), en orden: es ella la que dice cuál toca.
 
 ## Cómo está escrito (a lo *spec-driven*, estilo Kiro)
@@ -43,14 +43,14 @@ sesión te manda al protocolo, y el protocolo te dice qué leer: el marco, la *s
 | **F5** | `catalogo` (+ `conversacion/model`, D-F5-1) | 10 + 1 | 0 | (las de F4) | [F5](F5-catalogo/README.md) |
 | **F6** | `solicitudes` (intakes, integrations, tenantvars) | 41 | 18 | 3 🌐 · 2 🌐❓ · 1 💻 | [F6](F6-solicitudes/README.md) |
 | **F7** | `captacion` (intake, pipeline, stages, reanalisis…) | 32 | 1 (+ intenciones) | 4 🌐❓ · 1 💻 | [F7](F7-captacion/README.md) |
-| **F8** | `conversacion` (el motor, `runtime`, el carrito) — la mayor; **retira todos los puentes y adaptadores** | 75 | 19 (+5) | 7 💻 | [F8](F8-conversacion/README.md) |
+| **F8** | `conversacion` (el motor, `runtime`, el carrito) — la mayor; **retira todos los puentes y adaptadores** | 75 | 19 (+5) | 8 💻 | [F8](F8-conversacion/README.md) |
 | **F9-D** | Cierre de los procesos contra los dos binarios — **condición del relevo** | — | — | 1 💻 | [F9](F9-procesos/README.md) |
 | **F10** | Relevo: `cmd/server` usa el arranque nuevo, se borra lo viejo, prueba en UAT | 317 prod + 497 test se borran | — | 🧑 · 5 💻 | [F10](F10-relevo/README.md) |
 | **FX** | Transversal: la cara HTTP única nueva, por olas | 33 → `apipublica` | **73** (+19 en `:8100`) | dentro de F0, F2–F8, F10 | [FX](FX-cara-http/README.md) |
 
 Sesiones: 🌐 web · 🌐❓ web si queda saldo de la promoción, si no local · 💻 solo local (Docker, UAT, `main`).
 Al 2026-10-10 están hechas las sesiones de F0, F9-A/B, F1 (con F1-06), F2, F3, F4+F5 (F45-01, F45-02 y F45-03),
-F6 y F7, y F8-01, F8-02 y F8-03 de F8; la siguiente es F8-04. Qué sesión está hecha lo dice la tabla de
+F6 y F7, y F8-01, F8-02 y F8-03 de F8; la siguiente es F8-04 y, tras ella, F8-04b. Qué sesión está hecha lo dice la tabla de
 [`sesiones/README.md`](sesiones/README.md), no esta línea.
 
 Cifras de ficheros de producción medidas por cada *spec* sobre `dev` @ `1b18932` (con `ls`/`wc`/`go

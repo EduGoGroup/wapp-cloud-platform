@@ -325,6 +325,14 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     [`deuda.md`](../../../deuda.md) y T10.23 de F10. Para F8-04 y F8-05: correr el lint sin etiqueta sobre los tests antes del
     verde. Y al contar: `grep -rn 'pendiente.Implementar'` sobre `conversacion` da **4**, las cuatro en
     `orden_consulta_ast_test.go:109,181,201,220` (texto del propio candado), y **0** en producción.
+29. **(F8-04, método; decisión de Jhoan, 2026-10-10) F8-04 se parte en dos sesiones antes de lanzarla (D-F8-11).** En vez de
+    lanzarla sabiendo que no cabe y relanzarla, queda en **F8-04** (los contratos: T8.18–T8.21, todo el rojo de `runtime`) y
+    **F8-04b** (el verde de los 12 de soporte: T8.26), por la frontera que ya tenía el bloque 4 de [`tareas.md`](tareas.md).
+    Motivo medido: F8-03, con 21 ficheros y dos complejos, no cupo en un bloque de 90 min y se hizo en dos mitades (≈ 75 + ≈ 20
+    min; hallazgo 26); F8-04 es de nivel complejo, con 23 contratos, dobles, dos suites contra Postgres y 12 ficheros en verde
+    con mutantes. F8-05 pasa a depender de F8-04b. Las tareas no cambian de texto ni de número. Como F8-04 queda toda de rojo,
+    el lint del hallazgo 28 se le pasa a los tests etiquetados antes de cerrarla, con `--build-tags pendiente` (la etiqueta se
+    suma a la `integracion` del `.golangci.yml`; el comando, en la ficha).
 
 ## Orden de lectura
 
@@ -334,7 +342,7 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
 
 ## Bloques de sesión
 
-Siete sesiones, **todas 💻**: cada una en **su rama partida de `dev`** y con PR a `dev` sin squash (regla 6 del `CLAUDE.md`, 2026-10-03; ✎ corregido en F8-01: aquí decía «sin PR, `git push origin dev`»).
+Ocho sesiones (✎ 2026-10-10, D-F8-11: eran siete; F8-04 se parte en F8-04 y F8-04b, hallazgo 29), **todas 💻**: cada una en **su rama partida de `dev`** y con PR a `dev` sin squash (regla 6 del `CLAUDE.md`, 2026-10-03; ✎ corregido en F8-01: aquí decía «sin PR, `git push origin dev`»).
 Cada una es un bloque de 45–90 min (objetivo, **sin medir**) y cierra con las tres cosas: tareas `[x]` con SHA,
 bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../sesiones/README.md).
 
@@ -343,7 +351,8 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-01 | inventario E-12 y hojas | medio · `store` complejo · `content` simple | T8.1–T8.8, T8.22 | inventario **aprobado por Jhoan** (antes no se escribe código); `model`·`trigger`·`content`·`store`·`modules` verdes; suites `Contrato` en memoria y en Postgres |
 | F8-02 ✅ | motor | medio · `menu`/`media`/`survey` simple | T8.9–T8.11, T8.14, T8.23 | `engine`·`menu`·`survey`·`media`·`turnoacotado` verdes (2026-10-09, rama `reorg/f8-02-motor`, `d8fd4ac` … `4ce435f`, PR #61 en `dev`, merge `df340a6`) |
 | F8-03 ✅ | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (11) y `cart` (20) verdes; goldens idénticos; candado de orden verde y mutado (en dos mitades: 2026-10-09, rama `reorg/f8-03-events-cart`, `8c819b40` … `790ca522`, PR #62 en `dev`, merge `8b841c8d`; 2026-10-10, rama `reorg/f8-03b-cart-verde`, `dd0771ce` … `44255a2b`, PR #63 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash) |
-| F8-04 | `runtime` (1): contratos de los 23 y soporte | complejo | T8.18–T8.21, T8.26 | 23 contratos en rojo, candado de rachas escrito, los 12 de soporte verdes |
+| F8-04 | `runtime` (1a): los contratos de los 23 | complejo | T8.18–T8.21 | 23 contratos en rojo, `runtimehelpertest` verde, candado de rachas escrito, lista blanca de `conversacion` completa; ningún verde de `runtime` (✎ 2026-10-10, D-F8-11: antes llevaba también T8.26) |
+| F8-04b | `runtime` (1b): el verde del soporte | complejo | T8.26 | los 12 de soporte verdes, mutantes de `keyedmutex` y `streak` muertos, `pendiente` del runtime solo en los 11 del núcleo |
 | F8-05 | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo verdes, mutantes muertos, `pendiente` del runtime = 0 |
 | F8-06 | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo |
 | F8-07 | cierre | — | T8.36–T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
@@ -351,7 +360,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (medido en el código viejo):
 `admin` importa `runtime` (`handlers.go:24,306,308`), así que no puede nacer antes que sus contratos y va con la cara
 (F8-06); y `send.go`, `thread.go` y `welcome.go` cuelgan de `*Runtime`, así que F8-04 escribe los contratos de los
-**23** antes de poner verdes los 12 de soporte.
+**23** antes de que F8-04b ponga verdes los 12 de soporte (✎ 2026-10-10, D-F8-11: las dos cosas iban en F8-04).
 
 ## Decisiones que necesita (de Jhoan)
 
