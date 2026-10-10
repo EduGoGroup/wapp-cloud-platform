@@ -376,6 +376,9 @@ func (w *p6World) closing(t *testing.T) {
 		t.Errorf("errores del núcleo del Edge: %v", errs)
 	}
 	w.sc.expectNoPendingText(t, "al cerrar el proceso")
+	// D-F7-9: ni las ventanas del proceso ni el re-análisis de pushReanalysis (T8.40: su job nace
+	// con su sobre) pueden dejar un job muerto por «no trae literal que analizar».
+	requireNoJobWithoutLiteral(t, w.sc)
 	edgeSinErrores(t, w.sc.S, w.errors)
 	t.Logf("peticiones reintentadas por 429: %d", w.calls.throttled)
 }

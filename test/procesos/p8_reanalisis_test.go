@@ -335,7 +335,8 @@ func (w *p8World) auditTrail(t *testing.T) {
 // seis revisiones y en el estado en que nació; el guion atendió todo lo que se le pidió; el Edge no
 // recibió calentamientos ni anotó errores ni tiene textos sin leer; el único aviso de degradación es
 // el de la puerta; el literal del cliente y la transcripción de la dueña no están en claro en
-// ninguna tabla ni en el log; y el log del servidor no trae ERROR.
+// ninguna tabla ni en el log; ningún job de la empresa murió por falta de literal (D-F7-9: el job
+// de re-análisis nace con su sobre, T8.40); y el log del servidor no trae ERROR.
 func (w *p8World) closing(t *testing.T) {
 	sc := w.sc
 	if got := p9Scalar(t, sc.DB, `SELECT status || '|' || (SELECT count(*) FROM public.intake_revisions r WHERE r.intake_id = i.id)::text
@@ -358,6 +359,9 @@ func (w *p8World) closing(t *testing.T) {
 	}
 	w.noLiteralInClear(t)
 	sc.expectNoPendingText(t, "al cerrar el proceso")
+	// Ningún paso de P8 produce a propósito un job `failed` por «no trae literal que analizar»:
+	// todo re-análisis del proceso parte de un hilo con texto del cliente.
+	requireNoJobWithoutLiteral(t, sc)
 	edgeSinErrores(t, sc.S, nil)
 	t.Logf("peticiones reintentadas por 429 (límite por credencial de la API pública): %d", w.calls.throttled)
 }

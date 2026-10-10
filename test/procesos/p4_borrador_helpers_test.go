@@ -346,11 +346,12 @@ func (sc *draftScene) beatReadiness(t *testing.T, r cloudlinkv1.InferenceReadine
 // requireNoJobWithoutLiteral exige que NINGÚN job de la empresa haya muerto por falta de literal: cero
 // filas `failed` de intake_jobs cuyo error diga «no trae literal que analizar». Es la huella de D-F7-9:
 // el worker reclamó el job de una ventana ya cerrada (`pending`) cuyo sobre todavía no se había
-// escrito. Ningún paso de P4 produce esa fila a propósito: toda ventana del proceso tiene mensajes de
-// texto del cliente, así que todo job que cierra tiene su sobre.
+// escrito (o el de un re-análisis recién abierto). Ningún paso de P4, P6 ni P8 —los tres la llaman en
+// su cierre— produce esa fila a propósito: toda ventana tiene mensajes de texto del cliente, así que
+// todo job que cierra, o que nace de un re-análisis, tiene su sobre.
 //
 // La aserción vale para los dos binarios y no distingue entre ellos. El nuevo la garantiza: cierra la
-// ventana y guarda el sobre en una sola sentencia (F8-06b). El viejo conserva la carrera hasta su
+// ventana y guarda el sobre en una sola sentencia, y el job de re-análisis nace con el suyo (F8-06b). El viejo conserva la carrera hasta su
 // borrado en F10 y puede ponerse rojo aquí de forma intermitente, igual que ya lo hacía por la línea
 // ERROR de su log (hallazgo 14 de F8).
 func requireNoJobWithoutLiteral(t *testing.T, sc *draftScene) {
