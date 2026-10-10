@@ -4,11 +4,12 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // flowEventStore es lo único que el PersistSink necesita del almacén tras extraer la
@@ -28,6 +29,45 @@ type flowEventStore interface {
 // payload es JSON en claro de nivel 1 (nunca una clave privada, ver Handle).
 type DecisionAppender interface {
 	AppendDecision(ctx context.Context, eventID string, payload []byte) error
+}
+
+// Nombres de los efectos que este sink reconoce como DECISIÓN del cliente. Son
+// RÉPLICAS de los literales que declaran los módulos (la convención de siempre: el
+// PersistSink replica los nombres sin importar el módulo), y forman una LISTA
+// CERRADA — la whitelist de D-043.13/23.
+const (
+	// effectItemAdded (cart.EffectItemAdded): la línea que el cliente AÑADIÓ al
+	// pedido, con su sku, cantidad y variante en el payload. Es la decisión
+	// arquetípica del carrito.
+	effectItemAdded = "item_added"
+	// effectNoteAdded (cart.EffectNoteAdded): la personalización que el cliente
+	// dictó — la indicación de UNA línea (con su texto y, si partió la línea ×N,
+	// el split_from_qty) o la indicación del pedido entero (de la que el payload
+	// público solo lleva el LARGO; el literal es PII y no entra en el nivel 1).
+	// También es el único efecto que acompaña a un cambio de líneas que no es un
+	// alta (el split ×N → ×(N-1)+×1), así que cubre el «quitado/cantidad» de la
+	// tabla de D-043.23 tal como el módulo lo emite hoy.
+	effectNoteAdded = "note_added"
+	// effectSurveyAnswer (survey.EffectSurveyAnswer): la respuesta validada de la
+	// encuesta (question_id + answer_code).
+	effectSurveyAnswer = "survey_answer"
+)
+
+// decisionEffects es la whitelist CERRADA de efectos-decisión (D-043.23): lo que
+// el CLIENTE decidió, estructurado, nivel 1 en claro. Lo que queda FUERA, y por
+// qué, para que nadie lo «complete» sin pasar por la decisión:
+//
+//   - cart_started, category_selected, item_viewed: NAVEGACIÓN — mirar no decide.
+//   - cart_closed, cart_cancelled, cart_expired y toda apertura: CICLO DE VIDA del
+//     evento/solicitud, no una decisión dentro de él (D-043.23 lo dice explícito).
+//   - buyer_data_captured: sí es del cliente, pero es DATO PERSONAL con Kind
+//     private (nivel 2, D-041.13) — su sitio es la fila cifrada del proyector,
+//     jamás una entrada en claro del hilo. La guarda de KindPrivate en Handle lo
+//     cortaría igual; no listarlo evita depender solo de esa guarda.
+var decisionEffects = map[string]struct{}{
+	effectItemAdded:    {},
+	effectNoteAdded:    {},
+	effectSurveyAnswer: {},
 }
 
 // ErrMaterializationFailed marca, DENTRO del error que Handle devuelve, que el
@@ -76,9 +116,14 @@ var ErrMaterializationFailed = errors.New("runtime: la materialización del efec
 // antes que el WebhookSink (PhaseNotify), que lee esa anotación, se registren en el
 // orden que se registren. El orden lo garantiza el runtime, no este tipo.
 //
-// En el rojo no lleva campos. El verde le pone tres: el almacén del outbox, los
-// proyectores y el hilo de decisiones.
-type PersistSink struct{}
+// Lleva tres campos: el almacén del outbox, los proyectores y el hilo de decisiones.
+type PersistSink struct {
+	repo       flowEventStore
+	projectors []modules.Projector
+	// decisions es el hilo del evento (T4.5.7a). nil ⇒ no se escribe ninguna fila
+	// `decision` (no-regresión total; lo cablea el arranque con WithDecisionThread).
+	decisions DecisionAppender
+}
 
 // NewPersistSink construye el sink con el almacén del outbox y los proyectores por
 // módulo, en el orden dado. Nunca devuelve nil. Sin proyectores, solo escribe
@@ -89,7 +134,7 @@ type PersistSink struct{}
 // almacén es obligatorio (un almacén nil es un error de cableado, no un modo de
 // funcionamiento).
 func NewPersistSink(repo flowEventStore, projectors ...modules.Projector) *PersistSink {
-	panic(pendiente.Implementar("runtime.NewPersistSink"))
+	return &PersistSink{repo: repo, projectors: projectors}
 }
 
 // WithDecisionThread cablea el productor de filas `decision` del hilo (T4.5.7a) y
@@ -99,7 +144,8 @@ func NewPersistSink(repo flowEventStore, projectors ...modules.Projector) *Persi
 //
 // Con nil —o sin llamarlo— no se escribe ninguna fila `decision` (no-regresión total).
 func (s *PersistSink) WithDecisionThread(a DecisionAppender) *PersistSink {
-	panic(pendiente.Implementar("runtime.PersistSink.WithDecisionThread"))
+	s.decisions = a
+	return s
 }
 
 // Handle materializa UN efecto. Hace hasta tres cosas, SIEMPRE en este orden, con el
@@ -198,5 +244,82 @@ func (s *PersistSink) WithDecisionThread(a DecisionAppender) *PersistSink {
 // payload nil o sin las claves que un proyector esperaría: no lee el contenido del
 // payload.
 func (s *PersistSink) Handle(ctx context.Context, ec EffectContext, eff modules.Effect) error {
-	panic(pendiente.Implementar("runtime.PersistSink.Handle"))
+	if eff.Kind != modules.KindPrivate {
+		fe := store.FlowEvent{
+			TenantID:    ec.TenantID,
+			ContactID:   ec.ContactID,
+			FlowID:      ec.FlowID,
+			FlowVersion: ec.FlowVersion,
+			Kind:        eff.Kind,
+			Name:        eff.Name,
+			Payload:     eff.PublicPayload(),
+		}
+		if err := s.repo.InsertFlowEvent(ctx, fe); err != nil {
+			// Marcado con ErrMaterializationFailed (Plan 054 · T3): sin la fila del
+			// outbox, la proyección NUNCA llega a intentarse (return corta aquí), así
+			// que para un efecto durable esto TAMBIÉN es "el contenido no quedó
+			// materializado", no solo un fallo de bitácora.
+			return fmt.Errorf("%w: outbox: %w", ErrMaterializationFailed, err)
+		}
+	}
+
+	// El hilo va ANTES de la proyección a propósito: la decisión es lo que el
+	// MÓDULO declaró, y algún proyector ENRIQUECE eff.Payload al materializar
+	// (cart anota intake_id en cart_closed, ver SinkPhase) — escribir después
+	// colaría en el hilo datos que el cliente no decidió.
+	threadErr := s.appendDecision(ctx, ec, eff)
+
+	meta := modules.EffectMeta{
+		TenantID:    ec.TenantID,
+		ContactID:   ec.ContactID,
+		SessionID:   ec.SessionID,
+		FlowID:      ec.FlowID,
+		FlowVersion: ec.FlowVersion,
+		EventID:     ec.EventID,
+	}
+	for _, p := range s.projectors {
+		if p.Handles(eff.Name) {
+			if perr := p.Project(ctx, meta, eff); perr != nil {
+				// Igual que arriba: SOLO la proyección (o el outbox) lleva la marca.
+				// threadErr, si lo hay, viaja JUNTO (errors.Join no lo descarta, así que
+				// el despacho lo sigue viendo en el log) pero no la lleva él mismo.
+				return errors.Join(threadErr, fmt.Errorf("%w: proyección: %w", ErrMaterializationFailed, perr))
+			}
+			return threadErr
+		}
+	}
+	return threadErr
+}
+
+// appendDecision escribe la fila `decision` del hilo para un efecto de la
+// whitelist (T4.5.7a, D-043.23). Las cuatro guardas, en orden de baratura:
+//
+//   - decisions nil: el hilo no está cableado (no-regresión).
+//   - ec.EventID vacío: el turno NO pertenece a un evento vivo — «siempre que haya
+//     evento vivo» es literal en D-043.23; una decisión sin evento no tiene hilo
+//     en el que vivir, y no se inventa uno.
+//   - KindPrivate: el payload es dato personal; el hilo en claro no lo ve NUNCA
+//     (misma regla de plataforma que el outbox).
+//   - fuera de la whitelist: navegación y ciclo de vida no son decisiones.
+//
+// El payload es el PublicPayload serializado: estructura en claro de nivel 1, sin
+// las claves privadas (la indicación del pedido entra como su LARGO, igual que en
+// flow_events — defecto A2 del Plan 041, misma poda, mismo motivo).
+func (s *PersistSink) appendDecision(ctx context.Context, ec EffectContext, eff modules.Effect) error {
+	if s.decisions == nil || ec.EventID == "" || eff.Kind == modules.KindPrivate {
+		return nil
+	}
+	if _, ok := decisionEffects[eff.Name]; !ok {
+		return nil
+	}
+	payload, err := json.Marshal(eff.PublicPayload())
+	if err != nil {
+		return fmt.Errorf("runtime: serializar la decisión %q para el hilo: %w", eff.Name, err)
+	}
+	if err := s.decisions.AppendDecision(ctx, ec.EventID, payload); err != nil {
+		// Best-effort (patrón PersistSummary): el hilo JAMÁS tumba el turno. El
+		// error sube envuelto para que el despacho lo loguee y siga.
+		return fmt.Errorf("runtime: escribir la decisión %q en el hilo del evento: %w", eff.Name, err)
+	}
+	return nil
 }
