@@ -84,9 +84,10 @@ const featureIntakeAggregation = entitlements.FeatureLLMIntake
 //     pedir);
 //   - vive en el proceso: un agregador NUEVO sobre el mismo almacén no la tiene.
 //
-// ⚠️ Rareza portada (aggregator.go:511-525): el id se anota como visto ANTES de la
-// sentencia, así que si OpenOrAppend falla, la re-entrega inmediata de ESE MISMO id se
-// descarta en el paso 3 y no reintenta la escritura.
+// Divergencia deliberada del viejo (D-F8-14; aggregator.go:511-525 del viejo): el id se
+// anota como visto ANTES de la sentencia, pero si OpenOrAppend FALLA se desanota, y la
+// re-entrega de ESE MISMO id vuelve a intentar la escritura. En el viejo se quedaba
+// anotado y la re-entrega se descartaba: el mensaje se perdía para la ventana.
 //
 // # PII
 //
@@ -109,7 +110,8 @@ func (s *IntakeAggregator) Observe(ctx context.Context, ref IncomingRef) {
 	if !has {
 		return
 	}
-	// ⚠️ Rareza portada tal cual: el id queda anotado como visto ANTES de la sentencia.
+	// El id se anota como visto ANTES de la sentencia (comprobar y anotar son un solo
+	// acto bajo el candado); si la sentencia falla, se desanota abajo.
 	if s.alreadySeen(ref) {
 		return
 	}
@@ -123,6 +125,11 @@ func (s *IntakeAggregator) Observe(ctx context.Context, ref IncomingRef) {
 		s.log.Error("agregador: no se pudo abrir/ampliar la ventana de captación; el turno sigue",
 			"error", err, "tenant_id", ref.Key.TenantID, "session_id", ref.Key.SessionID,
 			"wa_message_id", ref.WaMessageID)
+		// Divergencia deliberada del viejo (D-F8-14, hallazgo 34b): el viejo dejaba el
+		// id anotado aunque la sentencia fallara, y la re-entrega del Edge se descartaba
+		// como repetida: el mensaje no entraba en ninguna ventana y el presupuesto salía
+		// sin él, en silencio. Aquí se desanota, y la re-entrega vuelve a intentarlo.
+		s.forgetSeen(ref)
 		return
 	}
 	// EL ADELANTO (T1.2, reescrito por T1.6-4). Es lo último y NO ES UNA LLAMADA AL
@@ -177,6 +184,17 @@ func (s *IntakeAggregator) alreadySeen(ref IncomingRef) bool {
 	}
 	s.seen[ref.Key] = ref.WaMessageID
 	return false
+}
+
+// forgetSeen desanota el id de un entrante cuya sentencia falló, para que su re-entrega
+// no se descarte como repetida. Solo borra si lo anotado sigue siendo ESE id: si otro
+// turno anotó entre medias un mensaje más nuevo de la misma ventana, no lo toca.
+func (s *IntakeAggregator) forgetSeen(ref IncomingRef) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seen[ref.Key] == ref.WaMessageID {
+		delete(s.seen, ref.Key)
+	}
 }
 
 // 🔴 NO HAY UN `forget(key)` AL CERRAR LA VENTANA, Y ESO ES DELIBERADO (AG-5, trampa

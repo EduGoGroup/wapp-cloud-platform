@@ -237,15 +237,55 @@ func TestObserve_StoreFailureDoesNotBreakTheTurn(t *testing.T) {
 		map[string]any{"error": boom, "tenant_id": aggregatorTenant, "session_id": "session-9", "wa_message_id": "wa-1"})
 	rig.requireNoSecret(t)
 
-	// Rareza portada: el id quedó anotado como visto ANTES de la sentencia, así que su re-entrega
-	// inmediata se descarta sin reintentar; un mensaje distinto sí abre la ventana.
+}
+
+// TestObserve_FailedWriteIsNotRememberedAsSeen es la divergencia deliberada del viejo (D-F8-14,
+// hallazgo 34b): un id cuya sentencia FALLÓ no queda anotado como visto, así que su re-entrega
+// entra en la ventana en vez de perderse; y una vez guardado, la siguiente re-entrega sí se
+// descarta.
+func TestObserve_FailedWriteIsNotRememberedAsSeen(t *testing.T) {
+	rig := newAggregatorRig()
+	agg := rig.aggregator(WithAheadRequester(rig.ahead))
+	key := aggregatorKey("event-1")
+	rig.jobs.FailOpenWith(errors.New("base caída"))
+	agg.Observe(context.Background(), aggregatorRef(key, "wa-1", aggregatorStart))
+
 	rig.jobs.FailOpenWith(nil)
 	agg.Observe(context.Background(), aggregatorRef(key, "wa-1", aggregatorStart))
-	if got := rig.jobs.Counters().OpenOrAppend; got != 1 {
-		t.Errorf("la re-entrega del id fallido llegó a la sentencia (%d escrituras): el viejo la descarta", got)
+
+	if got := rig.jobs.Counters().OpenOrAppend; got != 2 {
+		t.Fatalf("escrituras = %d, quería 2: la re-entrega del id que no se guardó tiene que reintentarse", got)
 	}
-	agg.Observe(context.Background(), aggregatorRef(key, "wa-2", aggregatorStart))
-	rig.requireStatus(t, "tras un mensaje distinto", intake.StatusAggregating)
+	jobs := rig.jobs.Jobs()
+	if len(jobs) != 1 || !slices.Equal(jobs[0].SourceRefs, []string{"wa-1"}) {
+		t.Fatalf("filas = %+v, quería una ventana con wa-1: el mensaje se perdió", jobs)
+	}
+	if got := len(rig.ahead.requested()); got != 1 {
+		t.Errorf("clasificaciones pedidas = %d, quería 1: la de la re-entrega que sí abrió la ventana", got)
+	}
+
+	agg.Observe(context.Background(), aggregatorRef(key, "wa-1", aggregatorStart))
+	if got := rig.jobs.Counters().OpenOrAppend; got != 2 {
+		t.Errorf("escrituras = %d, quería 2: ya guardado, la re-entrega siguiente se descarta", got)
+	}
+}
+
+// TestObserve_FailedWriteDoesNotForgetANewerMessage: el olvido es SOLO del id que falló. Si
+// entre medias otro turno anotó un mensaje más nuevo de la misma ventana, ese sigue visto.
+func TestObserve_FailedWriteDoesNotForgetANewerMessage(t *testing.T) {
+	agg := newAggregatorRig().aggregator()
+	key := aggregatorKey("event-1")
+	failed := aggregatorRef(key, "wa-1", aggregatorStart)
+	newer := aggregatorRef(key, "wa-2", aggregatorStart)
+	if agg.alreadySeen(failed) || agg.alreadySeen(newer) {
+		t.Fatal("montaje: ninguno de los dos estaba visto")
+	}
+
+	agg.forgetSeen(failed)
+
+	if !agg.alreadySeen(newer) {
+		t.Error("olvidar wa-1 borró la anotación de wa-2, que es de otro mensaje")
+	}
 }
 
 // TestObserve_SameMessageTwice: el mismo wa_message_id observado dos veces seguidas sobre la misma
