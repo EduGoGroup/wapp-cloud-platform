@@ -295,7 +295,31 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
 26. **(F8-03, método) No cupo en una sesión: 21 ficheros con dos complejos son dos bloques.** El rojo de `events` (con doble y
     suite) llevó ≈ 35 min y su verde con mutantes ≈ 26; el rojo de `cart`, ≈ 41 en paralelo. Los dos rojos validaron sus tests
     contra la lógica vieja como oráculo temporal (sin commitear) antes de portar, que es lo que hizo fiable el verde de `events`.
-    El verde de `cart` (T8.25) queda para el relanzamiento.
+    El verde de `cart` (T8.25) queda para el relanzamiento. ✎ Hecho el 2026-10-10: hallazgo 27.
+27. **(F8-03, `cart`, verde) T8.25 cerrada en el relanzamiento: lo portado, lo decidido y los desvíos.** Rama
+    `reorg/f8-03b-cart-verde` desde `dev` @ `8b841c8d`, `dd0771ce` … `44255a2b`. `cart` queda en **20** ficheros de producción
+    (17 + 3: `projection.go` nace partido en cuatro por E-13, `projection` 268, `projection_lines` 222, `projection_close` 138,
+    `projection_buyer` 68); `troceo.go` queda en 568 líneas, en la tolerancia, sin partir. Decidido al portar: `loadCatalog` nace
+    no exportado en `cart/state.go` (`catalogo` no lo exporta); `cloneVars` se sustituye por `modules.CloneVars` (mismo cuerpo);
+    las notas usan `SanitizeNote`, `NoteTooLongError` y `MaxNoteRunes` de `modulos/solicitudes/intakes`; los no exportados en
+    español pasan al inglés por E-11 (`preresolveOConsulta` → `preresolveOrQuery`, `troceado` → `chunked`, `opcionesDelNivel` →
+    `levelOptions`, `codeVolver` → `codeBack`) con los valores observables intactos (`"ninguno"`, `"troceo"`,
+    `"troceo_perdido"`, `"producto"`, `"cantidad"`); el local `max` de `moreCode` (`screens.go`) pasa a `highest` por no sombrear
+    el builtin. Desvíos del plan del verde: un commit previo de lint (hallazgo 28); `prime.go` entra en el primer commit verde
+    (13 ficheros, no 12) porque `cart_levels_test.go`, `cart_notes_test.go` y `consulta_test.go` usan la constante
+    `continueBebidas` de `prime_test.go`, y el traslado de `TestWithLogger_PrimeWarnsAboutDiscardedFields` a `prime_test.go` va
+    ahí, cuerpo intacto; `projection.go` partido. Goldens `cart_v1` y `cart_v2` verdes **sin** `-update` y `cmp` rc=0 contra los
+    del viejo; el candado `TestOrder_QueryIsRaisedBeforeAnyMutation`, sin etiqueta y verde, y rojo al mover el bloque
+    `preresolveOrQuery` + `return` bajo `st.Started = true` en el `Step` real (deshecho sin commitear); mutantes de la
+    proyección, declarados por el sub-agente: 84 válidos, 84 muertos, 0 equivalentes. 🟡 El `item_added` reentregado del
+    hallazgo 25 está **portado tal cual**: sigue para Jhoan, sin decidir.
+28. **(F8-03, método y gates) 🟡 El lint del repo no mira los tests que llevan `//go:build pendiente`.** Solo compila con la
+    etiqueta `integracion`, así que los avisos de un test en rojo aparecen **de golpe** al quitarle la etiqueta en el verde: 17
+    aquí (10 `errcheck` de aserción de tipo, 3 `ST1018`, 2 `gocritic` `mapKey`, 2 `gocyclo`, en 10 ficheros). Se silenciaron con
+    `//nolint:<linter> // motivo` en un commit aparte y previo (`dd0771ce`), sin cambiar ninguna aserción ni dato; **si se
+    prefiere arreglarlos, es decisión de Jhoan**. Para F8-04 y F8-05: correr el lint sin etiqueta sobre los tests antes del
+    verde. Y al contar: `grep -rn 'pendiente.Implementar'` sobre `conversacion` da **4**, las cuatro en
+    `orden_consulta_ast_test.go:109,181,201,220` (texto del propio candado), y **0** en producción.
 
 ## Orden de lectura
 
@@ -313,7 +337,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 |---|---|---|---|---|
 | F8-01 | inventario E-12 y hojas | medio · `store` complejo · `content` simple | T8.1–T8.8, T8.22 | inventario **aprobado por Jhoan** (antes no se escribe código); `model`·`trigger`·`content`·`store`·`modules` verdes; suites `Contrato` en memoria y en Postgres |
 | F8-02 ✅ | motor | medio · `menu`/`media`/`survey` simple | T8.9–T8.11, T8.14, T8.23 | `engine`·`menu`·`survey`·`media`·`turnoacotado` verdes (2026-10-09, rama `reorg/f8-02-motor`, `d8fd4ac` … `4ce435f`, PR #61 en `dev`, merge `df340a6`) |
-| F8-03 🔧 | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (7) y `cart` (14) verdes; goldens idénticos; candado de orden verde y mutado — **a medias (2026-10-09, rama `reorg/f8-03-events-cart`, `8c819b40` … `790ca522`)**: `events` verde, `cart` en rojo; falta T8.25, se relanza |
+| F8-03 ✅ | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (10) y `cart` (20) verdes; goldens idénticos; candado de orden verde y mutado (en dos mitades: 2026-10-09, rama `reorg/f8-03-events-cart`, `8c819b40` … `790ca522`, PR #62 en `dev`, merge `8b841c8d`; 2026-10-10, rama `reorg/f8-03b-cart-verde`, `dd0771ce` … `44255a2b`, PR a `dev` por abrir) |
 | F8-04 | `runtime` (1): contratos de los 23 y soporte | complejo | T8.18–T8.21, T8.26 | 23 contratos en rojo, candado de rachas escrito, los 12 de soporte verdes |
 | F8-05 | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo verdes, mutantes muertos, `pendiente` del runtime = 0 |
 | F8-06 | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo |
