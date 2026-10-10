@@ -3,7 +3,9 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
+	"slices"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 )
@@ -104,11 +106,11 @@ type EventSink interface {
 //   - un sink que no implementa PhasedSink corre en PhaseProject;
 //   - el coste por efecto es cero: se ordena al construir, no al despachar.
 //
-// La función que ordena no es exportada (en el viejo, sortSinksByPhase y phaseOf):
-// nace en el verde con su test, y la conducta de extremo a extremo —los tres sinks
-// reciben el efecto en el orden proyecta-A, proyecta-B, notifica; y el WebhookSink
-// registrado PRIMERO encola igualmente el intake_id que generó la proyección— se
-// prueba con el Runtime, en la ola siguiente.
+// La función que ordena no es exportada (sortSinksByPhase y phaseOf, al final de este
+// fichero, con su test). La conducta de extremo a extremo —los tres sinks reciben el
+// efecto en el orden proyecta-A, proyecta-B, notifica; y el WebhookSink registrado
+// PRIMERO encola igualmente el intake_id que generó la proyección— se prueba con el
+// Runtime, en la ola siguiente.
 //
 // Es un entero para que quepan fases intermedias: los valores dejan hueco a propósito.
 type SinkPhase int
@@ -136,4 +138,23 @@ type PhasedSink interface {
 	// Phase declara en qué fase del fan-out debe correr este sink. Tiene que ser
 	// constante para un mismo sink: el runtime la lee UNA vez, al construirse.
 	Phase() SinkPhase
+}
+
+// phaseOf devuelve la fase declarada por un sink, o PhaseProject si no declara
+// ninguna (el default que preserva el comportamiento previo).
+func phaseOf(s EventSink) SinkPhase {
+	if p, ok := s.(PhasedSink); ok {
+		return p.Phase()
+	}
+	return PhaseProject
+}
+
+// sortSinksByPhase ordena los sinks EN SITIO por fase, de menor a mayor y de forma
+// ESTABLE: dentro de una misma fase se respeta el orden de registro (dos PersistSink
+// siguen corriendo en el orden en que se cablearon). Se llama UNA vez, al construir el
+// Runtime, no por efecto.
+func sortSinksByPhase(sinks []EventSink) {
+	slices.SortStableFunc(sinks, func(a, b EventSink) int {
+		return cmp.Compare(phaseOf(a), phaseOf(b))
+	})
 }
