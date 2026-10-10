@@ -287,8 +287,16 @@ type Option func(*Runtime)
 //
 // RT-18 · El orden de despacho no es el de las llamadas a esta opción: New ordena los sinks
 // por fase, de forma estable, y PhaseProject corre antes que PhaseNotify.
+//
+// Divergencia deliberada del viejo (D-F8-16, hallazgo 34e): un sink nil se IGNORA (RT-12).
+// El viejo lo guardaba y el pánico llegaba en el primer turno con un efecto.
 func WithEventSink(sink EventSink) Option {
-	return func(rt *Runtime) { rt.sinks = append(rt.sinks, sink) }
+	return func(rt *Runtime) {
+		if sink == nil {
+			return
+		}
+		rt.sinks = append(rt.sinks, sink)
+	}
 }
 
 // WithPresignClient inyecta el Presigner con el que el runtime firma la clave de un adjunto
@@ -430,8 +438,15 @@ func WithFlowForKind(f FlowForKind) Option {
 // WithResumePolicy registra la política de reanudación de un módulo bajo su tipo de nodo
 // (Plan 027 · Ola 3 · T8, cierra H9; ver resume.go). Pasarla dos veces para el mismo tipo deja
 // la última. Un nodo cuyo tipo no tiene política no reanuda nada.
+//
+// Divergencia deliberada del viejo (D-F8-16, hallazgo 34e): una política nil se IGNORA
+// (RT-12): no registra nada y no borra la que ya hubiera para ese tipo. El viejo la guardaba
+// y el pánico llegaba en el primer turno sobre un nodo de ese tipo.
 func WithResumePolicy(nodeType string, p modules.ResumePolicy) Option {
 	return func(rt *Runtime) {
+		if p == nil {
+			return
+		}
 		if rt.resumePolicies == nil {
 			rt.resumePolicies = make(map[string]modules.ResumePolicy)
 		}
