@@ -389,8 +389,8 @@ func NewSourceTextComposer(log logger.Logger, thread ThreadReader, jobs SourceTe
 // 🔴 NINGUNA línea de log, en ningún nivel, y NINGÚN error llevan contenido del hilo
 // (REQ-10c): solo identificadores y números.
 //
-// ⚠️ DEUDA CONOCIDA, D-F7-9 (no se arregla ni se promete aquí; la decide el verde,
-// F8-05): este método corre DESPUÉS del cierre, en una segunda sentencia y sin
+// ⚠️ DEUDA CONOCIDA, D-F7-9 (no se arregla ni se promete aquí; el verde de F8-05 lo
+// portó tal cual, y el arreglo sigue pendiente, en su propio commit): este método corre DESPUÉS del cierre, en una segunda sentencia y sin
 // atomicidad con él, y PutSourceText exige que la fila esté ya en `pending`. Entre las
 // dos, el job es visible para el worker SIN sobre. Ver IntakeAggregator.Sweep.
 func (c *SourceTextComposer) ComposeAtFlush(ctx context.Context, key intake.WindowKey) error {

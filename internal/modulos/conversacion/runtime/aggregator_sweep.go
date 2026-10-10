@@ -99,8 +99,9 @@ func (s *IntakeAggregator) RecoverAtBoot(ctx context.Context) int {
 // atomicidad; el fallo de la segunda no deshace la primera. NO promete que el job sea
 // invisible para el worker hasta tener sobre: en ese hueco el worker puede reclamar un
 // job `pending` sin `source_text`. Este contrato NO arregla ni promete otra cosa: que
-// cierre y sobre sean un solo acto, o que el sobre preceda a la visibilidad, lo decide
-// el verde (F8-05), en su propio commit.
+// cierre y sobre sean un solo acto, o que el sobre preceda a la visibilidad, sigue
+// pendiente: el verde (F8-05) portó el orden del viejo TAL CUAL, y el arreglo irá en su
+// propio commit, con su caso en el proceso P4 (toca la guarda de PutSourceText).
 //
 // # Logs
 //
