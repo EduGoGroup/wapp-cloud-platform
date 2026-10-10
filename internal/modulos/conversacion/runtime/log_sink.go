@@ -8,7 +8,6 @@ import (
 	"github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // LogSink es la implementación log-only y DEFAULT de EventSink (Plan 015 · T2),
@@ -17,14 +16,14 @@ import (
 //
 // No implementa PhasedSink: corre en PhaseProject, donde corría antes de que las
 // fases existieran.
-//
-// En el rojo no lleva campos. El verde le pone uno: el logger.
-type LogSink struct{}
+type LogSink struct {
+	log logger.Logger
+}
 
 // NewLogSink construye el sink log-only con el logger dado. Nunca devuelve nil, tampoco
 // con un logger nil (ese sink queda mudo: ver Handle).
 func NewLogSink(log logger.Logger) *LogSink {
-	panic(pendiente.Implementar("runtime.NewLogSink"))
+	return &LogSink{log: log}
 }
 
 // Handle registra el efecto y no falla NUNCA: devuelve siempre nil. Es el enganche
@@ -48,6 +47,17 @@ func NewLogSink(log logger.Logger) *LogSink {
 //
 // Sobre un receptor nil, o un sink construido con logger nil, devuelve nil sin
 // escribir nada y sin entrar en pánico.
-func (s *LogSink) Handle(ctx context.Context, ec EffectContext, eff modules.Effect) error {
-	panic(pendiente.Implementar("runtime.LogSink.Handle"))
+func (s *LogSink) Handle(_ context.Context, ec EffectContext, eff modules.Effect) error {
+	if s == nil || s.log == nil {
+		return nil
+	}
+	s.log.Info("runtime: efecto despachado (log-only)",
+		"kind", eff.Kind,
+		"name", eff.Name,
+		"tenant", ec.TenantID,
+		"contact_id", ec.ContactID,
+		"flow_id", ec.FlowID,
+		"version", ec.FlowVersion,
+	)
+	return nil
 }

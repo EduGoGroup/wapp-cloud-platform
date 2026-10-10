@@ -1,4 +1,4 @@
-//go:build integracion && pendiente
+//go:build integracion
 
 package procesos
 
@@ -33,9 +33,7 @@ import (
 // Las claves de aquí son las del ENVELOPE DE PII DE NEGOCIO (internal/platform/crypto), NO la DEK
 // del ADR-0007 que custodia el cliente. Se generan en el test y mueren con él.
 //
-// 🔴 Lleva la etiqueta `pendiente` además de `integracion` mientras runtime.PostgresSelfNumbers
-// esté en rojo: un panic aborta el binario ENTERO de los procesos. El verde del adaptador (F8-04b)
-// se la quita. Las siembras y el observador de public.fleet_sessions son los de
+// Las siembras y el observador de public.fleet_sessions son los de
 // runtime_tenant_resolver_contrato_test.go.
 
 // runtimeContractSelfCases cuenta los Montajes pedidos en esta corrida: la suite llama a nuevo una

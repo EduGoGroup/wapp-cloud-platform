@@ -1,14 +1,9 @@
-//go:build pendiente
-
 package runtime
 
 // El driver de database/sql de mentira sobre el que corren los tests de los dos adaptadores
 // Postgres del paquete (tenant_resolver.go y self_numbers.go): apunta cada sentencia que le llega
 // (texto y argumentos, tal cual) y contesta lo que el test guioniza, en orden. Solo consultas: ni
 // Exec ni transacciones, que estos adaptadores no usan (pedirlas es un error). Sin Postgres.
-//
-// Lleva la etiqueta `pendiente` mientras los tests que lo usan la lleven: sin ellos no lo usa
-// nadie. El verde de los adaptadores (F8-04b) se la quita a los tres ficheros a la vez.
 
 import (
 	"context"

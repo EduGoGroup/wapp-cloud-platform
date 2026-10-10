@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package runtime
 
 // webhook_sink_pii_test.go — lo que el sink LEE del efecto y lo que NO deja salir. Partido

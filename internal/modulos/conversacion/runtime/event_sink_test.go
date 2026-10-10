@@ -1,28 +1,28 @@
-//go:build pendiente
-
 package runtime
 
 import (
 	"context"
+	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 )
 
-// event_sink.go solo declara datos e interfaces: no tiene ningún cuerpo que entre en
-// pánico, así que estos tests pasan ya en el rojo. Llevan la etiqueta `pendiente` porque el
-// fichero NO está terminado: le falta la función que ordena los sinks por fase (no
-// exportada), que nace en el verde con sus tests:
+// Tests de event_sink.go: los de sus exportados (datos e interfaces) y los de la
+// ordenación por fase, que no es exportada y nació en el verde (F8-04b).
 //
-//   - TestSortSinksByPhase_ProjectBeforeNotify: un PhaseNotify registrado primero queda
-//     detrás de los PhaseProject.
-//   - TestSortSinksByPhase_StableWithinPhase: dos sinks de la misma fase conservan su
-//     orden de registro (tabla con 0, 1 y varios sinks, y con una fase intermedia).
-//   - TestPhaseOf_UnphasedSinkIsProject: un EventSink sin Phase() cuenta como PhaseProject.
-//   - Mutantes: ordenación no estable, comparación invertida, default distinto de
-//     PhaseProject.
+// Mutantes de la ordenación, aplicados a mano con -race:
 //
-// Y de conducta con el Runtime (ola siguiente): el fan-out entrega en el orden
+//   - ordenación NO estable (`slices.SortFunc`) → muere
+//     TestSortSinksByPhase_StableWithinPhase/many_sinks_interleaved (hacen falta más de 12
+//     elementos: por debajo, la ordenación de Go es una inserción, que es estable).
+//   - comparación invertida (`cmp.Compare(phaseOf(b), phaseOf(a))`) → muere
+//     TestSortSinksByPhase_ProjectBeforeNotify.
+//   - default distinto de PhaseProject (`return PhaseNotify` en phaseOf) → muere
+//     TestPhaseOf_UnphasedSinkIsProject.
+//
+// De conducta con el Runtime (ola siguiente): el fan-out entrega en el orden
 // proyecta-A, proyecta-B, notifica; el WebhookSink registrado antes que el PersistSink
 // encola el intake_id que generó la proyección.
 
@@ -145,5 +145,124 @@ func TestEffectContext_CarriesConversationIdentity(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("el sink recibió %+v, quería %+v", got, want)
+	}
+}
+
+// namedSink es un EventSink SIN fase que se distingue por su nombre: sirve para afirmar
+// sobre el ORDEN en que queda una lista de sinks.
+type namedSink struct {
+	plainSink
+	name string
+}
+
+// namedPhasedSink es un namedSink que declara la fase que se le dé.
+type namedPhasedSink struct {
+	namedSink
+	phase SinkPhase
+}
+
+func (s *namedPhasedSink) Phase() SinkPhase { return s.phase }
+
+func unphased(name string) EventSink { return &namedSink{name: name} }
+
+func phased(name string, phase SinkPhase) EventSink {
+	return &namedPhasedSink{namedSink: namedSink{name: name}, phase: phase}
+}
+
+// sinkNames devuelve los nombres de los sinks en el orden en que están.
+func sinkNames(t *testing.T, sinks []EventSink) []string {
+	t.Helper()
+	names := make([]string, 0, len(sinks))
+	for _, s := range sinks {
+		switch v := s.(type) {
+		case *namedSink:
+			names = append(names, v.name)
+		case *namedPhasedSink:
+			names = append(names, v.name)
+		default:
+			t.Fatalf("sink inesperado en la lista: %T", s)
+		}
+	}
+	return names
+}
+
+// TestPhaseOf_UnphasedSinkIsProject: un EventSink sin Phase() cuenta como PhaseProject, y
+// uno con Phase() cuenta como lo que declara.
+func TestPhaseOf_UnphasedSinkIsProject(t *testing.T) {
+	if got := phaseOf(&plainSink{}); got != PhaseProject {
+		t.Errorf("phaseOf de un sink sin Phase() = %d, quería PhaseProject (%d)", got, PhaseProject)
+	}
+	if got := phaseOf(&notifySink{}); got != PhaseNotify {
+		t.Errorf("phaseOf de un sink de notificación = %d, quería PhaseNotify (%d)", got, PhaseNotify)
+	}
+	if got := phaseOf(phased("mid", 50)); got != 50 {
+		t.Errorf("phaseOf de un sink de fase 50 = %d, quería 50", got)
+	}
+}
+
+// TestSortSinksByPhase_ProjectBeforeNotify: un PhaseNotify registrado PRIMERO queda detrás
+// de todos los PhaseProject, declaren la fase o no.
+func TestSortSinksByPhase_ProjectBeforeNotify(t *testing.T) {
+	sinks := []EventSink{
+		phased("notify", PhaseNotify),
+		unphased("project-A"),
+		phased("project-B", PhaseProject),
+	}
+	sortSinksByPhase(sinks)
+
+	want := []string{"project-A", "project-B", "notify"}
+	if got := sinkNames(t, sinks); !slices.Equal(got, want) {
+		t.Errorf("orden = %v, quería %v (proyección antes que notificación)", got, want)
+	}
+}
+
+// TestSortSinksByPhase_StableWithinPhase: dentro de una misma fase se conserva el orden de
+// registro, y una fase intermedia cae entre las dos.
+func TestSortSinksByPhase_StableWithinPhase(t *testing.T) {
+	// Muchos sinks intercalados: n-i, m-i y p-i en cada vuelta. Ordenados, primero todos
+	// los p en su orden, luego los m y luego los n.
+	const rounds = 20
+	interleaved := make([]EventSink, 0, 3*rounds)
+	wantP := make([]string, 0, rounds)
+	wantM := make([]string, 0, rounds)
+	wantN := make([]string, 0, rounds)
+	for i := range rounds {
+		id := strconv.Itoa(i)
+		interleaved = append(interleaved,
+			phased("n-"+id, PhaseNotify), phased("m-"+id, 50), unphased("p-"+id))
+		wantP, wantM, wantN = append(wantP, "p-"+id), append(wantM, "m-"+id), append(wantN, "n-"+id)
+	}
+
+	cases := []struct {
+		name  string
+		sinks []EventSink
+		want  []string
+	}{
+		{"no sinks", nil, []string{}},
+		{"one sink", []EventSink{phased("only", PhaseNotify)}, []string{"only"}},
+		{
+			"all in the same phase keep registration order",
+			[]EventSink{unphased("c"), phased("a", PhaseProject), unphased("b")},
+			[]string{"c", "a", "b"},
+		},
+		{
+			"two notify sinks keep registration order behind project",
+			[]EventSink{phased("n-2", PhaseNotify), phased("n-1", PhaseNotify), unphased("p")},
+			[]string{"p", "n-2", "n-1"},
+		},
+		{
+			"intermediate phase sits between project and notify",
+			[]EventSink{phased("notify", PhaseNotify), phased("mid", 50), unphased("project")},
+			[]string{"project", "mid", "notify"},
+		},
+		{"many sinks interleaved", interleaved, slices.Concat(wantP, wantM, wantN)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sortSinksByPhase(tc.sinks)
+			if got := sinkNames(t, tc.sinks); !slices.Equal(got, tc.want) {
+				t.Errorf("orden = %v, quería %v", got, tc.want)
+			}
+		})
 	}
 }

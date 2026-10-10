@@ -4,6 +4,13 @@
 > soporte»), partida **antes** de lanzarla: los contratos son [`F8-04`](F8-04-cli-runtime-1.md) y aquí va **solo el verde de
 > los 12 de soporte** (T8.26). Motivo: hallazgo 29 del [README de F8](../F8-conversacion/README.md).
 
+> ✎ **2026-10-10 (D-F8-12, Jhoan, tras F8-04)**: el verde de esta sesión son **9** de los 12 de soporte (`runtime`,
+> `keyedmutex`, `event_sink`, `log_sink`, `summary_sources`, `streak`, `webhook_sink`, `tenant_resolver`, `self_numbers`).
+> `welcome`, `thread` y `send` cuelgan de `*Runtime` y sus tests pasan por el arnés, que muere en `runtime.WithClock`
+> mientras el núcleo esté en rojo: **pasan a [F8-05](F8-05-cli-runtime-2.md)** y aquí conservan su etiqueta `pendiente`.
+> Donde esta ficha y su prompt dicen «12», léase 9; `pendiente.Implementar` de `runtime` queda en los 11 del núcleo y en
+> `welcome.go` (`thread.go` y `send.go` no tienen exportados). Manda sobre la tabla y el prompt de abajo.
+
 | | |
 |---|---|
 | Fase · bloque | [F8 · conversacion](../F8-conversacion/README.md) · 4b · `runtime` (1b): el verde del soporte |
