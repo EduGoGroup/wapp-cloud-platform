@@ -46,7 +46,7 @@ espera, no sesión: se abre con T10.4 y la sesión se relanza al final para T10.
   - **Hecho cuando**: veredicto de Jhoan escrito. «Sigue» → D-F10-2 aplicada. «Vuelta atrás» → viejo restaurado y verificado; F10 vuelve a su entrada
   - **Commit**: `docs(reorganizacion-modular): F10, acta de la prueba en UAT`
 
-## Bloque C · el relevo en el repo · sesión F10-04 · T10.7–T10.14
+## Bloque C · el relevo en el repo · sesión F10-04 · T10.7–T10.14 y T10.23
 
 Entrada: T10.6 con «sigue». Para cuando: la definición de hecho del bloque C (`reglas.md` §4). Un commit por
 tarea, directo en `dev`, en este orden (`arquitectura.md` §3). No necesita Docker ni UAT.
@@ -75,6 +75,10 @@ tarea, directo en `dev`, en este orden (`arquitectura.md` §3). No necesita Dock
   - **Precondición**: la misma de T10.11 (hallazgo 38): lo que la batería vieja ejercía y nadie más, ya lo ejerce un proceso de F9
   - **Ficheros**: `Makefile` (`test-integration`: fuera, o acotado a `./internal/platform/...` con `postgres:17-alpine` si D-F10-5 = no), `.github/workflows/ci.yml` (job `integration` → procesos), los 9 tests de BD de `internal/platform` si D-F10-5 = sí (P10 verde en F9)
   - **Hecho cuando**: el grep de R10.5.b → 0 (o solo `platform`, nombrado)
+- [ ] **T10.23 · relevo: las supresiones de lint, revisadas (deuda D-31)** · dep. T10.12 · añadida el 2026-10-10 por decisión de Jhoan
+  - **Ficheros**: los que lleven `//nolint` tras el relevo (el código viejo ya no existe; hoy, 90 en el árbol nuevo: 70 en tests y 20 en producción); `documentations/deuda.md` (D-31 y la cifra de §7)
+  - **Hecho cuando**: cada `//nolint` está **arreglado** o, si no se puede sin cambiar lo que se prueba o lo que se promete, queda con su motivo y aprobado por Jhoan en una lista; `grep -rnE '//nolint(:[a-z,]+)?\s*$' --include='*.go' . | wc -l` → 0 (ninguno sin motivo); `make lint` → `0 issues.`; D-31 cerrada o reducida a esa lista
+  - **Commit**: `relevo: las supresiones de lint se arreglan o se justifican`
 - [ ] **T10.14 · docs: el repo dice las rutas nuevas** · dep. T10.11 · cumple R10.7.a
   - **Ficheros**: los de `diseno.md` §4 (147 menciones hoy); `ESTADO.md` y `README.md` de `reorganizacion-modular/` («relevo hecho en el repo; UAT y ecosistema pendientes»); `CLAUDE.md` (la sección «en curso» pasa a «hecha»; el índice del sistema es `internal/arranque/orquestador.go`)
   - **Hecho cuando**: el recuento de `diseno.md` §4 → 0 fuera de `reorganizacion-modular/` y de lo marcado «(histórico)»

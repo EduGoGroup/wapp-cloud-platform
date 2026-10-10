@@ -6,7 +6,7 @@
 | Entorno | 💻 solo local; no necesita Docker ni UAT |
 | Nivel (E-12) | No aplica: F10 no reconstruye un módulo y no lleva inventario E-12 |
 | Duración objetivo | 45–90 min (ocho commits: si no cabe, corta entre dos tareas, que cada commit deja `dev` verde) |
-| Tareas | T10.7–T10.14 |
+| Tareas | T10.7–T10.14 y T10.23 |
 | Depende de | F10-03 |
 | Decisiones | D-F10-3, D-F10-4, D-F10-5, D-V-1 |
 | Se para cuando | la definición de hecho del bloque C (`reglas.md` §4) se cumple sobre el último commit: `GATE_RC=0`, solo cinco directorios en `internal/`, cero adaptadores `bridge_*.go`, cero puentes (import), `Conmutados` completo, cero pendientes. |
@@ -30,7 +30,7 @@ En F10 todo es local: no hay sesión web que cerrar, ni rama que integrar, ni tr
 Tu encargo (y solo este):
 - Fase: F10 · relevo → documentations/reorganizacion-modular/plan/F10-relevo/
 - Bloque(s): C · el relevo en el repo
-- Tareas: T10.7–T10.14 de plan/F10-relevo/tareas.md
+- Tareas: T10.7–T10.14 y T10.23 (las supresiones de lint, deuda D-31) de plan/F10-relevo/tareas.md
 - Entrada: T10.6 con «sigue»
 - Te paras cuando: la definición de hecho del bloque C (`reglas.md` §4) se cumple sobre el último commit: `GATE_RC=0`, solo cinco directorios en `internal/`, cero adaptadores `bridge_*.go`, cero puentes (import), `Conmutados` completo, cero pendientes.
 - Decisiones: D-F10-3, D-F10-4, D-F10-5 y D-V-1 deben estar rellenas en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
@@ -45,7 +45,7 @@ No empieces la sesión siguiente.
 
 ## Al terminar debe existir
 
-- En [`../F10-relevo/tareas.md`](../F10-relevo/tareas.md): T10.7–T10.14 `[x]` con SHA (o `[~]` con lo que falta).
+- En [`../F10-relevo/tareas.md`](../F10-relevo/tareas.md): T10.7–T10.14 y T10.23 `[x]` con SHA (o `[~]` con lo que falta).
 - Un bloque de la sesión en `ESTADO.md` de la reorganización.
 - Los hallazgos nuevos en el [README de la fase](../F10-relevo/README.md).
 - Ocho commits (`relevo: …` y `docs(reorganizacion-modular): …`), uno por tarea, en `dev`.

@@ -316,8 +316,13 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
 28. **(F8-03, método y gates) 🟡 El lint del repo no mira los tests que llevan `//go:build pendiente`.** Solo compila con la
     etiqueta `integracion`, así que los avisos de un test en rojo aparecen **de golpe** al quitarle la etiqueta en el verde: 17
     aquí (10 `errcheck` de aserción de tipo, 3 `ST1018`, 2 `gocritic` `mapKey`, 2 `gocyclo`, en 10 ficheros). Se silenciaron con
-    `//nolint:<linter> // motivo` en un commit aparte y previo (`dd0771ce`), sin cambiar ninguna aserción ni dato; **si se
-    prefiere arreglarlos, es decisión de Jhoan**. Para F8-04 y F8-05: correr el lint sin etiqueta sobre los tests antes del
+    `//nolint:<linter> // motivo` en un commit aparte y previo (`dd0771ce`), sin cambiar ninguna aserción ni dato. ✎ **Decidido por
+    Jhoan el 2026-10-10: «limpio» es sin avisos silenciados.** Los 17 se arreglan de verdad en `d3f6c31b` (12 ficheros de test):
+    dos helpers `mustBe[T]` e `itemsOf` comprueban las aserciones de tipo; los tres invisibles (U+200B, mirados con `xxd`) pasan
+    a `\u200b`; los dos mapas con claves con espacios, a listas de casos; y los cuerpos de los subtests de los dos tests largos,
+    a funciones con nombre. Mismos 187 tests y 470 PASS, con la lista de nombres idéntica antes y después; en `cart` queda un
+    solo `//nolint` (`helpers_test.go:100`, `gosec` G304, anterior). Las demás supresiones del repo: deuda **D-31** de
+    [`deuda.md`](../../../deuda.md) y T10.23 de F10. Para F8-04 y F8-05: correr el lint sin etiqueta sobre los tests antes del
     verde. Y al contar: `grep -rn 'pendiente.Implementar'` sobre `conversacion` da **4**, las cuatro en
     `orden_consulta_ast_test.go:109,181,201,220` (texto del propio candado), y **0** en producción.
 
@@ -337,7 +342,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 |---|---|---|---|---|
 | F8-01 | inventario E-12 y hojas | medio · `store` complejo · `content` simple | T8.1–T8.8, T8.22 | inventario **aprobado por Jhoan** (antes no se escribe código); `model`·`trigger`·`content`·`store`·`modules` verdes; suites `Contrato` en memoria y en Postgres |
 | F8-02 ✅ | motor | medio · `menu`/`media`/`survey` simple | T8.9–T8.11, T8.14, T8.23 | `engine`·`menu`·`survey`·`media`·`turnoacotado` verdes (2026-10-09, rama `reorg/f8-02-motor`, `d8fd4ac` … `4ce435f`, PR #61 en `dev`, merge `df340a6`) |
-| F8-03 ✅ | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (11) y `cart` (20) verdes; goldens idénticos; candado de orden verde y mutado (en dos mitades: 2026-10-09, rama `reorg/f8-03-events-cart`, `8c819b40` … `790ca522`, PR #62 en `dev`, merge `8b841c8d`; 2026-10-10, rama `reorg/f8-03b-cart-verde`, `dd0771ce` … `44255a2b`, PR #63 a `dev`, abierto) |
+| F8-03 ✅ | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (11) y `cart` (20) verdes; goldens idénticos; candado de orden verde y mutado (en dos mitades: 2026-10-09, rama `reorg/f8-03-events-cart`, `8c819b40` … `790ca522`, PR #62 en `dev`, merge `8b841c8d`; 2026-10-10, rama `reorg/f8-03b-cart-verde`, `dd0771ce` … `44255a2b`, PR #63 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash) |
 | F8-04 | `runtime` (1): contratos de los 23 y soporte | complejo | T8.18–T8.21, T8.26 | 23 contratos en rojo, candado de rachas escrito, los 12 de soporte verdes |
 | F8-05 | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo verdes, mutantes muertos, `pendiente` del runtime = 0 |
 | F8-06 | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo |

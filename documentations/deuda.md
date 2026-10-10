@@ -345,6 +345,29 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   la cara nueva lo rompe contra el viejo. Al corregirlo, cambian con él el aserto de P9 y los tests de
   `internal/apipublica` que fijan la prosa y el 500.
 
+### D-31 · 🟡 145 `//nolint` en el repo: avisos silenciados, no arreglados
+
+> Abierta el 2026-10-10 por decisión de Jhoan al cerrar F8-03: **«limpio» es sin avisos silenciados**, no «el linter no
+> informa de nada». Los 17 de los tests de `cart` se arreglaron en el acto (`d3f6c31b`); el resto se revisa **al final
+> del plan**, no antes.
+
+- **Dónde** (medido el 2026-10-10 sobre `d3f6c31b` con `grep -rn '//nolint' --include='*.go'`, una línea = una
+  supresión): **145** en el repo. En el árbol nuevo (`internal/modulos`, `nucleo`, `arranque`, `apipublica`), **90**: 70
+  en tests y 20 en producción; por linter, `gosec` 40, `errorlint` 34, `nilerr` 5, `contextcheck` 3, `gocritic` 2,
+  `errcheck` 2 y uno de `unused`, `staticcheck`, `nilnil` y `gocyclo`. Los otros **55** viven en el código viejo y en el
+  resto del repo, y mueren en su mayoría con el relevo. En producción, 34 en todo el repo. **Dos** no llevan motivo
+  escrito (uno en el árbol nuevo).
+- **Consecuencia**: `make lint` da `0 issues.` y sin embargo hay 145 avisos que nadie ve. Cada uno es una regla del
+  linter apagada en una línea; los de `gosec` y `errorlint` son los que más pesan, porque un aviso real nuevo en esa
+  misma línea tampoco saldría. Y hay un punto ciego que los fabrica: el linter compila con la etiqueta `integracion`
+  (`.golangci.yml`), así que **no mira los tests con `//go:build pendiente`**; sus avisos aparecen de golpe al pasar a
+  verde, cuando lo cómodo es silenciarlos (hallazgo 28 de `reorganizacion-modular/plan/F8-conversacion/README.md`).
+- **Veredicto**: deuda de calidad, no defecto. **Se paga en F10**, tarea **T10.23** de
+  `reorganizacion-modular/plan/F10-relevo/tareas.md`, después de que muera el código viejo (T10.11) y la etiqueta
+  `pendiente` (T10.12): con el viejo fuera quedan menos y el punto ciego ya no existe. Cada supresión se arregla o, si
+  no se puede sin cambiar lo que se prueba o se promete, queda con motivo y aprobada por Jhoan. **Mientras tanto**: en
+  lo que se escriba nuevo no se añade un `//nolint` sin plantearlo antes.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes
@@ -416,4 +439,5 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   (`internal/entitlements/postgres.go:98`).
 - **`WAPP_TEST_REQUIRE_DB`** hace **ruidoso** el skip de integración: es la red exacta contra el
   falso verde descrito en `operacion.md` §1.2.
-- Solo **13 `//nolint`** en toda la producción, **todos con justificación escrita**.
+- ~~Solo **13 `//nolint`** en toda la producción, **todos con justificación escrita**.~~ ✎ 2026-10-10: caducado. Hoy son
+  **34** en producción y 145 en el repo, dos sin motivo: es la deuda **D-31**.
