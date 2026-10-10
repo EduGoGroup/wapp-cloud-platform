@@ -368,6 +368,25 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   no se puede sin cambiar lo que se prueba o se promete, queda con motivo y aprobada por Jhoan. **Mientras tanto**: en
   lo que se escriba nuevo no se añade un `//nolint` sin plantearlo antes.
 
+### D-32 · 🟡 El sobre de P2 no escapa lo que escribe el cliente
+
+> Abierta el 2026-10-10 por decisión de Jhoan tras F8-05 (D-F8-18; hallazgo 34a de
+> `reorganizacion-modular/plan/F8-conversacion/README.md`): **se queda como está hasta después del relevo de F10**.
+
+- **Dónde**: `internal/modulos/conversacion/runtime/source_composer.go` (`ComposeSourceText`), igual que en el viejo
+  (`internal/flujos/runtime/source_composer.go:208-261`). El sobre que recibe P2 lleva secciones con cabecera (contexto y
+  mensajes) y el texto del cliente se pega tal cual en la de mensajes.
+- **Consecuencia**: un cliente que teclea una línea idéntica a una cabecera deja dentro del bloque de mensajes lo que
+  parece una sección nueva, y puede simular un bloque de contexto. Acotado: el modelo no ejecuta nada (solo extrae un
+  borrador, y el Cloud valida la forma de la salida), el borrador lo revisa el dueño antes de ser presupuesto, y el recuento
+  interno no se engaña (un bloque falsificado no cuenta como mensajes: caso del corpus adversario,
+  `source_composer_test.go`). El daño realista es un borrador con datos inventados por el propio cliente.
+- **Veredicto**: riesgo aceptado por ahora, no defecto que arreglar en F8. Escapar **cambia la entrada del modelo**, y el
+  prompt de P2 está calibrado en campo contra el formato actual: no se valida con tests unitarios, hay que medirlo contra el
+  banco de casos reales. **Se ataca después del relevo de F10**, cuando solo corra el código nuevo: escapar (o reforzar el
+  prompt de P2, que se ajusta por fichero y sin release) **y medir** antes de darlo por bueno. El corpus adversario ya fija
+  la conducta de hoy; cambiará con el arreglo.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes

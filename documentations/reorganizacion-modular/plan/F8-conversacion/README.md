@@ -490,7 +490,7 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     **F8-06b** (T8.39), entre F8-06 y F8-07: el sobre primero, y cierre y sobre en una sola sentencia; leído el código, no hay
     que tocar la guarda de `PutSourceText`. El mismo hueco del re-análisis (hallazgo 1) entra en F8-06b como segunda tarea,
     T8.40: el job nace con su sobre. Las rarezas 34a–34i siguen portadas y con su test: el sobre de P2
-    sin escapar (el corpus gana cuatro casos adversarios: bloque de mensajes falsificado, bytes de control y UTF-8 inválido,
+    sin escapar (✎ **34a decidida**: se deja, deuda **D-32** de `deuda.md`, para después de F10 y con medición, D-F8-18; el corpus gana cuatro casos adversarios: bloque de mensajes falsificado, bytes de control y UTF-8 inválido,
     clases casi iguales, saltos al borde; el corpus entero pasó contra el `ComposeSourceText` viejo), el id visto antes de
     `OpenOrAppend` (✎ **34b ya no: arreglada**, D-F8-14, `c44c212f`: si la sentencia falla, el id se desanota y la re-entrega
     vuelve a intentarlo; divergencia deliberada del viejo, con dos casos y dos mutantes muertos), el `time.After(25 ms)` real del reintento
