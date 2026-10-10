@@ -12,6 +12,8 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules/media"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/trigger"
@@ -60,6 +62,16 @@ func threadWant(t *testing.T, h *harness, eventID string, want ...threadLine) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("hilo del evento = %+v\nquería            %+v\nlog:\n%s", got, want, h.log.dump())
+	}
+}
+
+// threadWantNoWriteAttempt exige que el runtime ni siquiera haya INTENTADO escribir en un hilo:
+// sin evento no hay a quién escribirle, y un intento se vería como el WARN de un fallo de
+// escritura (TH-10, TH-18) aunque no deje fila.
+func threadWantNoWriteAttempt(t *testing.T, h *harness) {
+	t.Helper()
+	if lines := h.log.at("warn"); len(lines) != 0 {
+		t.Errorf("líneas a WARN = %+v, no quería ninguna: sin evento no se intenta escribir en el hilo", lines)
 	}
 }
 
@@ -158,6 +170,7 @@ func TestThread_Gate_NeedsAnEvent(t *testing.T) {
 
 		incomingWantTexts(t, h, incomingRootPrompt, incomingSubPrompt)
 		threadWant(t, h, bystander.ID)
+		threadWantNoWriteAttempt(t, h)
 	})
 	t.Run("start by API", func(t *testing.T) {
 		h := newHarness(t, threadWithoutWelcome(), threadWithFeature())
@@ -171,6 +184,7 @@ func TestThread_Gate_NeedsAnEvent(t *testing.T) {
 
 		incomingWantTexts(t, h, incomingRootPrompt)
 		threadWant(t, h, bystander.ID)
+		threadWantNoWriteAttempt(t, h)
 	})
 	t.Run("without event plane", func(t *testing.T) {
 		h := newHarness(t, threadWithoutWelcome(), threadWithFeature(), withOptions(func(*harness) []runtime.Option {
@@ -250,6 +264,39 @@ func TestThread_EmptyTextLeavesNoRow(t *testing.T) {
 		t.Fatalf("textos enviados = %q, quería la pantalla y la respuesta al mensaje sin texto", texts)
 	}
 	threadWant(t, h, eventID, append(threadOpening(), threadBusiness(texts[1]))...)
+}
+
+// TestThread_AnAttachmentOnlyOutputLeavesNoRow: TH-6, la otra mitad. Una salida que solo
+// lleva adjunto no tiene literal: el turno deja el texto del cliente y la salida de texto del
+// negocio, y ninguna fila vacía por el adjunto (ni el WARN de un intento fallido).
+func TestThread_AnAttachmentOnlyOutputLeavesNoRow(t *testing.T) {
+	const intro = "Va la lista-qzx"
+	doc := "doc"
+	flow := model.Flow{
+		FlowID:  "brochure-qzx",
+		Initial: "root",
+		Nodes: map[string]model.Node{
+			"root":  {Type: model.NodeTypeMenu, Prompt: incomingRootPrompt, Options: map[string]string{"1": "intro"}},
+			"intro": {Type: model.NodeTypeMessage, Text: intro, Next: &doc},
+			"doc": {Type: media.NodeTypeMedia, Content: &model.ContentRef{
+				Source: "static", Key: "wapp/media/list-qzx.pdf", Filename: "Lista-qzx.pdf",
+				Mime: "application/pdf", Kind: media.KindDocument,
+			}},
+		},
+	}
+	h := newHarness(t, threadWithoutWelcome(), threadWithFeature())
+	h.seedFlow(flow)
+	h.seedRule(incomingEventRule(incomingEventKeyword, trigger.EventKindCart, flow.FlowID))
+	h.say("wa-1", incomingEventKeyword)
+	eventID := incomingWantNode(t, h, "root").EventID
+
+	h.say("wa-2", "1")
+
+	if got := h.sender.Media(); len(got) != 1 {
+		t.Fatalf("adjuntos enviados = %+v, quería uno\nlog:\n%s", got, h.log.dump())
+	}
+	threadWant(t, h, eventID, append(threadOpening(), threadClient("1"), threadBusiness(intro))...)
+	threadWantNoWriteAttempt(t, h)
 }
 
 // TestThread_RecordsWhatTheEngineProducedNotTheDelivery: TH-7. El turno se persiste después

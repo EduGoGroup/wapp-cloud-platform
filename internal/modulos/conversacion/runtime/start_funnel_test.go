@@ -8,10 +8,13 @@ package runtime_test
 
 import (
 	"context"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
@@ -308,5 +311,51 @@ func TestStartFunnel_PlainStartWritesNoThread(t *testing.T) {
 	}
 	if st, found := h.state(); !found || st.EventID != "" || st.CurrentNode != "root" {
 		t.Errorf("estado = (%+v, %v), quería la conversación arrancada sin evento", st, found)
+	}
+}
+
+// ST-E · (Plan 044) Un arranque cortado NO sube el id del evento recién nacido: el mensaje
+// que lo abría no entra en la ventana de captación —todo mensaje de source_refs tiene su
+// literal en el hilo, y este turno no escribió ninguno—. El reintento del cliente sí entra, y
+// sobre el MISMO evento, que quedó vivo.
+func TestStartFunnel_ACutStartIsNotOfferedToTheAggregator(t *testing.T) {
+	seen := &startPrimed{}
+	var broken atomic.Bool
+	broken.Store(true)
+	permanent := resumePermanentErr()
+	sink := &resumeSink{name: "a", log: &resumeSinkLog{}, fail: func(_ int, eff modules.Effect) error {
+		if broken.Load() && eff.Name == "probe_primed" {
+			return permanent
+		}
+		return nil
+	}}
+	dec := startIntentDecision(resumeProbeFlowID, map[string]string{"product-zzq": "empanadas"})
+	h := startFunnelHarness(t, dec, seen, sink)
+	jobs := intake.NewMemoryStore(h.clock.Now)
+	aggregator := runtime.NewIntakeAggregator(h.log, jobs, h.repo, h.features, runtime.WithAggregatorClock(h.clock.Now))
+	rt := runtime.New(h.repo, h.engine, h.sender, h.tenants, h.contacts, h.log,
+		append(h.runtimeOptions(), runtime.WithAggregator(aggregator))...)
+
+	if err := incomingHandleOn(h, rt, h.incoming("wa-cut", "quiero empanadas")); err != nil {
+		t.Fatalf("HandleIncoming = %v, un arranque cortado no es un error", err)
+	}
+
+	born := startBornEvent(h)
+	if _, found := h.state(); found || !born.Alive() {
+		t.Fatalf("tras el corte: estado guardado = %v y evento = %+v, quería sin estado y el evento vivo", found, born)
+	}
+	if got := jobs.Jobs(); len(got) != 0 {
+		t.Fatalf("ventanas tras el arranque cortado = %+v, no quería ninguna: el turno no ocurrió", got)
+	}
+
+	broken.Store(false)
+	if err := incomingHandleOn(h, rt, h.incoming("wa-retry", "quiero empanadas")); err != nil {
+		t.Fatalf("HandleIncoming del reintento = %v\nlog:\n%s", err, h.log.dump())
+	}
+
+	want := intake.WindowKey{TenantID: harnessTenant, SessionID: harnessSession, ContactID: h.contactID(harnessPhone), EventID: born.ID}
+	got := jobs.Jobs()
+	if len(got) != 1 || got[0].Key != want || !slices.Equal(got[0].SourceRefs, []string{"wa-retry"}) {
+		t.Fatalf("ventanas tras el reintento = %+v, quería una del evento %s solo con wa-retry\nlog:\n%s", got, born.ID, h.log.dump())
 	}
 }

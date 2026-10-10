@@ -396,3 +396,34 @@ func TestHandleIncoming_ConversationTTL_UnreadableSettingsDoNotExpire(t *testing
 	incomingWantFields(t, lines[0], map[string]any{"tenant_id": harnessTenant})
 	incomingWantNode(t, h, "sub")
 }
+
+// incomingUnstampedStore es el almacén del guion devolviendo el estado SIN marca de tiempo
+// (UpdatedAt cero), como una fila que nunca la tuvo.
+type incomingUnstampedStore struct{ *store.MemoryRepository }
+
+// Load implementa store.ConversationStore.
+func (s incomingUnstampedStore) Load(ctx context.Context, key store.Key) (model.Conversation, bool, error) {
+	st, found, err := s.MemoryRepository.Load(ctx, key)
+	st.UpdatedAt = time.Time{}
+	return st, found, err
+}
+
+// TestHandleIncoming_ConversationTTL_AStateWithoutStampDoesNotExpire: «con UpdatedAt cero
+// (estado sin marca) no vence». Sin fecha contra la que medir el silencio, el TTL
+// conversacional no suelta la conversación por muy corto que sea: el entrante la avanza.
+func TestHandleIncoming_ConversationTTL_AStateWithoutStampDoesNotExpire(t *testing.T) {
+	h := incomingLiveFlat(t)
+	h.seedSettings(func(s *store.TenantSettings) { s.ConversationTTL = time.Minute })
+	rt := runtime.New(incomingUnstampedStore{MemoryRepository: h.repo}, h.engine, h.sender, h.tenants, h.contacts, h.log, h.runtimeOptions()...)
+	h.clock.Advance(time.Second)
+
+	if err := incomingHandleOn(h, rt, h.incoming("wa-2", "1")); err != nil {
+		t.Fatalf("HandleIncoming = %v", err)
+	}
+
+	incomingWantNode(t, h, "sub")
+	incomingWantTexts(t, h, incomingRootPrompt, incomingSubPrompt)
+	if streaks := h.closedStreaks(); len(streaks) != 0 {
+		t.Errorf("rachas cerradas = %v, no quería ninguna: un estado sin marca no vence", streaks)
+	}
+}

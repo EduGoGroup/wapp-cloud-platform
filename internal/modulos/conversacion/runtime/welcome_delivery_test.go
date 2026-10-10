@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
@@ -191,4 +192,36 @@ func TestWelcome_LogsCarryOnlyOpaqueIDs(t *testing.T) {
 	incomingWantLog(t, h, "info", "runtime: bienvenida entregada al contacto", 1)
 	incomingWantLog(t, h, "warn", "runtime: el envío de la bienvenida falló; NO se marca y el próximo mensaje reintenta", 1)
 	incomingWantNoLeak(t, h, harnessPhone, "Texto privado de bienvenida-qzx", "hola-qzx", "otra vez-qzx")
+}
+
+// TestWelcome_TheSealCarriesTheMarkThisTurnRead: WL-12. El sello es un compare-and-set y su
+// testigo es la marca que ESTE turno leyó al tocar el contacto. Por eso la segunda bienvenida
+// —pasado el silencio— vuelve a sellar: lleva de testigo el sello de la primera, no una marca
+// vacía, y no se confunde con «otro turno marcó primero».
+func TestWelcome_TheSealCarriesTheMarkThisTurnRead(t *testing.T) {
+	const silence = time.Hour
+	h, spy := welcomeHarness(t)
+	h.seedSettings(func(s *store.TenantSettings) { s.WelcomeSilence = silence })
+
+	h.say("wa-1", "uno-qzx")
+	first := h.clock.Now()
+	h.clock.Advance(silence)
+	h.say("wa-2", "dos-qzx")
+
+	welcomeWantCount(t, h, 2)
+	_, marks := spy.calls()
+	if len(marks) != 2 {
+		t.Fatalf("sellos pedidos = %d, quería 2", len(marks))
+	}
+	if w := marks[0].witness; !w.WelcomedAt.IsZero() || !w.LastIncomingAt.IsZero() {
+		t.Errorf("testigo del primer sello = %+v, quería la marca vacía de un contacto nuevo", w)
+	}
+	if w := marks[1].witness; !w.WelcomedAt.Equal(first) || !w.LastIncomingAt.Equal(first) {
+		t.Errorf("testigo del segundo sello = %+v, quería la marca leída en este turno (sellada y tocada en %v)", w, first)
+	}
+	if mark := h.repo.Welcome(h.key()); !mark.WelcomedAt.Equal(h.clock.Now()) {
+		t.Errorf("marca guardada = %+v, quería el sello de la segunda bienvenida (%v)", mark, h.clock.Now())
+	}
+	incomingWantLog(t, h, "info", "runtime: bienvenida entregada al contacto", 2)
+	incomingWantLog(t, h, "warn", "runtime: otro turno marcó la bienvenida primero; este envío fue un duplicado", 0)
 }

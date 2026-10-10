@@ -90,3 +90,38 @@ func TestOnIncoming_SameConversationIsProcessedOneAtATime(t *testing.T) {
 	incomingWantTexts(t, h, incomingRootPrompt, incomingSubPrompt)
 	incomingWantNode(t, h, "sub")
 }
+
+// incomingAwaitQueued cede el procesador hasta que una SEGUNDA entrada a la conversación del
+// guion queda contada en su candado (2 = el titular y uno contado ANTES de esperar, KM-4): es
+// decir, hasta que la llamada vigilada está esperando su turno. No duerme. Si la llamada
+// TERMINA antes (entrega su error por returned), falla: no esperó al turno que estaba dentro.
+func incomingAwaitQueued(t *testing.T, h *harness, returned <-chan error, who string) {
+	t.Helper()
+	key := h.key()
+	deadline := time.After(incomingWatchdog)
+	for {
+		if h.rt.ConversationLockRefs(key) == 2 {
+			return
+		}
+		select {
+		case err := <-returned:
+			t.Fatalf("%s terminó (error: %v) con un turno de la MISMA conversación todavía dentro: no tomó el candado de la conversación", who, err)
+		case <-deadline:
+			t.Fatalf("%s no quedó esperando el candado de la conversación (conteo = %d, quería 2)", who, h.rt.ConversationLockRefs(key))
+		default:
+			goruntime.Gosched()
+		}
+	}
+}
+
+// incomingAwaitReturn espera el resultado de una llamada lanzada en otra goroutine.
+func incomingAwaitReturn(t *testing.T, returned <-chan error, what string) error {
+	t.Helper()
+	select {
+	case err := <-returned:
+		return err
+	case <-time.After(incomingWatchdog):
+		t.Fatalf("no ocurrió: %s", what)
+		return nil
+	}
+}
