@@ -397,6 +397,49 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     ficheros que cuelgan de `*Runtime` y un arnés común, y repartir después sus tests por fichero con prefijos propios. Lo que
     costó: cada ola veía fallos de compilación y de lint de las otras mientras escribían, y un sub-agente ensució `go.sum` con
     `-mod=mod` (revertido). El paquete nace con 23 ficheros de producción, 52 de test y 391 `func Test`.
+37. **(F8-04b; ✅ D-F8-12, Jhoan, 2026-10-10) El verde del soporte son 9, no 12, y `runtime.go` no lleva commit.** `welcome`,
+    `thread` y `send` cuelgan de `*Runtime` y sus tests pasan por el arnés, que muere en `runtime.WithClock` con el núcleo en
+    rojo: pasan a F8-05 (T8.27, que queda en 14 ficheros) con su etiqueta. `runtime.go` nació declarado y con su test sin
+    etiqueta en F8-04: no había nada que portar. Siete commits verdes (`83565b4e` … `6216d1df`); `make test-pendiente`:
+    `PENDIENTES=50 · ROJOS=40` (eran 60 y 50). Las 50 llamadas viven en **8** ficheros del núcleo (`aggregator` 12,
+    `runtime_engine` 23, `source_composer` 5, `persist_sink` 3, `event_lifecycle` 2, `incoming` 2, `events` 1, `start` 1) y en
+    `welcome.go` (1); `event_effects.go`, `resume.go` y `exit_menu.go` no tienen ninguna (datos, o sin exportados con cuerpo).
+    Quedan 40 `_test.go` del paquete con `//go:build pendiente`.
+38. **(F8-04b, `keyedmutex`, `streak`, `event_sink`) Los tres sin llamante de producción: el lint `unused` los da por usados
+    con sus tests.** No hizo falta parar. `keyedmutex.go` (107 l, 6 tests), `streak.go` (445 l, 22 tests en dos ficheros:
+    `streak_sweep_test.go` nace por E-13 con el tope y `Max`), `event_sink.go` (160 l; `sortSinksByPhase` y `phaseOf` con 3
+    tests nuevos, más los 6 que ya pasaban). Mutantes: `keyedmutex` los 4 de la lista y 1 extra, muertos; `streak` 16 muertos
+    (los de la lista y 7 extra: el `Before` del desalojo, el `delete` de `Close`, desalojar la más reciente…) y **1
+    equivalente** (`e.n > longest` por `>=`); `event_sink` 3 de 3. Aprendido: (a) `testing/synctest` no sirve para el candado,
+    porque un bloqueo en `sync.Mutex` no es «durable» para la burbuja: la espera se observa con el conteo `ref` bajo el candado
+    global y canales, con un `time.After` de 10 s solo como vigilante (no es una pausa: con el código correcto nunca vence);
+    (b) el mutante de ordenación **no estable** solo muere con más de 12 elementos (por debajo Go ordena por inserción, que es
+    estable): el caso usa 60 sinks; (c) 🟡 el mutante extra «retener el candado global mientras se espera el de la clave»
+    (KM-5) muere porque cuelga el binario y lo corta `-timeout`, no por una aserción con nombre; (d) KM-6 (unlock de un solo
+    uso) no tiene test propio: la doble llamada es un fatal de Go; (e) cuatro de los mutantes extra de `streak` están en el
+    bloque de `ESTADO.md` y no en el comentario-registro del `_test.go`. Tres avisos de lint en los tests, arreglados sin
+    silenciar (`prealloc`, una asignación muerta, `string(rune(…))` → `strconv.Itoa`). Renombres E-11, solo no exportados de
+    `streak.go`: `rachas` → `streaks`, `cerradas` → `closed`, `viva` → `alive`, `corte` → `cutoff`, `mayor` → `longest`,
+    `masVieja` → `oldest`. 100 repeticiones con `-race` de los tests de los tres: rc=0.
+39. **(F8-04b, sinks y adaptadores) Ningún test corregido; un doble que quedaba sin uso a mitad de camino; la rareza 34f,
+    fijada por mutación.** Los tests de `log_sink`, `webhook_sink`, `summary_sources`, `tenant_resolver` y `self_numbers`
+    pasaron contra la lógica portada a la primera (hallazgo 32: estaban validados contra el viejo). `log_sink` va antes que
+    `webhook_sink`, y en ese commit intermedio el método `sinkLogRecorder.at` no tenía quien lo usara sin etiqueta (`unused`):
+    se arregla con una aserción redundante en `TestLogSink_Handle_LogsOneInfoLineWithMetadata`, no moviendo el doble (lo usan
+    también los tests del agregador). Los dos adaptadores van en **un** commit con `postgres_fakedb_test.go`, sus dos tests
+    unitarios y las dos suites de `test/procesos` (ya solo `integracion`): 13 + 18 casos con testcontainers, rc=0, 0 SKIP.
+    Nueve mutantes del SQL, nueve muertos; entre ellos, **añadir `AND state <> 'loggedout'` al resolver** (el «arreglo» del
+    hallazgo 34f) lo mata `AnyState_ResolvesTheSame`: si Jhoan decide filtrar, ese caso cambia con la decisión. 34d sigue igual:
+    `NewWebhookSink` no inyecta reloj. Comentario del viejo no portado: el del resolver nombra la columna legada `role` y un
+    `DISTINCT tenant_id`; la consulta usa `GROUP BY` y la columna ya no existe. Las suites se corrieron con
+    `WAPP_PROCESOS_BINARIO=nuevo` (no levantan servidor).
+40. **(F8-04b, método) Tres sub-agentes en el mismo checkout sin commitear, y el «rc=0 por commit» medido después.** Cada uno
+    con ficheros disjuntos (≈ 6, ≈ 7 y ≈ 12 min, en paralelo); el orquestador hizo los siete commits y comprobó **cada uno** en
+    un *worktree* temporal fuera del repo: `go test -race`, `go vet -tags pendiente` y el lint sin etiqueta y con
+    `--build-tags pendiente`, 28 de 28 en rc=0. 🟡 Lo que costó: los mutantes se aplicaron sobre el checkout compartido y otro
+    sub-agente vio dos pasadas del paquete en rc=1 (los tests de `keyedmutex`, con el fichero mutado en ese momento); no era un
+    fallo real. Para F8-05: los mutantes, en serie o sobre una copia, nunca mientras otro mide en el mismo árbol. Y el
+    scratchpad compartido: cada sub-agente, su subdirectorio.
 
 ## Orden de lectura
 
@@ -416,7 +459,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-02 ✅ | motor | medio · `menu`/`media`/`survey` simple | T8.9–T8.11, T8.14, T8.23 | `engine`·`menu`·`survey`·`media`·`turnoacotado` verdes (2026-10-09, rama `reorg/f8-02-motor`, `d8fd4ac` … `4ce435f`, PR #61 en `dev`, merge `df340a6`) |
 | F8-03 ✅ | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (11) y `cart` (20) verdes; goldens idénticos; candado de orden verde y mutado (en dos mitades: 2026-10-09, rama `reorg/f8-03-events-cart`, `8c819b40` … `790ca522`, PR #62 en `dev`, merge `8b841c8d`; 2026-10-10, rama `reorg/f8-03b-cart-verde`, `dd0771ce` … `44255a2b`, PR #63 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), sin squash) |
 | F8-04 ✅ | `runtime` (1a): los contratos de los 23 | complejo | T8.18–T8.21 | 23 contratos en rojo, `runtimehelpertest` verde, candado de rachas escrito, lista blanca de `conversacion` completa; ningún verde de `runtime` (✎ 2026-10-10, D-F8-11: antes llevaba también T8.26) (2026-10-10, rama `reorg/f8-04-runtime-contratos`, `cf327ca5` … `de6a5411`, PR #65 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `cbebf10c`, sin squash) |
-| F8-04b | `runtime` (1b): el verde del soporte | complejo | T8.26 | **9** de los 12 de soporte verdes (✎ 2026-10-10, D-F8-12: `welcome`, `thread` y `send` pasan a F8-05), mutantes de `keyedmutex` y `streak` muertos, `pendiente` del runtime solo en los 11 del núcleo y en `welcome.go` |
+| F8-04b ✅ | `runtime` (1b): el verde del soporte | complejo | T8.26 | **9** de los 12 de soporte verdes (✎ 2026-10-10, D-F8-12: `welcome`, `thread` y `send` pasan a F8-05), mutantes de `keyedmutex` y `streak` muertos, `pendiente` del runtime solo en los 11 del núcleo y en `welcome.go` (2026-10-10, rama `reorg/f8-04b-runtime-soporte`, `83565b4e` … `6216d1df`, PR a `dev`) |
 | F8-05 | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo y `welcome`, `thread` y `send` verdes (✎ 2026-10-10, D-F8-12: 14, no 11), mutantes muertos, `pendiente` del runtime = 0 |
 | F8-06 | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo |
 | F8-07 | cierre | — | T8.36–T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
