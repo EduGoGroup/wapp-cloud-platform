@@ -215,6 +215,32 @@ func TestRevokeLeaseLogsAFailedPushAtDebug(t *testing.T) {
 	}
 }
 
+// La hermana por tenant: «un empuje que falla no es error» de RevokeTenant. El corte queda
+// persistido, la sesión sana del mismo Edge recibe su aviso y la que no tiene stream deja su
+// línea de debug, con el prefijo propio de esta entrada.
+func TestRevokeTenantLogsAFailedPushAtDebugAndGoesOn(t *testing.T) {
+	t.Parallel()
+	buf := &logBuffer{}
+	rig := newRevokeRig(t)
+	rig.srv.log = logger.New(logger.WithWriter(buf), logger.WithLevel(slog.LevelDebug))
+	healthy := rig.goLive(t, "tenant-1", "edge-1", "s-1", nil)
+	rig.srv.trackSession(phone("tenant-1", "edge-1", "s-gone")) // en el seguimiento, pero sin stream
+
+	if err := rig.srv.RevokeTenant(context.Background(), "tenant-1"); err != nil {
+		t.Fatalf("RevokeTenant con un empuje fallido = %v, se esperaba nil (best-effort)", err)
+	}
+	if !rig.tenantRevoked(t, "tenant-1") {
+		t.Error("el corte del tenant no quedó persistido")
+	}
+	rig.requireRevocation(t, healthy)
+	if !buf.contains("revoke tenant: push a sesión") || !buf.contains("session_id=s-gone") {
+		t.Errorf("el empuje fallido no dejó su línea de debug: %q", buf.String())
+	}
+	if buf.contains("session_id=s-1") {
+		t.Errorf("la sesión sana dejó una línea de empuje fallido: %q", buf.String())
+	}
+}
+
 // R-G21: RevokeTenant notifica a TODOS los Edge vivos DE ESE tenant —todas sus sesiones, a la
 // vez— y a ninguno más. «Conocidos» son los que lista fleet: una instalación conocida sin
 // sesiones vivas no recibe nada (nacerá revocada al reconectar), y el corte no se filtra al
