@@ -9,7 +9,7 @@
 > | 2 | La dorada de la huella | F10-02 (T10.2) | escrita el 2026-10-11 |
 > | 3 | Capturas de referencia (`cmd/prompts`, `cmd/casebank`) | F10-02 (T10.1) | escrita el 2026-10-11 |
 > | 4 | Preparación de la prueba en UAT y SHA a desplegar | F10-02 (T10.3) | escrita el 2026-10-11; el SHA de `dev` lo fija F10-03 |
-> | 5 | La ventana de UAT y el veredicto | F10-03 (T10.4–T10.6) | pendiente |
+> | 5 | El cambio de binario en UAT, la prueba en local y el veredicto | F10-03 (T10.4–T10.6) | escrita el 2026-10-11; **sin ventana de 24 h** (Jhoan); veredicto pendiente de su palabra |
 > | 6 | Cierre del relevo | F10-04 y F10-05 | pendiente |
 
 ## 1 · Verdad de campo antes del relevo (T10.1)
@@ -266,7 +266,7 @@ No se toca la unidad systemd ni el `.env`: se sustituye **el fichero**.
 
 ```bash
 cd /root/source/wApp/cloud/wapp-cloud-platform
-cp bin/server.viejo-<sha> bin/server
+cp bin/server.viejo-<sha> bin/server.new && mv -f bin/server.new bin/server   # 🔴 nunca `cp` directo sobre bin/server: «Text file busy» (§5.3)
 systemctl restart wapp-cloud && systemctl restart wapp-client-console wapp-platform-console
 # y repetir 4.4 · 1–4 sobre el viejo: path …/cmd/server
 ```
@@ -283,9 +283,109 @@ atrás. Los que un consumidor puede ver sin provocarlos: V1 (`POST …/reanalyze
 (más tramas `LeaseUpdate` y `ConfigPush` hacia el Edge) y V10 (el stream de CloudLink se corta en ≈ 0,06 s al parar,
 no en 10 s).
 
-## 5 · La ventana de UAT y el veredicto (T10.4–T10.6)
+## 5 · El cambio de binario en UAT, la prueba en local y el veredicto (T10.4–T10.6)
 
-*Pendiente: sesión F10-03, que necesita UAT por SSH y la fase FW cerrada (D-FW-3).*
+Sesión F10-03, **2026-10-11**. Lo que pasó **no es lo que decía la spec**, por tres decisiones de Jhoan en la sesión:
+
+1. «Prefiero primero probar que todo funcione con el WhatsApp falso y después ahí sí hacemos la comparación»: se desplegó
+   el modular en UAT **antes** de correr el guion con el viejo.
+2. «Si nos estamos complicando con el tema de token, prefiero hacer las pruebas local»: la conversación con el WhatsApp
+   falso **no se corrió en UAT** (pide el login de una administradora contra la identidad compartida); se corrió en
+   local, con Edge real en Docker.
+3. «La ventana no es necesaria ya que nadie usa UAT, así que no va a cambiar»: **no hay ventana de 24 h**. UAT está
+   suspendido. Sustituye, para esta prueba, la duración de D-F10-1.
+
+### 5.1 · Lo que había en UAT (verdad de campo, 22:03 UTC)
+
+| | |
+|---|---|
+| Cloud | `cmd/server` @ **`9493cea`**, rama **`main`**, compilado el 2026-09-03. 🔴 **No era `dev`**: 1.024 commits por detrás de `e82b6e92`. Entre los dos cambian 31 ficheros de producción del código viejo (22 de `internal/bootstrap`, 4 de `internal/platform`, 1 en cada uno de `catalogimport`, `flujos`, `gateway`, `iam`, `inferstats`) y **ninguna migración** |
+| Edge | `cmd/agent` @ `d09d127`, rama `main`, compilado el 2026-09-03: **sin** el transporte falso (`merge-base --is-ancestor 0675d55` → rc=1) |
+| Sesiones del Edge | una, `20f7234b…`, `passive`, de **WhatsApp real y viva** (`whatsmeow: Successfully authenticated` al arrancar). No se tocó: las palancas no se echaron |
+| Esquema | `version=0.48.0 content_hash=5d92bd7bde18cc74`, `al_dia=true` |
+| Salud | los cinco servicios `active`; `key_source=file` y `config`; 0 `level=ERROR` en las últimas 2.000 líneas del log del Cloud |
+
+### 5.2 · Captura (§4.2) y gate previo
+
+- `bin/server.viejo-9493cea`, md5 igual al del proceso vivo. `/usr/local/bin/wapp-agent.viejo-d09d127` y
+  `wapp-ctl.viejo-d09d127`. `/root/metricas-antes.txt` (22 familias). Volcado
+  `/root/backups/wapp-antes-f10-2026-10-12.dump` (rc=0, 5,0 MB).
+- En local, sobre `dev` @ `e82b6e92`: `GOWORK=off make ci-local` → **`GATE_RC=0`**, 239 paquetes `ok`, 0 `FAIL`,
+  **0 `--- SKIP`**, lint `0 issues.` (cobertura, informe: `FICHEROS_EVALUADOS=419`, `POR_DEBAJO=7`).
+  `git merge-base --is-ancestor 374d8652 HEAD` → rc=0.
+
+### 5.3 · El cambio (§4.3) y lo que falló
+
+| Hora (UTC) | Qué |
+|---|---|
+| 22:14 | Los dos checkouts del VPS a `origin/dev`: Cloud `e82b6e92`, Edge `5d6f660`. Los tres binarios compilados en `/tmp` (rc=0). `cmd/migrate -status` con el `dev` nuevo: mismo `content_hash` |
+| 22:16:02 | Edge: `install` de los dos binarios y `systemctl restart wapp-edge`. Proceso vivo @ `5d6f660`, `vcs.modified=false`; 0 líneas `PALANCA`; `CloudLink habilitado … lease_gate=true sealed_transit=true lease_shadow_mode=false`; lease renovado; `inyector=no whatsapp=real` |
+| 22:16:53 | 🔴 **Primer intento con el Cloud, fallido**: `cp /tmp/server-modular.new bin/server` → `cp: cannot create regular file 'bin/server': Text file busy`. El reinicio levantó **otra vez el viejo** (`path …/cmd/server`, md5 del viejo). Sin daño: salud 200, Edge reconectado |
+| 22:17:54 | Segundo intento: `cp` a `bin/server.new` y `mv -f` (renombrado atómico); `systemctl restart wapp-cloud` y las dos consolas |
+
+El `cp` directo es el de la marcha atrás de `diseno.md` §2.5 y del §4.5 de esta acta: **habría fallado igual en una
+vuelta atrás de verdad**. Corregidos los dos en este PR. `go build -o bin/server`, que es lo que escribe §2.2, no se
+probó con el servicio arrancado.
+
+### 5.4 · Verificación inmediata (§4.4), con el modular
+
+| # | Resultado |
+|---|---|
+| 1 · qué corre | `path …/cmd/server-modular`, `vcs.revision=e82b6e925f2856d83fdb3e886959e11c255cd36e`, `vcs.modified=false`; md5 de `/proc/$pid/exe` = `bin/server` |
+| 2 · claves | `key_source=file` y `key_source=config` |
+| 3 · fases | 9 líneas `arranque: fase completada` |
+| 4 · salud | `:8100/healthz` `healthy`, postgres `healthy`; `:8104`, `:8106`, `:8107` → 200 |
+| 5 · Edge | stream caído a las 22:17:54 y lease aplicado a las 22:17:55; la sesión, `online` en `fleet_sessions`. Un `LeaseUpdate rechazado … counter más viejo que el vigente (replay)` justo antes, que **también** salió al reiniciar el viejo a las 22:16:54: no es del modular |
+| 6 · métricas | faltan 4 familias respecto de la captura: `wapp_cart_match_total`, `wapp_edge_inference_samples_total`, `wapp_flow_event_lifecycle_total`, `wapp_receipts_total`. Tras el reinicio del **viejo** de las 22:16:53 faltaban las mismas cuatro: son `CounterVec` sin incrementar. A las 22:55, `wapp_receipts_total` ya estaba; las otras tres, no (no hubo tráfico) |
+
+El único `WARN` del cambio es del **viejo** al parar: `shutdown gRPC: GracefulStop excedió el timeout; forzando Stop()
+servidor=cloudlink timeout=10s` (es V10 de `divergencias-visibles.md`, vista desde el otro lado).
+
+### 5.5 · A los 37 minutos (22:55 UTC), y nada más: no hay ventana
+
+| Criterio de `diseno.md` §2.4 | Medido |
+|---|---|
+| Un mensaje entra y se contesta | **no mirado en UAT** (§5.6: en local) |
+| Un borrador nace por P2→P4 con el Ollama de la máquina | **no mirado**: 0 `intakes` en los 7 días anteriores, UAT sin tráfico. Jobs atascados: 0 |
+| El CRM recibe | **no mirado** |
+| Ni un error nuevo | 0 `level=ERROR` y 0 `level=WARN` en las 106 líneas del modular. El viejo, en una franja de unas 2 h de esa tarde: 7 entre `ERROR` y `WARN` |
+| Crons | `autoreply-streak.tsv` con `mtime` 22:00:02 UTC |
+| Los textos no cambian | **no mirado en UAT** (§5.6) |
+
+Los 3 `level=ERROR` del log del Edge son caídas del socket de WhatsApp (`whatsmeow: Error reading from websocket`),
+a las 18:11, 19:21 y 21:39 UTC: anteriores al cambio.
+
+### 5.6 · La prueba funcional, en local
+
+Sobre `dev` @ `e82b6e92`, con Docker, sin token: el arnés trae su doble de identidad.
+
+| Comando | Binario viejo | Binario nuevo |
+|---|---|---|
+| `make test-procesos-edge-real` (Edge real `wapp-edge-agent` @ `5d6f660`, `linux/arm64`, en contenedor, con el WhatsApp falso): `TestEdgeReal_BootsTheRealBinary`, `TestEdgeReal_CartConversation`, `TestEdgeReal_CartResumePolicy` | `RC=0 · PASS=3 FAIL=0 SKIP=0` | `RC=0 · PASS=3 FAIL=0 SKIP=0` |
+| `make test-procesos` (P0–P10, Edge simulado; 120 tests de nivel superior) | `RC=0 · PASS=1302 FAIL=0 SKIP=0` | `RC=0 · PASS=1302 FAIL=0 SKIP=0` |
+
+Regla de conteo: `--- PASS` como cadena en todo el log, sub-tests incluidos.
+
+### 5.7 · Lo que NO se vio
+
+- La conversación con el WhatsApp falso **en UAT** (receta de FW, pasos 1–7) y todo lo de su §6: el socket real, el
+  login contra la identidad real, la herencia de las palancas por `wapp-ctl -autostart`, la custodia de la DEK en el VPS.
+- Una inferencia **real** (cajero y Ollama) pedida por el modular: en local la contesta el arnés.
+- El `diff` de textos entre el viejo y el modular **en UAT**. En local los dos binarios pasan las mismas afirmaciones.
+- Las 24 h: ni errores por hora, ni entregas al CRM.
+- `make ci-docker` no se corrió en esta sesión.
+
+### 5.8 · Cómo queda UAT
+
+Cloud **modular** @ `e82b6e92` y Edge @ `5d6f660`, los dos de `dev`; palancas **bajas** (0 variables de palanca en el `.env` del
+Edge; las rutas de `/v1/diag` no se sondearon); la sesión real, escuchando como antes. Los checkouts del VPS quedan en
+`dev`. La marcha atrás es §4.5 con `bin/server.viejo-9493cea`, y para el Edge, `install` de los dos `.viejo-d09d127`.
+
+### 5.9 · Veredicto (T10.6)
+
+**Pendiente de la palabra de Jhoan** («sigue» o «vuelta atrás»). Lo que tiene delante: §5.4 y §5.6 en verde, y la lista
+de §5.7. La opinión de la sesión: sano para seguir; lo de §5.7 no pide el código viejo para corregirse (D-FW-3), que
+además sigue en `main` y en el historial.
 
 ## 6 · Cierre del relevo
 

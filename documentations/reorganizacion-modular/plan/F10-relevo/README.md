@@ -158,3 +158,24 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
    relativa, al cerrar FW; F10-03 escribe el día y la hora en el acta. F10-01 queda hecha.
 8. **`make ci-docker` y `make test-procesos` no se corrieron en esta sesión.** Los procesos valen por F9-05 (el binario
    no cambia: solo tests y `testdata`).
+
+### F10-03 · bloque B (2026-10-11)
+
+9. **UAT no corría `dev`, sino `main` @ `9493cea`, del 2026-09-03**, y el Edge, `main` @ `d09d127`, sin el transporte
+   falso. `diseno.md` §2 («UAT se sirve de `dev`») lo daba por hecho desde el 2026-08-30 y nadie lo re-midió. El
+   «viejo» de UAT no es el «viejo» de `dev`: 31 ficheros de producción de diferencia en el código viejo, ninguna
+   migración. Una comparación de textos contra él podía cortar la ventana por algo ajeno a la reconstrucción.
+10. 🔴 **La marcha atrás escrita no funcionaba**: `cp <binario> bin/server` con el servicio arrancado da `Text file
+    busy`. Se vio al instalar el modular (el reinicio levantó otra vez el viejo, sin daño). Corregido en `diseno.md`
+    §2.5 y en el acta §4.5: copiar a `bin/server.new` y `mv -f`.
+11. **La prueba cambió de forma por decisión de Jhoan** (acta §5, las tres citas): el modular entró en UAT sin correr
+    antes el guion con el viejo; la conversación con el WhatsApp falso se hizo en local (`make test-procesos-edge-real`,
+    viejo y nuevo `PASS=3`), no en UAT, para no pedir un token de la identidad compartida; y no hay ventana de 24 h
+    porque UAT está suspendido. Lo que eso deja sin ver está en el acta §5.7; lo más grande, una inferencia real con
+    Ollama pedida por el modular.
+12. **La sesión del Edge de UAT es de WhatsApp real y está viva**, no caducada como decía la receta (§6, dato del
+    2026-10-10). Las palancas no se echaron, así que no se la dejó muda.
+13. **Tras un reinicio faltan familias de métricas, con el viejo y con el nuevo**: las mismas cuatro `CounterVec` en los
+    dos. El `diff` de §2.3 · 6 no puede salir vacío sin tráfico.
+14. **`make ci-docker` no se corrió.** `ci-local` sí: `GATE_RC=0` sobre `e82b6e92`, 0 SKIP.
+

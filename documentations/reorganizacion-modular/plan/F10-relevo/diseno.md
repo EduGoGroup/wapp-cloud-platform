@@ -101,7 +101,7 @@ habla con WhatsApp**: durante la ventana no hay tráfico real por él.
 
 ```bash
 cd /root/source/wApp/cloud/wapp-cloud-platform
-cp bin/server.viejo-<sha> bin/server
+cp bin/server.viejo-<sha> bin/server.new && mv -f bin/server.new bin/server   # ✎ F10-03: `cp` directo da «Text file busy» con el servicio arrancado
 systemctl restart wapp-cloud && systemctl restart wapp-client-console wapp-platform-console
 # y repetir 2.3 · 1–4 sobre el viejo: path …/cmd/server
 ```
