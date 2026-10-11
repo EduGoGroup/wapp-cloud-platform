@@ -41,6 +41,9 @@ func TestProcessImportsMuerde(t *testing.T) {
 			[]string{"importa internal/flujos/store:", "una suite de contrato solo importa su …helpertest"}},
 		{"rule 3: a contract suite imports a platform package that is not crypto", d + "wrong_contrato_test.go",
 			[]string{"importa internal/platform/storage/postgres:", "una suite de contrato solo importa"}},
+		{"rule 3c: the parent of an admitted platform package is not admitted", d + "wrong_contrato_test.go",
+			[]string{"importa internal/platform/metrics:", "una suite de contrato solo importa",
+				"internal/platform/crypto o internal/platform/metrics/flowlifecycle"}},
 		{"rule 3b: a port symbol that is not a constructor", d + "wrong_contrato_test.go",
 			[]string{"usa contact.Normalize de internal/nucleo/contact:", "solo usa el constructor (New…)"}},
 		{"rule 3b: a port type", d + "wrong_contrato_test.go",
@@ -78,7 +81,8 @@ func TestProcessImportsMuerde(t *testing.T) {
 }
 
 // TestProcessImportsPasa: los dos ficheros-candado sin etiqueta, una suite de contrato con su
-// helpertest, el constructor del puerto (también con alias, y cualquier New…) y crypto, y un
+// helpertest, el constructor del puerto (también con alias, y cualquier New…) y crypto, otra
+// que solo importa el colector de flow_events (el otro paquete de platform admitido), y un
 // proceso que solo importa la biblioteca estándar, terceros y otros módulos no dan violación.
 // Tampoco la ruta del módulo dentro de un literal, ni un valor local llamado como el puerto en
 // un fichero que no lo importa.

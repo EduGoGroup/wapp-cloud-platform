@@ -15,7 +15,8 @@ const goModulePath = "github.com/EduGoGroup/wapp-cloud-platform"
 // paquete, con o sin etiqueta. Las reglas las define candados.ProcessImports, FICHERO A FICHERO:
 // nada de internal/ en un proceso; internal/candados solo en los dos ficheros-candado (este y
 // sin_bd_viva_test.go); y en un *_contrato_test.go, solo su suite …helpertest, el constructor
-// del puerto que esa suite prueba e internal/platform/crypto. Sus casos que muerden viven en
+// del puerto que esa suite prueba y los dos paquetes de internal/platform admitidos (crypto y
+// metrics/flowlifecycle). Sus casos que muerden viven en
 // internal/candados/testdata/processimports/muerde.
 //
 // Hasta F1-06 esto era un comando de la spec que miraba el paquete entero y no estaba en ningún

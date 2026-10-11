@@ -7,8 +7,8 @@
 #   - ci-local        espeja los jobs "test" + "lint" del ci.yml, más los gates de la
 #                     reconstrucción modular (vet-integracion) y el INFORME
 #                     cobertura-ficheros, que no bloquea por un fichero bajo (P2, 05 E-9).
-#   - test-integration espeja el job "integration" (Postgres efímero).
-#   - test-procesos   procesos de negocio (F9) contra los dos binarios, con testcontainers.
+#   - test-procesos   espeja el job "integration": los procesos de negocio (F9) contra cmd/server,
+#                     con testcontainers. Es la ÚNICA forma de probar contra Postgres.
 #   - test-procesos-edge-real  los procesos con el Edge REAL y WhatsApp falso (fase FW); necesita el repo del Edge.
 #   - ci-docker       reproduce el toolchain exacto del CI (imagen golang).
 #   - tools           deja el golangci-lint fijado en .bin/ (una vez por checkout: .bin/ vive en el repo, y un worktree nuevo no lo trae).
@@ -99,22 +99,7 @@ RESOLVE_LINT = $(LINT_VERSION_OF); lint_bin=""; lint_ver=""; \
 	fi; \
 	if [ -n "$$lint_ver" ]; then lint_ver="v$$lint_ver"; fi
 
-# Postgres efímero para integración — mismo usuario/contraseña/BD/puerto que
-# el service container de ci.yml. Se levanta y se destruye en el propio
-# target: nunca depende de un contenedor de otro proyecto ya corriendo.
-#
-# El puerto es sobrescribible (`?=`) porque el 5432 del host suele estar ocupado
-# por otro Postgres —en la máquina de desarrollo, el compartido con EduGo— y
-# entonces el `docker run` falla por entorno, no por el código:
-#   INTEGRATION_PG_PORT=55441 make test-integration
-INTEGRATION_PG_CONTAINER := wapp-cloud-platform-pg-test
-INTEGRATION_PG_PORT      ?= 5432
-INTEGRATION_PG_USER      := wapp
-INTEGRATION_PG_PASSWORD  := wapp
-INTEGRATION_PG_DB        := wapp_test
-INTEGRATION_DSN          := postgres://$(INTEGRATION_PG_USER):$(INTEGRATION_PG_PASSWORD)@localhost:$(INTEGRATION_PG_PORT)/$(INTEGRATION_PG_DB)?sslmode=disable
-
-.PHONY: tools toolchain fmt-check vet vet-integracion test-procesos test-procesos-edge-real cobertura-ficheros cobertura-combinada lint build test test-integration ci-local ci-docker migrate migrate-status
+.PHONY: tools toolchain fmt-check vet vet-integracion test-procesos test-procesos-edge-real cobertura-ficheros cobertura-combinada lint build test ci-local ci-docker migrate migrate-status
 
 # Idempotente: si $(LINT_LOCAL) ya es la versión fijada, no descarga nada. Si no, baja el
 # tarball de la release para ESTA máquina (GOHOSTOS/GOHOSTARCH: el binario tiene que ejecutar
@@ -311,25 +296,8 @@ lint: ## golangci-lint $(LINT_VERSION): el de .bin/ (make tools) o el del PATH �
 build: ## go build ./...
 	$(GO) build ./...
 
-test: ## Tests unitarios -race (los *_integration_test.go se saltan solos sin WAPP_TEST_DB_DSN)
+test: ## Tests unitarios -race, sin base de datos (lo que pide Postgres va en test-procesos)
 	$(GO) test -race ./...
-
-test-integration: ## Tests de integración con Postgres efímero en Docker — espejo del job "integration" del ci.yml
-	@docker rm -f $(INTEGRATION_PG_CONTAINER) >/dev/null 2>&1 || true
-	@docker run -d --name $(INTEGRATION_PG_CONTAINER) \
-		-e POSTGRES_USER=$(INTEGRATION_PG_USER) \
-		-e POSTGRES_PASSWORD=$(INTEGRATION_PG_PASSWORD) \
-		-e POSTGRES_DB=$(INTEGRATION_PG_DB) \
-		-p $(INTEGRATION_PG_PORT):5432 \
-		postgres:16 >/dev/null
-	@echo "Esperando Postgres efímero ($(INTEGRATION_PG_CONTAINER))..."
-	@for i in $$(seq 1 30); do \
-		docker exec $(INTEGRATION_PG_CONTAINER) pg_isready -U $(INTEGRATION_PG_USER) -d $(INTEGRATION_PG_DB) >/dev/null 2>&1 && break; \
-		sleep 1; \
-	done
-	@WAPP_TEST_DB_DSN="$(INTEGRATION_DSN)" WAPP_TEST_REQUIRE_DB=1 $(GO) test -p 1 ./...; status=$$?; \
-	docker rm -f $(INTEGRATION_PG_CONTAINER) >/dev/null 2>&1; \
-	exit $$status
 
 # ── Procesos de negocio (F9 · T9.4) ───────────────────────────────────────────
 # Cada proceso corre contra un Postgres de testcontainers (un contenedor por corrida, una
@@ -390,7 +358,7 @@ test-procesos-edge-real: ## Procesos con Edge REAL y WhatsApp falso (fase FW); n
 		fi; \
 	exit $$fallo
 
-ci-local: fmt-check vet vet-integracion lint test cobertura-ficheros build ## Pre-push: fmt + vet + vet-integracion + lint + test + cobertura-ficheros (informe: no bloquea por un fichero bajo) + build (sin integración: correr test-integration y test-procesos aparte)
+ci-local: fmt-check vet vet-integracion lint test cobertura-ficheros build ## Pre-push: fmt + vet + vet-integracion + lint + test + cobertura-ficheros (informe: no bloquea por un fichero bajo) + build (sin Postgres: correr test-procesos aparte)
 
 # ── Esquema ───────────────────────────────────────────────────────────────────
 # cmd/migrate aplica el DDL y SALE: sin listeners HTTP/gRPC ni plano de control
@@ -420,4 +388,4 @@ ci-docker: ## Simula el CI en Docker (Go $(GO_VERSION) + golangci-lint $(LINT_VE
 		-v "$(CURDIR):/workspace" -w /workspace \
 		golang:$(GO_VERSION)-bookworm \
 		bash -c "set -e; make tools TOOLS_DIR=/usr/local/bin && make ci-local LINT_CACHE_DIR=/tmp/lint-cache"
-	@echo "NOTA: ci-docker no corre test-integration (requeriría Docker-in-Docker); ejecuta 'make test-integration' aparte en el host."
+	@echo "NOTA: ci-docker no corre test-procesos (requeriría Docker-in-Docker); ejecuta 'make test-procesos' aparte en el host."

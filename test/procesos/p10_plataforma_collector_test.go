@@ -12,7 +12,9 @@ import (
 )
 
 // El colector de flow_events visto en /metrics (internal/platform/metrics/flowlifecycle): la parte
-// de P10 que re-expresa collector_integration_test.go. El colector da una vuelta al arrancar y otra
+// de P10 que sostiene sus reglas de conteo (qué filas casan, cómo se agrupan, que el cursor avanza
+// y que el servidor sostiene el lock). El paquete no tiene tests propios: lo ejercen este fichero y
+// collector_contrato_test.go. El colector da una vuelta al arrancar y otra
 // cada 15 s (constante, trampa T-6), así que todo se espera sondeando /metrics con tope de 60 s; y
 // wapp_flow_event_lifecycle_total es un CounterVec: no existe hasta su primer incremento (T-10).
 //
@@ -20,12 +22,13 @@ import (
 // recorridos que el arnés sabe provocar hoy (palabra clave a un menú plano, P3) no escriben ninguna
 // fila (hallazgo 40 de F9). El colector lee la tabla, no al motor: la fila sembrada es su entrada.
 //
-// Lo que NO se lleva de collector_integration_test.go, y por qué:
+// Tres reglas del colector NO caben por la puerta del servidor y viven en
+// collector_contrato_test.go, que llama al colector directamente sobre una base clonada:
 //   - «arranca en max(id): el histórico no se recuenta» pide filas en flow_events ANTES de que el
 //     servidor arranque, y arrancar crea la base y lanza el servidor en un solo paso;
 //   - «dos réplicas: solo una lidera y cuenta» pide dos servidores sobre la misma base, que el
-//     arnés prohíbe (reglas.md §2). Queda la mitad observable: el servidor SOSTIENE el advisory
-//     lock y un segundo aspirante no lo gana (collectorLeaderLock);
+//     arnés prohíbe (reglas.md §2). Aquí queda la mitad observable por la puerta: el servidor
+//     SOSTIENE el advisory lock y un segundo aspirante no lo gana (collectorLeaderLock);
 //   - «Run libera el lock al cancelar el contexto» no se distingue por la puerta: al morir el
 //     proceso Postgres suelta los locks de sesión, con defer o sin él.
 
