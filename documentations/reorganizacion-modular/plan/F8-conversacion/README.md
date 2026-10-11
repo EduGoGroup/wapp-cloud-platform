@@ -739,6 +739,77 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     `GOFLAGS=-overlay=<json>`, porque `compilar` hereda el entorno: así se mutó el **servidor** sin tocar el checkout;
     (c) un selftest del clasificador de errores encontró en 300 pasadas lo que 30 pasadas del proceso no enseñaban.
 
+64. **(F8-07b, T8.36) 🟡 El e2e de `cmd/server-modular` no existe, y el carrito no lo recorría ningún proceso: nacen tres
+    casos.** `cmd/server-modular/` solo tiene `main.go`; F0 decidió no copiar el e2e del viejo
+    ([`../F0-andamiaje/diseno.md`](../F0-andamiaje/diseno.md): «el oráculo del binario nuevo contra el viejo es F9»), y
+    TX.24 y T8.36 lo nombran sin definirlo. Además, los flujos de `test/procesos` solo usaban nodos `menu` y `message`, y
+    el Edge falso es código `_test.go`: fuera de `go test` no hay cliente CloudLink. «Arrancar solo» es, pues, lo que ya
+    hace el arnés con `BINARIO=nuevo` (compila y lanza **solo** `cmd/server-modular`, un subproceso por proceso, con su
+    base clonada y sus puertos). **Decisión de Jhoan (2026-10-10, en la sesión): casos de proceso nuevos, commiteados**,
+    solo código de test, primero contra el viejo y después contra el nuevo, sin ramificar por binario:
+    (a) `TestP3_CartConversation` (`ffba56e7`, `p3_entrante_cart_test.go`): «carrito» → categoría → artículo → cantidad →
+    resumen → confirmar, todo dado de alta por HTTP (catálogo, flujo de un nodo `cart`, disparo `event_start` con
+    `event_kind: cart`); afirma las pantallas literales, dos adversarios (opción inválida; cantidad ininteligible, que
+    baja **una** inferencia al Edge), y al confirmar el evento `cart|closed`, la solicitud `order|closed` con su línea, seis
+    `flow_events` en orden y el hilo de 19 filas con los 18 mensajes cifrados; (b) `TestP3_SelfLoopGuard` (`866e47a6`):
+    dos Edges de la misma empresa, el número propio entra por un **latido real** del segundo —nada sembrado por SQL—; con
+    la sesión pasiva no bloquea, con la activa corta las dos grafías y un extraño sí recibe respuesta;
+    (c) `TestP4_BootRecoveryClosesExpiredWindow` (`02ad985a`): ventana `aggregating`, servidor parado, plazos vencidos por
+    SQL **sin proceso**, y el rearranque la cierra (una línea «agregador: ventanas vencidas cerradas al arrancar»,
+    `jobs`=1); el proceso muerto no cerró nada. Los tres, 1 y 5 pasadas por binario, rc=0 y 0 SKIP. Por el camino:
+    la etiqueta de la métrica es `reason="self_loop"`, con guion bajo (la ficha y el encargo decían `self-loop`); un
+    disparo `keyword` hacia un flujo con carrito no trae evento padre (tiene que ser `event_start`); tras confirmar, la
+    fila de `flow_state` queda en el centinela hasta el siguiente entrante, así que la racha no llega al histograma hasta
+    entonces; y el servidor arranca con el tope anti-bucle de producción (`WAPP_FLOW_REPLY_BURST=3`, `…_RATE=0.5`), por lo
+    que el caso de carrito espera 2,1 s antes de cada mensaje desde el cuarto (≈ 15 s por pasada): una espera de reloj
+    justificada, sin `time.Sleep`; la alternativa —una opción del arnés que suba la ráfaga— no se aplicó porque saca al
+    servidor de los valores de producción.
+65. **(F8-07b, T8.36) El hallazgo 51, punto por punto: qué se vio en ejecución y qué no.** Contra el binario nuevo, con
+    Postgres de testcontainers y el Edge falso; «visto» quiere decir que un proceso lo afirma **y** que un mutante del
+    servidor por overlay lo pone rojo.
+
+    | Punto del 51 | Veredicto | Con qué |
+    |---|---|---|
+    | (a) identidad de `kp` | ✅ visto | `TestP3_SelfLoopGuard`: el índice ciego lo escribe `fleet` y lo lee el guard; con otro `KeyProvider` en el guard, o sin `WithSelfNumbers`, **no bloquea y no da error** (T-3, tal cual) y el test cae |
+    | (a) identidad de `gw` | ✅ visto (ya lo estaba) | `TestP1_EdgeFaceOverTheWire`: lo que entra por `/api/v1/messages`, I4 y J19 llega al Edge conectado; sin stream, las cuatro puertas dan 502 (el centinela es uno). Sin mutante propio de esta sesión |
+    | (a) identidad de `entResolver` | 🔴 **no visto** | Ningún proceso cambia un entitlement y mira a sus cuatro consumidores: no hay ruta que escriba `tenant_features` y la caché dura 60 s. Solo consta que runtime, agregador, despachador y cara leen **la misma respuesta** para una empresa (P4, carrito). Sigue en estático (`TestIdentidad_OneEntitlementsResolverForConversation`) |
+    | (b) barrido del agregador | ✅ visto, con matiz | `TestP4_MessageToDraft/borrador` y `TestP4_WindowRules/anclas`: la ventana se abre con el entrante y la cierra el `Sweep` del `Run` real. 🟡 Con los plazos puestos a 0 por SQL: ningún proceso espera los 45 s de fábrica |
+    | (b) `RecoverAtBoot` | ✅ visto | `TestP4_BootRecoveryClosesExpiredWindow`; sin la llamada en `aggregator_run.go` cae |
+    | (c) conversación entera | ✅ visto | `TestP3_CartConversation` |
+    | (c) golden en un Edge **real** | 🔴 no hecho | Fuera de la sesión por ficha: deuda D-38 |
+    | (d) receptor de `OnIncoming` | ✅ visto | Sin `c.gw.OnIncoming = …` no llega ninguna pantalla; y el gauge se mueve con esos mismos entrantes, así que el receptor es el runtime de la fuente del gauge |
+    | (d) fuente del gauge | ✅ visto | `wapp_flow_autoreply_streak_max` vale 8 en el resumen, 9 tras confirmar y 0 tras el mensaje siguiente (histograma `_count`=1, `_sum`=9); sin `SetFlowAutoreplyStreakMaxSource` o sin `WithAutoreplyStreakHook` cae |
+    | (d) `OnWarmup`, `OnEdgeReady` | ✅ visto por su efecto (ya lo estaba) | P9 (`warmup=true` en el Edge) y `TestP4_MessageToDraft/degradacion`, `TestP4_WindowRules/flanco_por_empresa`. Sin mutante de esta sesión |
+    | (d) `OnHeartbeat` | 🔴 **no visto** | Su único efecto es una línea Debug; ningún proceso la afirma |
+    | (d) J19 | 🟡 a medias | Llega al Edge (P1); que su runtime sea **el mismo** que el de `OnIncoming` no se ve desde fuera |
+    | (e) mux de detrás vacío | 🔴 **no se puede ver desde fuera** | Por diseño el 404 de ruta desconocida lo escribe el mux de detrás (`estrangulador.go`): por HTTP no se distingue de uno «de la nueva». Sigue en estático (`TestCableado_TheOldFaceServesNoRoute`) |
+    | (f), (g) divergencias y P4–P8 | ✅ | Hallazgo 52, y otra vez aquí: 1.291 PASS por binario, 0 «no trae literal que analizar» |
+    | (h) mutantes de F8-06 | 🟡 no repetidos | Los 22 del candado de cableado siguen siendo los declarados entonces. De los **12** de esta sesión, el orquestador repitió cuatro (`kp`, `RecoverAtBoot`, `OnIncoming`, fuente del gauge): los cuatro mueren |
+    | (i) cabeceras de `05`, `04` y la documentación de la pieza | 🔴 sin tocar | No es de esta sesión: queda para F8-07 |
+
+    ✎ **Jhoan (2026-10-11): los cuatro se dan por buenos con lo estático que ya los cubre**; T8.36 pasa a `[x]` (el `entResolver`, el mux de detrás, `OnHeartbeat` y el runtime de J19). Verlos pediría tocar producción —una
+    ruta o una línea de log— solo para probar cableado.
+66. **(F8-07b, mutantes) Doce por overlay sobre el servidor, uno sobrevive.** `GOFLAGS=-overlay=<json>` con la copia
+    mutada fuera del repo; el checkout no se tocó. Mueren: guard con otro `KeyProvider` (nuevo **y** viejo), sin
+    `WithSelfNumbers`, sin `RecoverAtBoot` (nuevo y viejo), y en `internal/arranque/fase7_flujos.go` sin el registro del
+    carrito (el alta del flujo da 400 «tipo desconocido "cart"»), sin `WithQueryResolver` (0 inferencias donde se espera
+    1, `desenlace:sin_resolutor`: T-6 cazada por un proceso), sin `SetFlowAutoreplyStreakMaxSource`, sin `gw.OnIncoming`
+    (T-5), sin `WithEventStore` y sin `WithAutoreplyStreakHook`. 🟡 **Sobrevive `WithResumePolicy`**: sin `page_size` ni
+    `buyer_fields` en `tenant_settings`, los valores por defecto dan el mismo recorrido; matarlo pide una empresa con
+    checklist de comprador o tamaño de página propio. No se escribió: queda anotado.
+67. **(F8-07b, gates) `make ci-docker` verde por primera vez desde F8-01, y lo demás.** Sobre `fd3a3fde` (la base):
+    `make ci-docker` **RC=0** (239 `ok`, lint `0 issues.`, ≈ 4 min; `TestRendimiento_P99PorItem` no asomó);
+    `GOWORK=off make ci-local` `GATE_RC=0`; `PENDIENTES=0 · ROJOS=0`; 0 `--- SKIP` (4.462 PASS de primer nivel);
+    `make test-procesos` viejo y nuevo `RC=0 · PASS=1288 · FAIL=0 · SKIP=0`. Repetidos sobre `ffba56e7` (con los tres
+    casos): `ci-docker` **RC=0**, `ci-local` `GATE_RC=0` (239 `ok`, `0 issues.`), procesos viejo y nuevo
+    `RC=0 · PASS=1291 · FAIL=0 · SKIP=0`. Las suites `Contrato` de `store`, `trigger`, `events.Store`, `self_numbers`,
+    `tenant_resolver` e `intake` (cola, máquina y re-análisis), `PASS` contra Postgres en los dos binarios. Es la primera
+    pasada **entera** contra el viejo desde F8-06b. 🟡 Dos cosas vistas y no afirmadas: tras un reinicio, el primer intento
+    de P2 cae por `edge_offline` en los dos binarios (el worker reclama el job antes de que el Edge reconecte; sale al
+    segundo); y un reinicio cuesta ≈ 10 s en el viejo y < 1 s en el nuevo (`TestP1_EdgeFaceOverTheWireRestart`, 10,8 s
+    contra 0,8 s): no se localizó la causa (candidato sin comprobar: el tope de 10 s del `GracefulStop` viejo).
+    **Sin correr**: la integración vieja (no se tocó código compartido) y el Edge real (D-38).
+
 ## Orden de lectura
 
 `README` → [`arquitectura.md`](arquitectura.md) (sobre todo §4 singleton y §5 puentes y adaptadores) →
@@ -762,7 +833,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-06 ✅ | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo (2026-10-10, rama `reorg/f8-06-cara-http-y-conmutar`, `5ba7f419` … `fe6305b9`; hallazgos 47–51) |
 | F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39, T8.40 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; el job de re-análisis nace con su sobre; caso de P4 verde contra el binario nuevo. ✎ **hecha** (2026-10-10; `a0144628` … `42a06574`; hallazgos 52–59; PR #69 en `dev`, merge `2902ec40`) |
 | F8-07a | limpieza tras D-F7-9 (✎ 2026-10-10, Jhoan: F8-07 se parte en tres) | medio | T8.41–T8.43 | `PutSourceText` y `ComposeAtFlush` borrados (D-35), tests de cableado al día sin debilitarse; el caso adversario del callback del CRM tolera el corte; los siete mutantes de D-F7-9 repetidos y muertos |
-| F8-07b | Docker y arranque real (✎ 2026-10-10) | — | T8.36, T8.37 | `make ci-docker` rc=0 (no corre desde F8-01); suites `Contrato` contra Postgres; `cmd/server-modular` arranca solo y recorre una conversación con el Edge falso; hallazgo 51 refutado |
+| F8-07b ✅ | Docker y arranque real (✎ 2026-10-10) | — | T8.36, T8.37 | `make ci-docker` rc=0 (no corre desde F8-01); suites `Contrato` contra Postgres; `cmd/server-modular` arranca solo y recorre una conversación con el Edge falso; hallazgo 51 refutado. ✎ **hecha** (2026-10-10; rama `reorg/f8-07b-docker-y-arranque-real`, `866e47a6`, `02ad985a`, `ffba56e7`, PR #71 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-11), sin squash; `ci-docker` RC=0; tres casos de proceso nuevos; del hallazgo 51 quedan cuatro puntos sin ver desde fuera, que Jhoan da por buenos en estático el 2026-10-11: hallazgos 64–67) |
 | F8-07 | cierre | — | T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
 
 Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (medido en el código viejo):
