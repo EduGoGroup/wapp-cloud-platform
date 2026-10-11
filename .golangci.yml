@@ -6,8 +6,10 @@ run:
   tests: true
   # Para que el linter también vea test/procesos/ (F9 · T9.4): sus ficheros nacen con
   # `//go:build integracion` y sin la etiqueta quedan fuera del análisis.
+  # `edgereal` es la segunda etiqueta de los casos con Edge real (fase FW): van tras las dos.
   build-tags:
     - integracion
+    - edgereal
 
 linters:
   enable:

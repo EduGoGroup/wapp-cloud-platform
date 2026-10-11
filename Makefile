@@ -9,6 +9,7 @@
 #                     cobertura-ficheros, que no bloquea por un fichero bajo (P2, 05 E-9).
 #   - test-integration espeja el job "integration" (Postgres efímero).
 #   - test-procesos   procesos de negocio (F9) contra los dos binarios, con testcontainers.
+#   - test-procesos-edge-real  los procesos con el Edge REAL y WhatsApp falso (fase FW); necesita el repo del Edge.
 #   - ci-docker       reproduce el toolchain exacto del CI (imagen golang).
 #   - tools           deja el golangci-lint fijado en .bin/ (una vez por checkout: .bin/ vive en el repo, y un worktree nuevo no lo trae).
 #   - toolchain       dice qué Go, gofmt y golangci-lint corren DE VERDAD bajo este Makefile.
@@ -113,7 +114,7 @@ INTEGRATION_PG_PASSWORD  := wapp
 INTEGRATION_PG_DB        := wapp_test
 INTEGRATION_DSN          := postgres://$(INTEGRATION_PG_USER):$(INTEGRATION_PG_PASSWORD)@localhost:$(INTEGRATION_PG_PORT)/$(INTEGRATION_PG_DB)?sslmode=disable
 
-.PHONY: tools toolchain fmt-check vet vet-pendiente vet-integracion test-pendiente test-procesos cobertura-ficheros cobertura-combinada lint build test test-integration ci-local ci-docker migrate migrate-status
+.PHONY: tools toolchain fmt-check vet vet-pendiente vet-integracion test-pendiente test-procesos test-procesos-edge-real cobertura-ficheros cobertura-combinada lint build test test-integration ci-local ci-docker migrate migrate-status
 
 # Idempotente: si $(LINT_LOCAL) ya es la versión fijada, no descarga nada. Si no, baja el
 # tarball de la release para ESTA máquina (GOHOSTOS/GOHOSTARCH: el binario tiene que ejecutar
@@ -244,8 +245,11 @@ test-pendiente: ## Informa, no juzga: PENDIENTES, ROJOS, corre los rojos y vet-p
 # y `test` salvo que se pida la etiqueta. vet-integracion los compila (un proceso que no
 # compila rompe ci-local sin necesitar Docker); .golangci.yml lleva la misma etiqueta
 # en run.build-tags para que el linter también los vea. Correrlos es test-procesos.
-vet-integracion: ## go vet -tags integracion ./test/procesos/... — los procesos también compilan (sin Docker)
+# La segunda pasada lleva además `edgereal`: los casos con Edge real (fase FW) viven tras las dos
+# etiquetas para quedar FUERA de test-procesos, y sin esta pasada nadie los compilaría en el gate.
+vet-integracion: ## go vet -tags integracion (y integracion,edgereal) ./test/procesos/... — los procesos también compilan (sin Docker)
 	$(GO) vet -tags integracion ./test/procesos/...
+	$(GO) vet -tags integracion,edgereal ./test/procesos/...
 
 # ── Cobertura por fichero (reconstrucción modular, 05 §5 · E-9 · F0 T0.9) ─────
 # Es un INFORME, no un gate (P2, Jhoan, 2026-10-03; 05 E-9, que deroga el ≥ 80 % de D-12):
@@ -388,6 +392,36 @@ test-procesos: ## Procesos (F9) contra los DOS binarios, testcontainers; necesit
 		echo "$$b: RC=$$rc · PASS=$$pass FAIL=$$fail SKIP=$$skip · $$L"; \
 		if [ "$${skip:-0}" != "0" ]; then \
 			fallo=1; echo "$$b: ROJO por SKIP=$$skip — un proceso que no puede correr falla, no se salta (E-5)"; \
+		fi; \
+	done; exit $$fallo
+
+# ── Procesos con Edge REAL (fase FW · TW.7) ───────────────────────────────────
+# Los casos TestEdgeReal_… corren contra el binario `wapp-edge-agent` de verdad, con el transporte
+# de WhatsApp FALSO (ADR-0049), en un contenedor Linux (D-FW-7). Viven tras una segunda etiqueta de
+# build (`edgereal`) y por eso `make test-procesos` no los ve: su PASS no cambia y este repo se
+# sigue probando sin el del Edge al lado.
+#   WAPP_PROCESOS_EDGE_DIR   el repo del Edge en disco (por defecto, el hermano del monorepo de
+#                            trabajo). Si no existe o no es el Edge, el caso FALLA: no se salta.
+#   BINARIO, CUENTA, PROCESOS_LOG_DIR   como en test-procesos (logs: procesos-edge-real-<binario>.log)
+# El arnés compila ./cmd/agent del Edge para linux con su revisión de git dentro, y lo primero que
+# afirma cada caso es que el binario que corre dice esa revisión. Mismas reglas que test-procesos:
+# el rc se escribe en el log, sin tubería, y un SKIP pone el target en rojo. Además exige que haya
+# corrido al menos un caso: con `-run`, un paquete sin casos da `ok` sin ejecutar nada.
+WAPP_PROCESOS_EDGE_DIR ?= $(abspath ../../edge/wapp-edge-agent)
+
+test-procesos-edge-real: ## Procesos con Edge REAL y WhatsApp falso (fase FW); necesita Docker y el repo del Edge (WAPP_PROCESOS_EDGE_DIR). Rojo si rc≠0, SKIP>0 o PASS=0
+	@fallo=0; for b in $${BINARIO:-viejo nuevo}; do \
+		L=$(PROCESOS_LOG_DIR)/procesos-edge-real-$$b.log; \
+		WAPP_PROCESOS_BINARIO=$$b WAPP_PROCESOS_EDGE_DIR=$(WAPP_PROCESOS_EDGE_DIR) $(GO) test -tags integracion,edgereal -count=$${CUENTA:-1} -v -timeout 30m -parallel 4 -run '^TestEdgeReal_' ./test/procesos/... > $$L 2>&1; \
+		rc=$$?; echo "RC=$$rc" >> $$L; [ $$rc -eq 0 ] || fallo=1; \
+		pass=$$(grep -c -- '--- PASS' $$L); fail=$$(grep -c -- '--- FAIL' $$L); skip=$$(grep -c -- '--- SKIP' $$L); \
+		echo "$$b: RC=$$rc · PASS=$$pass FAIL=$$fail SKIP=$$skip · $$L"; \
+		grep -- 'Edge real: ' $$L || true; \
+		if [ "$${skip:-0}" != "0" ]; then \
+			fallo=1; echo "$$b: ROJO por SKIP=$$skip — un proceso que no puede correr falla, no se salta (E-5)"; \
+		fi; \
+		if [ "$${pass:-0}" = "0" ]; then \
+			fallo=1; echo "$$b: ROJO por PASS=0 — no corrió ningún caso con Edge real"; \
 		fi; \
 	done; exit $$fallo
 

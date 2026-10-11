@@ -156,7 +156,7 @@ Una diferencia a vigilar: el Edge falso late `READY` (`C:test/procesos/edge_fals
 | **Qué se captura** | `command_id`, destinatario, texto; en media, además URL, nombre, MIME, clase y pie. **La media no se descarga** | RW.2.b. El real sí la descarga (`internal/adapters/whatsmeow/listen_gateway.go:581`): es una diferencia declarada, no escondida |
 | **Acuses** | El `Ack` del comando es **el real** (`internal/adapters/cloudlink/adapter.go:841`, `:874`): el falso solo devuelve un id de mensaje con prefijo `SINTETICO-`. Además emite un acuse `delivered` por envío, por el manejador de acuses que ya existe (`internal/app/sessionmgr/listen.go:191-194`). `read`, no. ✎ **Como quedó**: el acuse entra por la puerta como un `events.Receipt` y sale 50 ms después del envío, para no fabricar el orden contrario al real (primero el `Ack`, luego el acuse); no es una garantía de orden | Con eso el Cloud recibe `Ack` y `MessageReceipt` como de un Edge real, sin inventar una lectura que nadie hizo |
 | **Grito** | `Warn` al arrancar y campo propio en el latido, junto a `inyector` | RW.3.a; molde `daemon.go:503-507` y `latido.go:297-313` |
-| **El binario en el arnés (TW.7)** | Variable `WAPP_PROCESOS_EDGE_DIR` con la ruta del repo del Edge; el arnés compila allí `./cmd/agent` con `GOWORK=off`, y el caso afirma ruta y revisión de git antes que nada. Etiqueta de build `edgereal` (además de `integracion`) y objetivo `make test-procesos-edge-real`, **fuera** de `make test-procesos` | Este repo se compila solo. Sin la variable el objetivo **falla**, no se salta: un SKIP no cuenta como verde |
+| **El binario en el arnés (TW.7)** | Variable `WAPP_PROCESOS_EDGE_DIR` con la ruta del repo del Edge; el arnés compila allí `./cmd/agent` con `GOWORK=off`, y el caso afirma ruta y revisión de git antes que nada. Etiqueta de build `edgereal` (además de `integracion`) y objetivo `make test-procesos-edge-real`, **fuera** de `make test-procesos` | Este repo se compila solo. Sin la variable el objetivo **falla**, no se salta: un SKIP no cuenta como verde. ✎ **Como quedó (FW-03)**: el binario se compila para Linux y corre en un contenedor (D-FW-7); la revisión va grabada en el binario y el caso la compara con la de `/v1/health`; la variable tiene valor por defecto en el `Makefile` (el repo hermano) y, si no resuelve, el caso falla. Los casos son tres: `TestEdgeReal_BootsTheRealBinary`, `TestEdgeReal_CartConversation` y `TestEdgeReal_CartResumePolicy` |
 
 ## 4 · Tests
 
@@ -175,8 +175,8 @@ Una diferencia a vigilar: el Edge falso late `READY` (`C:test/procesos/edge_fals
 | RW.3.c | `TestWhatsAppFalso_ConElLeaseRevocadoNoSeCapturaNingunEnvio` | TW.6 |
 | RW.3.d | `TestWhatsAppFalso_LaDEKNoSeGuardaNiSeRegistra`, más la revisión con `fichero:línea` | TW.5 |
 
-**En este repo** (FW-03), tras las etiquetas `integracion` y `edgereal`: `TestEdgeReal_CartConversation` (TW.8, con el
-caso de lease revocado dentro) y `TestEdgeReal_CartResumePolicy` (TW.11).
+**En este repo** (FW-03), tras las etiquetas `integracion` y `edgereal`: `TestEdgeReal_BootsTheRealBinary` (TW.7),
+`TestEdgeReal_CartConversation` (TW.8, con el caso de lease revocado dentro) y `TestEdgeReal_CartResumePolicy` (TW.11).
 
 ## 5 · Decisiones nuevas que salieron del inventario — ✅ decididas (Jhoan, 2026-10-11)
 
@@ -191,8 +191,9 @@ caso de lease revocado dentro) y `TestEdgeReal_CartResumePolicy` (TW.11).
 |---|---|---|
 | Si `Connect()` devuelve error síncrono con un device revocado | Depende del *handshake* real con WhatsApp | Nadie: deja de importar con el falso |
 | ~~`cleanupPairing` y `unlink` con una sesión sin almacén de `whatsmeow`~~ | ✅ **Medido por FW-02**: desvincular una sesión falsa contra una base recién migrada no falla (`TestPalancaWhatsAppFalso_ConLaPalancaECHADAElDaemonArrancaSinDeviceNiRed`, paso 7). `cleanupPairing` no se ejercitó: el emparejamiento falso no falla | — |
-| Si con *readiness* `UNSPECIFIED` el Cloud llega a pedir la inferencia de «abc» | Se ve en el log del servidor del arnés | FW-03, TW.8 |
-| Quién concede `edge.sessions.pair` y `edge.diag.inbound.inject` al operador del arnés | El *login* se relaya al Cloud y este al doble de identidad; hay que verlo vivo | FW-03, TW.7 |
+| ~~Si con *readiness* `UNSPECIFIED` el Cloud llega a pedir la inferencia de «abc»~~ | ✅ **Medido por FW-03**: sí la pide; el Edge contesta `ollama_down` y el carrito repregunta igual | — |
+| ~~Quién concede `edge.sessions.pair` y `edge.diag.inbound.inject` al operador del arnés~~ | ✅ **Medido por FW-03**: el rol de administradora de la empresa, en el token que emite la nube; hasta que llega el JWKS el Edge solo deja leer | — |
 | ~~Si el archivo `0600` compila en darwin tal cual~~ | Ya no aplica: D-FW-7 salió (c), contenedor Linux | — |
-| ✎ FW-02 · Cómo alcanza el arnés el plano de control del Edge en contenedor, y con qué nombre de certificado llega el contenedor al gRPC del Cloud | El plano de control es un socket unix dentro del contenedor; el certificado de servidor del arnés se emite para el anfitrión | FW-03, TW.7 |
-| ✎ FW-02 · Si el Cloud acepta el número propio de una sesión falsa (`0000` + 8 cifras) que viaja en cada latido | Ningún prefijo internacional empieza por 0; si el Cloud valida el formato, se ve corriendo | FW-03, TW.7 |
+| ~~✎ FW-02 · Cómo alcanza el arnés el plano de control del Edge en contenedor, y con qué nombre de certificado llega el contenedor al gRPC del Cloud~~ | ✅ **Medido por FW-03**: `curl --unix-socket` dentro del contenedor; túnel de testcontainers y `WAPP_AGENT_CLOUDLINK_SERVER_NAME=localhost` (hallazgos 27 y 28 del [README](README.md)) | — |
+| ~~✎ FW-02 · Si el Cloud acepta el número propio de una sesión falsa (`0000` + 8 cifras) que viaja en cada latido~~ | ✅ **Medido por FW-03**: lo acepta y le manda el aviso de sesión pasiva | — |
+| ✎ FW-03 · Si el Edge con el lease revocado sirve una inferencia | El carrito no llega a pedirla con el lease revocado | Nadie por ahora: lo cubre en el Edge su test de TW.6 solo para envíos |
