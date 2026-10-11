@@ -281,3 +281,6 @@ con las palancas bajas. Salidas en [`receta-uat.md`](receta-uat.md) §5.
 52. **Los procesos con Edge real de esta sesión corrieron con el árbol del Edge sucio** (`0675d55…-dirty`): en ese
     momento tenía sin commitear los dos `.md` de su PR #13. El código es el de `0675d55`; la marca la pone el arnés por
     cualquier fichero versionado con cambios.
+53. ✎ **Corregido antes de abrir el PR**: la receta decía que el paso 1 listaba las sesiones y las listaba en el paso 3,
+    ya con la palanca echada. Lo vio quien redactó el cuerpo del PR. Ahora el login y `GET /v1/sessions` van en el
+    paso 1, con la palanca baja. La corrida local los hizo después (el Edge no tenía sesiones).

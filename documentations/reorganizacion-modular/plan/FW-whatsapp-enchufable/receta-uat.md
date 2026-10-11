@@ -62,15 +62,23 @@ git -C /root/source/wApp/cloud/wapp-edge-agent merge-base --is-ancestor 0675d55 
 Si no lo trae, se despliega el Edge de `dev` como dice la documentación de despliegue de UAT (dos binarios), **antes**
 de la ventana.
 
-### Paso 1 · Foto de antes (palanca baja)
+### Paso 1 · Foto de antes (palanca baja): entrar como operador y apuntar las sesiones que hay
 
 ```bash
 ctl() { m=$1; p=$2; shift 2; curl -sS --unix-socket "$SOCK" -X "$m" -w '\nHTTP %{http_code}\n' "$@" "http://unix$p"; }
+read -r  -p 'correo: ' CORREO; read -rs -p 'clave: ' CLAVE; echo
+TOK=$(curl -sS --unix-socket "$SOCK" -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$CORREO\",\"password\":\"$CLAVE\"}" http://unix/v1/auth/login | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+unset CLAVE; A="Authorization: Bearer $TOK"
+ctl GET /v1/sessions -H "$A"                        # 🔴 APÚNTALAS: son las que dejarán de hablar con WhatsApp (§2.1)
 ctl GET /v1/health                                  # 200, status ok
 ctl POST /v1/diag/inbound/inject -d '{}'            # 404: la ruta no existe
 ctl GET '/v1/diag/outbound/captured?session_id=x'   # 404: la ruta no existe
 grep -E '^WAPP_AGENT_(WHATSAPP_FALSO|INYECTOR_ENTRANTES|CLOUDLINK_LEASE_SHADOW_MODE)=' "$EDGE_ENV"   # nada
 ```
+
+`503 relay_offline` en el login = el stream con la nube aún no está vivo: se reintenta a los segundos. Si alguna sesión
+de la lista es de WhatsApp **real y viva**, se para aquí y se decide con Jhoan: la ventana la deja muda.
 
 ### Paso 2 · Echar las dos palancas y reiniciar
 
@@ -88,17 +96,14 @@ tail -n +$((marca+1)) "$EDGE_LOG" | grep 'CloudLink habilitado'    # lease_gate=
 ctl GET /v1/health                                                  # 200; apunta el uptime_s: es el proceso recién arrancado
 ```
 
-### Paso 3 · Entrar como operador y mirar qué sesiones hay
+### Paso 3 · Mirar otra vez las sesiones
 
 ```bash
-read -r  -p 'correo: ' CORREO; read -rs -p 'clave: ' CLAVE; echo
-TOK=$(curl -sS --unix-socket "$SOCK" -H 'Content-Type: application/json' \
-  -d "{\"email\":\"$CORREO\",\"password\":\"$CLAVE\"}" http://unix/v1/auth/login | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
-unset CLAVE; A="Authorization: Bearer $TOK"
-ctl GET /v1/sessions -H "$A"       # 🔴 apunta las que ya había: con la palanca echada NO hablan con WhatsApp (§2.1)
+ctl GET /v1/sessions -H "$A"       # las mismas del paso 1. 🔴 Con la palanca echada NO hablan con WhatsApp (§2.1)
 ```
 
-`503 relay_offline` en el login = el stream con la nube aún no está vivo: se reintenta a los segundos.
+El token del paso 1 sigue valiendo tras el reinicio (medido en local, a través de tres reinicios). `403
+degraded_read_only` = el Edge aún no tiene el JWKS de la nube: se reintenta.
 
 ### Paso 4 · Emparejar la sesión falsa y activarla
 
@@ -179,7 +184,7 @@ device pareado para el JID de la sesión`, con *backoff*. No rompe nada más; el
 **Con qué**: Cloud **nuevo** (`cmd/server-modular`) y Postgres del arnés de `test/procesos`, con su doble de identidad;
 Edge real `wapp-edge-agent` @ `0675d55` compilado para `linux/arm64`, en un contenedor, **enrolado y parado con las
 palancas bajas**; empresa con el flujo de carrito del arnés. La escena la montó un test temporal que no se commiteó; los
-pasos 1–7 se corrieron **a mano**, con los comandos de §4. Tres diferencias con UAT: el reinicio fue parar y arrancar
+pasos 1–7 se corrieron **a mano**, con los comandos de §4. ✎ En esa corrida el login y la lista de sesiones se hicieron **después** de echar la palanca (el Edge no tenía ninguna); la receta los adelanta al paso 1, y `GET /v1/sessions` con la palanca baja y ese mismo token se midió después (`HTTP 200`, en «el olvido»). Tres diferencias con UAT: el reinicio fue parar y arrancar
 `agent serve` leyendo un `.env` (no hay systemd ni `wapp-ctl`), no había cajero, y cada `curl` iba dentro de un `docker exec`.
 
 | Paso | Salida (literal, recortada) |

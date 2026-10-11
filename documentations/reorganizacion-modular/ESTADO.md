@@ -528,7 +528,7 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
 - **No corrido**: nada en UAT (es F10-03); `make ci-local` del Edge; `make ci-docker` de este repo; el gate de diagramas
   de la raíz (falta `mmdc`). La receta **no** se ejecutó contra el binario viejo del servidor a mano: eso lo cubre
   `make test-procesos-edge-real`.
-- **Hallazgos**: 12 nuevos (41–52), en [`plan/FW-whatsapp-enchufable/README.md`](plan/FW-whatsapp-enchufable/README.md).
+- **Hallazgos**: 13 nuevos (41–53), en [`plan/FW-whatsapp-enchufable/README.md`](plan/FW-whatsapp-enchufable/README.md).
   Los que piden ojos **antes de F10-03**: con la palanca echada, toda sesión activa del Edge —también una real— pasa al
   transporte falso (41, leído y no ejecutado); el Edge de UAT necesita un binario nuevo antes de la ventana (43); el
   runbook de la raíz está sin commitear (49); y el gate salió rojo una vez por un test intermitente (51, D-49).
