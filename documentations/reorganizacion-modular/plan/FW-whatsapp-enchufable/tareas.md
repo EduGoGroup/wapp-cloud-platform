@@ -1,0 +1,68 @@
+# FW · Tareas
+
+> Todas 💻. Las tareas marcadas **Edge** se hacen dentro de `edge/wapp-edge-agent`, con su gate y su flujo de ramas; las
+> marcadas **Cloud**, en este repo (rama desde `dev`, PR sin squash). Cada sesión cierra con las tres cosas: tareas `[x]`
+> con SHA (y el repo del SHA), bloque en `ESTADO.md`, hallazgos en el [README](README.md) de la fase.
+> Gate de este repo: `GOWORK=off make ci-local > /tmp/g.log 2>&1; echo "GATE_RC=$?" >> /tmp/g.log; tail -1 /tmp/g.log`.
+> Gate del Edge: el que diga su `documentations/operacion.md`, con el `rc` leído sin pipe.
+
+## Bloque A · inventario y ADR · sesión FW-01 · TW.1–TW.3
+
+Para cuando: [`diseno.md`](diseno.md) sin «sin medir» y el ADR en borrador. **Jhoan aprueba antes de FW-02.**
+
+- [ ] **TW.1 · Inventario del Edge** · Edge, solo lectura · cumple RW.1.c
+  - **Ficheros**: [`diseno.md`](diseno.md) §2 (las seis preguntas, contestadas con `fichero:línea`)
+  - **Hecho cuando**: cada pregunta tiene respuesta medida o un «no se pudo medir, porque…»; la fuga de `whatsmeow`
+    fuera del adaptador, listada y partida en «estorba al falso» / «no estorba» (D-FW-4)
+- [ ] **TW.2 · El ADR** · raíz de wApp (`documentations/adrs/`) · D-FW-1, D-FW-2, D-FW-6
+  - **Hecho cuando**: borrador con la decisión, su tabla de alternativas descartadas y la relación con el ADR-0041 y el
+    ADR-0007; `make check-docs` de la raíz verde; **aprobado por Jhoan**
+- [ ] **TW.3 · El diseño, con lo medido** · Cloud (documentación) · dep. TW.1
+  - **Ficheros**: [`diseno.md`](diseno.md) §3 y §4, [`requisitos.md`](requisitos.md) (los `<…>` sustituidos), [`arquitectura.md`](arquitectura.md)
+  - **Hecho cuando**: palanca, paquete, entrada, salida y acuses tienen nombre; cada requisito nombra su test
+  - **Commit**: `docs(reorganizacion-modular): FW, inventario del Edge y diseño`
+
+## Bloque B · el adaptador falso · sesión FW-02 · TW.4–TW.6 · Edge
+
+Entrada: TW.3 aprobado; D-FW-1 y D-FW-2 decididas. Para cuando: definición de hecho 1–4 ([`reglas.md`](reglas.md) §4).
+
+- [ ] **TW.4 · La frontera** · Edge · dep. TW.3 · cumple RW.1.b, RW.1.c
+  - **Hecho cuando**: lo listado como «estorba al falso» ya no importa `whatsmeow`; un candado de imports lo vigila; el
+    comentario de `control/diag/inyector.go` ya no contradice al ADR-0041 (D-FW-6); con la palanca baja, el gate del Edge rc=0
+- [ ] **TW.5 · El falso: arranque y entrada** · Edge · dep. TW.4 · cumple RW.1.a, RW.2.a, RW.3.a, RW.3.b, RW.3.d
+  - **Hecho cuando**: con la palanca echada el daemon arranca sin device; un entrante inyectado recorre cola →
+    despachador → CloudLink con la marca sintética; grita al arrancar y en el latido; el guardarraíl de la palanca baja en verde
+- [ ] **TW.6 · El falso: salida capturada** · Edge · dep. TW.5 · cumple RW.2.b, RW.2.c
+  - **Hecho cuando**: un `SendText` y un `SendMedia` quedan en el registro con su `command_id` y se leen desde fuera; el
+    acuse vuelve al Cloud como uno real
+
+## Bloque C · la conversación con Edge real · sesión FW-03 · TW.7–TW.8 y TW.11 · necesita Docker
+
+Entrada: bloque B integrado en el `dev` del Edge. Para cuando: definición de hecho 5.
+
+- [ ] **TW.7 · El arnés lanza el Edge real** · Cloud (`test/procesos`, `Makefile`) · dep. TW.6 · cumple RW.4.a, RW.4.c
+  - **Hecho cuando**: un objetivo de `make` construye y lanza `wapp-edge-agent` con WhatsApp falso contra el Cloud del
+    arnés, y el caso afirma **qué binario** corre; `make test-procesos` da el mismo `PASS` que antes
+  - **Commit**: `procesos(edge-real): el arnés lanza el Edge real con WhatsApp falso`
+- [ ] **TW.8 · El golden con Edge real (cierra D-38)** · Cloud · dep. TW.7 · cumple RW.4.a, RW.4.b, RW.3.b, RW.3.c
+  - **Hecho cuando**: el carrito («carrito» → categoría → artículo → cantidad → resumen → confirmar) pasa con Edge real;
+    los textos capturados son los del mismo caso con el Edge falso; tras revocar el lease, cero envíos; `RC=0`, 0 SKIP, 0 FAIL
+  - **Commit**: `procesos(edge-real): el carrito con Cloud y Edge reales`
+- [ ] **TW.11 · La reanudación del carrito, vista desde fuera (cierra D-39)** · Cloud · dep. TW.8 · cumple RW.4.d · añadida el 2026-10-11 por decisión de Jhoan
+  - **Hecho cuando**: una empresa con `page_size` propio (o con checklist de comprador) en `tenant_settings`; el carrito
+    se interrumpe y se reanuda; el caso pasa con `flowruntime.WithResumePolicy` cableada y **cae** al quitarla de
+    `internal/arranque/fase7_flujos.go` (mutante, en un *worktree* desechable); anotado cuánto alarga la suite
+  - **Commit**: `procesos(edge-real): el carrito interrumpido se reanuda con la política de la empresa`
+
+## Bloque D · cierre y receta de UAT · sesión FW-04 · TW.9–TW.10
+
+Para cuando: definición de hecho 6–8. Tras este bloque, F10-03 puede arrancar.
+
+- [ ] **TW.9 · La receta para UAT** · Cloud (documentación) y raíz de wApp · dep. TW.8 · cumple RW.5.a, RW.5.b
+  - **Ficheros**: [`../F10-relevo/diseno.md`](../F10-relevo/diseno.md) §2.4 (las filas 1 y 6, con los comandos), el runbook del ecosistema que corresponda
+  - **Hecho cuando**: la receta —echar la palanca, conducir la conversación, leer lo capturado, **bajar la palanca**—
+    ejecutada en local de principio a fin, con sus salidas
+- [ ] **TW.10 · Cerrar FW** · dep. TW.9
+  - **Ficheros**: [`deuda.md`](../../../deuda.md) (D-38 y D-39 cerradas), `ESTADO.md`, este README, `documentations/` del Edge (contratos y operación: la palanca y las rutas nuevas)
+  - **Hecho cuando**: los 8 puntos de [`reglas.md`](reglas.md) §4, cada uno con su evidencia
+  - **Commit**: `docs(reorganizacion-modular): FW cerrada`

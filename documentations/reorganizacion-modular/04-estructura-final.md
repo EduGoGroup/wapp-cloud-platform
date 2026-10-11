@@ -4,6 +4,10 @@
 > `internal/` tal como quedarían **al terminar** la reorganización, con su origen al lado. Es una
 > guía visual y, a la vez, el insumo del script de reescritura (§4).
 >
+> ✎ **2026-10-11**: F1–F8 están cerradas y `internal/modulos/` existe entero, pero **este dibujo no se regeneró ni se
+> cotejó** contra él: es el del 2026-09-27. Donde difieran, manda el árbol real (`go list ./internal/modulos/...`) y el
+> inventario E-12 de cada fase. Estado: [`ESTADO.md`](ESTADO.md).
+>
 > **Generado, no escrito a mano.** El árbol de §3 sale por script de la lista real de ficheros
 > (`go list` sobre `dev` @ `11766a5`, 2026-09-27) aplicándole el mapeo de §4. Los únicos
 > ficheros que no existen hoy son los marcados ✚.

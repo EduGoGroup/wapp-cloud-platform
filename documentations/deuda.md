@@ -463,6 +463,11 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   texto de error, trama gRPC); (2) por cada una, mirar en el consumidor cómo trata la respuesta nueva; (3) adaptar el
   consumidor o, si no compensa, anotar por qué se deja.
 - **Veredicto**: después del relevo de F10, en una sesión propia que abarca varios repos.
+- ✎ **2026-10-11 · Partida en dos por decisión de Jhoan.** (1) El **inventario** —el paso (1) de arriba, más qué
+  respondía el viejo en cada caso— se hace **antes** del relevo, con el viejo aún presente: tarea **T10.24** de
+  [`reorganizacion-modular/plan/F10-relevo/tareas.md`](reorganizacion-modular/plan/F10-relevo/tareas.md) (sesión F10-02).
+  (2) Mirar y adaptar los consumidores —los pasos (2) y (3)— sigue siendo una sesión propia, de varios repos, **después**
+  del relevo.
 
 ### D-37 · 🟡 El hilo y la cola no se escriben en un solo acto: un mensaje puede entrar en dos ventanas
 
@@ -479,6 +484,10 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 - **Lo que no se sabe**: en qué orden escribe el entrante el hilo y la cola (**sin verificar**: si la cola va primero, el
   hueco no existe en esta forma) y si ocurre alguna vez. Es estrecho: la ventana tiene que vencer entre las dos escrituras
   de un mismo mensaje.
+- ✎ **2026-10-11 · El orden, verificado en el árbol nuevo**: el hilo va **primero** y la cola **después**
+  (`internal/modulos/conversacion/runtime/incoming_advance.go:367`, `persistTurnMessages`, y `:376`,
+  `observeForAggregation`; las dos *best-effort*, sin transacción). El hueco **existe en la forma descrita**. Sigue sin
+  verse ni reproducirse, y sigue sin medirse el tiempo entre las dos escrituras.
 - **No es D-F7-9** y no lo introdujo su arreglo: el viejo, que cerraba y componía después, tenía el mismo hueco.
 - **Veredicto**: se deja. Lo primero, cuando toque, es confirmar el orden real de las dos escrituras. Arreglarlo pide una
   regla (qué se hace con el mensaje tardío), no un parche. Después del relevo de F10.
@@ -500,6 +509,42 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   una sesión de WhatsApp para la prueba en UAT.
 - **Sin medir**: cuánto trabajo es (a), qué ruta expone hoy el inyector y si funciona.
 - **Veredicto**: pendiente de Jhoan. Se le pregunta en F10-01, antes de fijar la fecha de F10-03.
+- ✎ **2026-10-11 · Decidida por Jhoan: salida (a), como fase propia.** No es «hacer permanente el inyector» sin más (el
+  ADR-0041 ya lo declara permanente, y el inyector necesita un `Listener` del adaptador real: sin sesión viva responde
+  `409`): es que el Edge arranque con un **WhatsApp falso**, con entrada y salida capturada. Spec:
+  [`reorganizacion-modular/plan/FW-whatsapp-enchufable/`](reorganizacion-modular/plan/FW-whatsapp-enchufable/README.md).
+  La cierra TW.8 (el golden con Edge real). La línea «hoy temporal» de arriba queda corregida por esta nota.
+
+---
+
+### D-39 · 🟡 Ningún proceso nota que falte la política de reanudación del carrito (`WithResumePolicy`)
+
+> Abierta el 2026-10-11 al cerrar F8 (F8-07; hallazgos 66 y 69 del README de F8). **Para después del relevo.**
+
+- **Qué hay hoy**: quitar `flowruntime.WithResumePolicy(cart.NodeTypeCart, …)` de `internal/arranque/fase7_flujos.go`
+  **sí** pone rojo el candado estático de cableado (`TestCableado_TheRuntimeHasTheCartResumePolicy` y
+  `TestCableado_SinksAndResumePolicyGetRealArguments`; repetido en F8-07). El arranque no puede perderla sin que se vea.
+- **Qué falta**: un caso en `test/procesos` que lo note **desde fuera**. `TestP3_CartConversation` pasa igual sin la
+  opción: con `tenant_settings` sin `page_size` ni `buyer_fields`, los valores por defecto dan el mismo recorrido.
+- **Qué pediría**: una empresa con tamaño de página propio o con checklist de comprador, y una conversación de carrito
+  que se interrumpa y se reanude.
+- **Sin medir**: cuánto alarga `make test-procesos`.
+- **Veredicto**: pendiente. No bloquea el relevo: el invariante está cubierto en estático.
+- ✎ **2026-10-11 · Decidida por Jhoan: se hace dentro de la fase FW**, como segunda conversación con Edge real: tarea
+  **TW.11** de [`reorganizacion-modular/plan/FW-whatsapp-enchufable/tareas.md`](reorganizacion-modular/plan/FW-whatsapp-enchufable/tareas.md). Deja de ser «para después del relevo».
+
+---
+
+### D-40 · 🟡 El árbol de `04` §3 no está cotejado con el `internal/modulos` real
+
+> Abierta el 2026-10-11 al cerrar F8 (F8-07; hallazgo 70 del README de F8). **Documental.**
+
+- **Qué hay hoy**: [`04-estructura-final.md`](reorganizacion-modular/04-estructura-final.md) §3 es el dibujo generado el
+  2026-09-27, antes de reconstruir nada. Las fases partieron ficheros (E-13), renombraron al inglés (E-11) y movieron
+  cosas por decisión (inventarios E-12): el árbol real difiere, y **no se midió cuánto**.
+- **Las dos salidas**: regenerarlo desde `go list` tras el relevo, o marcarlo «(histórico)» en T10.14.
+- **Veredicto**: pendiente; se decide con T10.14 (F10).
+- ✎ **2026-10-11 · Decidida por Jhoan (D-F10-8)**: se **regenera** desde el código en T10.14; la salida «(histórico)» queda descartada.
 
 ---
 

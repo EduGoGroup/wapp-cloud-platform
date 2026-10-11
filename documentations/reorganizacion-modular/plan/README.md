@@ -1,5 +1,10 @@
 # El plan de trabajo de la reconstrucción modular
 
+> ✎ **2026-10-11: nace la fase FW** ([`FW-whatsapp-enchufable/`](FW-whatsapp-enchufable/README.md), decisión de Jhoan al cerrar F8): que WhatsApp sea en el Edge una pieza de quita y pon, para conversar con Cloud y Edge reales sin sesión de WhatsApp. Su código vive en `edge/wapp-edge-agent`. Corre **en paralelo** a F9-05 y a F10-01/02, y **F10-03 depende de ella** (D-FW-3): las pruebas que pedían WhatsApp real se hacen con el WhatsApp falso.
+>
+> ✎ **2026-10-11: F8 cerrada** (F8-07, T8.38): `FaseActual = 8`, `Conmutados` completo (los ocho módulos), 0 adaptadores y
+> 0 puentes de import. Lo siguiente es **F9-05** (el cierre de F9) y después F10. El resumen de abajo es el del 2026-10-10.
+>
 > **Estado: EN EJECUCIÓN** — resumen al 2026-10-10 (**el estado al día vive en [`../ESTADO.md`](../ESTADO.md)**,
 > § «Avance de la ejecución», y en la tabla de [`sesiones/README.md`](sesiones/README.md)): F0, F1 (el piloto), F2 y
 > F3 cerradas y en `dev`; F4 y F5 cerradas el 2026-10-07 (F45-03); F6 cerrada el 2026-10-08 (F6-06) y F7 el
@@ -46,6 +51,7 @@ sesión te manda al protocolo, y el protocolo te dice qué leer: el marco, la *s
 | **F8** | `conversacion` (el motor, `runtime`, el carrito) — la mayor; **retira todos los puentes y adaptadores** | 75 | 19 (+5) | 8 💻 | [F8](F8-conversacion/README.md) |
 | **F9-D** | Cierre de los procesos contra los dos binarios — **condición del relevo** | — | — | 1 💻 | [F9](F9-procesos/README.md) |
 | **F10** | Relevo: `cmd/server` usa el arranque nuevo, se borra lo viejo, prueba en UAT | 317 prod + 497 test se borran | — | 🧑 · 5 💻 | [F10](F10-relevo/README.md) |
+| **FW** | ✎ 2026-10-11 · **WhatsApp enchufable**: el Edge real arranca con un WhatsApp falso (entrada y salida capturada). Código en `edge/wapp-edge-agent`; aquí, la spec y el caso de proceso. Resuelve D-38; condición de F10-03 | — (otro repo) | — | 4 💻 | [FW](FW-whatsapp-enchufable/README.md) |
 | **FX** | Transversal: la cara HTTP única nueva, por olas | 33 → `apipublica` | **73** (+19 en `:8100`) | dentro de F0, F2–F8, F10 | [FX](FX-cara-http/README.md) |
 
 Sesiones: 🌐 web · 🌐❓ web si queda saldo de la promoción, si no local · 💻 solo local (Docker, UAT, `main`).

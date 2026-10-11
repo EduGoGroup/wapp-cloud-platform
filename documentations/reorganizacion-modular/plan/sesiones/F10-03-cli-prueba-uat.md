@@ -7,7 +7,7 @@
 | Nivel (E-12) | No aplica: F10 no reconstruye un módulo y no lleva inventario E-12 |
 | Duración objetivo | 45–90 min por tramo: abrir la ventana (T10.4) y, pasadas ≥ 24 h, cerrarla (T10.5–T10.6). La espera no es sesión |
 | Tareas | T10.4–T10.6 |
-| Depende de | F10-02 |
+| Depende de | F10-02 y ✎ 2026-10-11 **FW-04** (la fase [FW](../FW-whatsapp-enchufable/README.md) cerrada, D-FW-3) |
 | Decisiones | D-F10-1 (ventana y fecha), D-F10-2 |
 | Se para cuando | el acta tiene las salidas de `diseno.md` §2.3, la tabla de §2.4 con números y el veredicto de Jhoan («sigue» o «vuelta atrás»). |
 
@@ -17,6 +17,7 @@
 - [ ] Las decisiones de la fila «Decisiones» están rellenas en [`../DECISIONES.md`](../DECISIONES.md) §6.
 - [ ] Acceso SSH a UAT y la ventana acordada (D-F10-1).
 - [ ] ✎ 2026-10-10 · **Decidida la deuda D-38** ([`deuda.md`](../../../deuda.md)): o el Edge real ya admite mensajes inyectados (hubo que modificar `wapp-edge-agent`), o hay una sesión de WhatsApp viva para la prueba. Sin una de las dos, esta sesión no puede recorrer una conversación con el Edge real.
+- [ ] ✎ 2026-10-11 · **D-38 quedó decidida (Jhoan): la primera.** La fase [FW](../FW-whatsapp-enchufable/README.md) está **cerrada** y su receta para UAT (TW.9) está en `F10-relevo/diseno.md` §2.4. No hace falta sesión de WhatsApp. Al terminar la ventana, la palanca del WhatsApp falso queda **baja** en el Edge de UAT.
 - [ ] Arrancar: `cd /Volumes/Projects/source/wApp/cloud/wapp-cloud-platform && claude`.
 
 ## Prompt
@@ -32,7 +33,7 @@ Tu encargo (y solo este):
 - Fase: F10 · relevo → documentations/reorganizacion-modular/plan/F10-relevo/
 - Bloque(s): B · la prueba en UAT en sustitución
 - Tareas: T10.4–T10.6 de plan/F10-relevo/tareas.md
-- Entrada: T10.3; D-F10-1 decidida (ventana y fecha)
+- Entrada: T10.3; D-F10-1 decidida (ventana y fecha); la fase FW cerrada (TW.10): la conversación de la ventana se conduce con el WhatsApp falso del Edge, con la receta de diseno.md §2.4, y la palanca se baja al terminar
 - Te paras cuando: el acta tiene las salidas de `diseno.md` §2.3, la tabla de §2.4 con números y el veredicto de Jhoan («sigue» o «vuelta atrás»).
 - Decisiones: D-F10-1 y D-F10-2 deben estar rellenas en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
 - Skills: validar-antes-de-cerrar.

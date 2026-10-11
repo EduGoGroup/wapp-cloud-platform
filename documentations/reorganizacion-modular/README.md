@@ -1,5 +1,9 @@
 # Reorganización modular de `internal/` — portal
 
+> ✎ **2026-10-11: F6, F7 y F8 cerradas** (2026-10-08, 2026-10-09 y 2026-10-11). Los ocho módulos están reconstruidos y
+> conmutados en `cmd/server-modular` (`FaseActual = 8`, 0 adaptadores, 0 puentes de import, `Conmutados` completo).
+> Quedan **F9-D** (el cierre de los procesos) y **F10** (el relevo). El párrafo de abajo es el resumen anterior.
+>
 > **Estado: EN EJECUCIÓN** (resumen al 2026-10-07; **el estado al día vive en [`ESTADO.md`](ESTADO.md)**,
 > § «Avance de la ejecución», y este resumen no se mantiene sesión a sesión). **F0, F1, F2 y F3 cerradas** y en
 > `dev`. **F4** (`inferencia`) y **F5** (`catalogo`) **cerradas** el 2026-10-07 (F45-03, por PR a `dev`), con

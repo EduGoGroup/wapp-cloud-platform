@@ -34,6 +34,7 @@ ninguno). Sin umbral de cobertura (P2): `make cobertura-ficheros` es un informe.
 | La cara vieja no sirve **ninguna** ruta en el binario nuevo (FX, cierre de F8) | Test del estrangulador de FX en verde |
 | `make test-integration` (batería vieja) verde, por última vez, sobre el `dev` de entrada | `make test-integration; echo rc=$?` → 0, SKIP contados con `-v` |
 | Jhoan da el visto bueno a la ventana de UAT (D-F10-1) | Fecha y hora escritas en «Decisiones» |
+| ✎ 2026-10-11 · **Solo para el bloque B**: la fase [FW](../FW-whatsapp-enchufable/README.md) cerrada (el Edge de UAT puede conversar con WhatsApp falso). Los bloques de antes (F10-01, F10-02) no la esperan | Bloque «FW cerrada» en `ESTADO.md`; TW.10 `[x]` |
 
 ## Salidas (es cierto al cerrar)
 
@@ -69,18 +70,18 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
 | Sesión | Bloque | Tareas | Necesita | Para cuando |
 |---|---|---|---|---|
 | F10-01 🧑 | — | — | — | D-F10-1, D-F10-2 y D-F10-6 decididas; fecha de la ventana de UAT |
-| F10-02 | **A · preparación y dorada** | T10.1–T10.3 | — | Dorada de la huella commiteada y verificada contra el viejo; SHA a desplegar escrito en el acta |
-| F10-03 | **B · la prueba en UAT en sustitución** | T10.4–T10.6 | **UAT (SSH)** | Acta de la ventana: veredicto «sigue» o «vuelta atrás», con evidencia. La ventana (≥ 24 h) es espera, no sesión: se abre (T10.4) y se relanza para cerrar (T10.5–T10.6) |
+| F10-02 | **A · preparación y dorada** | T10.1–T10.3, T10.24 | — | Dorada de la huella commiteada y verificada contra el viejo; SHA a desplegar escrito en el acta; ✎ 2026-10-11: el inventario de divergencias visibles desde fuera (D-36, primera mitad) |
+| F10-03 | **B · la prueba en UAT en sustitución** | T10.4–T10.6 | **UAT (SSH)** y ✎ 2026-10-11 **la fase [FW](../FW-whatsapp-enchufable/README.md) cerrada** (D-FW-3) | Acta de la ventana: veredicto «sigue» o «vuelta atrás», con evidencia. La ventana (≥ 24 h) es espera, no sesión: se abre (T10.4) y se relanza para cerrar (T10.5–T10.6) |
 | F10-04 | **C · el relevo en el repo** | T10.7–T10.14, T10.23 | — | `ci-local` GATE_RC=0 con un solo arranque, cero adaptadores, cero puentes (import), `Conmutados` completo, cero pendientes, doc del repo al día; un commit por tarea |
 | F10-05 | **D · cierre local** | T10.15–T10.17 | **Docker**, **UAT (SSH)** | `make test-procesos` RC=0 contra `cmd/server`; UAT desplegado desde el commit del relevo; acta `CERRADO` |
-| F10-05 | **E · fuera del repo** | T10.18–T10.21 | la raíz de wApp y los repos hermanos | Doc del ecosistema, ADR-0010, 12 comentarios hermanos, bóveda `analisis/` con las rutas nuevas |
+| F10-05 | **E · fuera del repo** | T10.18–T10.21, T10.25 (✎ 2026-10-11: la carpeta del plan se archiva en la raíz, D-F10-9) | la raíz de wApp y los repos hermanos | Doc del ecosistema, ADR-0010, 12 comentarios hermanos, bóveda `analisis/` con las rutas nuevas |
 | F10-06 | **F · `main`** | T10.22 | **`main`**, **Docker**, UAT (SSH) | **Solo a petición expresa de Jhoan** |
 
 ## Decisiones que necesita (Jhoan)
 
 | # | Pregunta | Recomendación |
 |---|---|---|
-| **D-F10-1** | La prueba en UAT: ¿cuánto dura y quién la da por buena? | **24 h mínimo**, con al menos una jornada de tráfico real (el e2e con WhatsApp real del runbook del ecosistema `e2e-con-whatsapp-real.md`) y los criterios de [`diseno.md`](diseno.md) §2.4. Veredicto de Jhoan, por escrito en el acta. El tráfico real de UAT **no está medido** |
+| **D-F10-1** | La prueba en UAT: ¿cuánto dura y quién la da por buena? | **24 h mínimo**, con al menos una jornada de tráfico real (el e2e con WhatsApp real del runbook del ecosistema `e2e-con-whatsapp-real.md`) y los criterios de [`diseno.md`](diseno.md) §2.4. Veredicto de Jhoan, por escrito en el acta. El tráfico real de UAT **no está medido**. ✎ 2026-10-11 (Jhoan): el e2e de la ventana **no** se hace con WhatsApp real sino con el **WhatsApp falso** de la fase [FW](../FW-whatsapp-enchufable/README.md) (receta de TW.9); la ventana de ≥ 24 h no cambia |
 | **D-F10-2** | Si la prueba sale bien, ¿se deja el binario modular corriendo hasta el despliegue del relevo? | **Sí, si el relevo aterriza en ≤ 7 días** (es el mismo código que se va a desplegar). Si no, vuelta al viejo: no dejar en UAT un binario de una rama que ya no existirá |
 | **D-F10-3** | ¿Qué se hace con `internal/pendiente`, la etiqueta `pendiente`, `make test-pendiente` y `vet -tags pendiente`? | **Retirarlos** en el mismo commit que activa `no_pending_test.go`, que entonces prohíbe el identificador **y** la etiqueta. `00-marco/estructura.md` dice «desaparece o queda vacía de usos»: vacía de usos y viva invita a reabrir el método sin decidirlo. Si Jhoan quiere el método para trabajo futuro, es una decisión nueva |
 | **D-F10-4** | `cmd/server/integration_test.go` (en proceso, sin BD, `bufconn`) y `cmd/server/flows_integration_test.go` (con BD, importa `internal/flujos/**`) | **Portar** el primero contra los paquetes nuevos (`04` §3 lo marca ✎: es el único e2e del gRPC que corre en `ci-local` sin Docker). **Borrar** el segundo: su escenario lo cubre P3 |

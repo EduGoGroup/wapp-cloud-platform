@@ -9,7 +9,7 @@
 > Sin umbral de cobertura (P2): `make cobertura-ficheros` es un informe, no bloquea.
 > Adaptadores (E-11, `05` §4.2): F10 no crea ni retira ningún `bridge_<x>.go`; exige que no quede ninguno.
 
-## Bloque A · preparación y dorada · sesión F10-02 · T10.1–T10.3
+## Bloque A · preparación y dorada · sesión F10-02 · T10.1–T10.3 y T10.24
 
 Entrada: F9 `CERRADO`; F10-01 hecha. Para cuando: la dorada commiteada y verificada contra el viejo en ejecución.
 
@@ -30,10 +30,16 @@ Entrada: F9 `CERRADO`; F10-01 hecha. Para cuando: la dorada commiteada y verific
 - [ ] **T10.3 · Preparación de la prueba en UAT** · dep. T10.2
   - **Ficheros**: `traspasos/TRASPASO-F10-relevo.md` (§4: los comandos de `diseno.md` §2, literales)
   - **Hecho cuando**: T10.1–T10.2 empujados a `dev` (`git push origin dev`, rc sin pipe); el SHA que se desplegará está escrito en el acta
+- [ ] **T10.24 · Inventario de las divergencias visibles desde fuera (primera mitad de la deuda D-36)** · dep. F9 cerrada · añadida el 2026-10-11 por decisión de Jhoan · solo lectura
+  - **Por qué antes del relevo**: saber qué respondía el viejo es directo mientras existe (se corren los dos binarios); después hay que deducirlo de los comentarios
+  - **Ficheros**: `divergencias-visibles.md` (nuevo, en esta carpeta); `documentations/deuda.md` (D-36)
+  - **Hecho cuando**: cada comentario «Divergencia deliberada del viejo» de producción (26 en 14 ficheros el 2026-10-10: se re-mide, con el comando) y cada decisión de `plan/DECISIONES.md` que cambie conducta está clasificada **interna** / **visible desde fuera**; cada visible lleva ruta o trama, qué respondía el viejo y qué responde el nuevo (código, cuerpo, texto), y qué consumidor la recibe. **No** se abre ni se toca ningún consumidor: eso es la segunda mitad, tras el relevo
+  - **Corte limpio**: si F10-02 no cabe en ~90 min, esta tarea se hace en una sesión propia; lo que no puede es quedar para después de T10.7
+  - **Commit**: `docs(reorganizacion-modular): F10, inventario de las divergencias visibles desde fuera`
 
 ## Bloque B · la prueba en UAT en sustitución · sesión F10-03 · T10.4–T10.6 · necesita UAT (SSH)
 
-Entrada: T10.3; D-F10-1 decidida (ventana y fecha). Para cuando: acta con veredicto. La ventana (≥ 24 h) es
+Entrada: T10.3; D-F10-1 decidida (ventana y fecha); ✎ 2026-10-11: la fase [FW](../FW-whatsapp-enchufable/README.md) cerrada (TW.10), porque los criterios conversacionales de `diseno.md` §2.4 se miran con su WhatsApp falso. Para cuando: acta con veredicto. La ventana (≥ 24 h) es
 espera, no sesión: se abre con T10.4 y la sesión se relanza al final para T10.5–T10.6.
 
 - [ ] **T10.4 · Captura y cambio de binario** · dep. T10.3 · cumple R10.1.a–c
@@ -43,12 +49,13 @@ espera, no sesión: se abre con T10.4 y la sesión se relanza al final para T10.
   - **Hecho cuando**: la tabla de `diseno.md` §2.4 rellena con números al final de la ventana (mínimo 24 h, D-F10-1); si un corte salta, §2.5 ejecutado en < 5 min y la tarea queda `[~]` con el hallazgo
 - [ ] **T10.6 · Acta y veredicto** · dep. T10.5
   - **Ficheros**: `traspasos/TRASPASO-F10-relevo.md` (acta, `diseno.md` §2.6)
+  - ✎ 2026-10-11 (D-FW-3): «sigue» admite defectos **menores**, listados en el acta, si cada uno se puede corregir **sin** el código viejo; uno que pida comparar con el viejo es «vuelta atrás» o espera, y T10.7–T10.11 no empiezan
   - **Hecho cuando**: veredicto de Jhoan escrito. «Sigue» → D-F10-2 aplicada. «Vuelta atrás» → viejo restaurado y verificado; F10 vuelve a su entrada
   - **Commit**: `docs(reorganizacion-modular): F10, acta de la prueba en UAT`
 
 ## Bloque C · el relevo en el repo · sesión F10-04 · T10.7–T10.14 y T10.23
 
-Entrada: T10.6 con «sigue». Para cuando: la definición de hecho del bloque C (`reglas.md` §4). Un commit por
+Entrada: T10.6 con «sigue»; ✎ 2026-10-11: T10.24 `[x]` (el inventario de divergencias se hace con el viejo aún presente). Para cuando: la definición de hecho del bloque C (`reglas.md` §4). Un commit por
 tarea, directo en `dev`, en este orden (`arquitectura.md` §3). No necesita Docker ni UAT.
 
 - [ ] **T10.7 · relevo: `cmd/server` usa el arranque nuevo** · dep. T10.6 · cumple R10.2.a–b, R10.3.c
@@ -81,7 +88,8 @@ tarea, directo en `dev`, en este orden (`arquitectura.md` §3). No necesita Dock
   - **Commit**: `relevo: las supresiones de lint se arreglan o se justifican`
 - [ ] **T10.14 · docs: el repo dice las rutas nuevas** · dep. T10.11 · cumple R10.7.a
   - **Ficheros**: los de `diseno.md` §4 (147 menciones hoy); `ESTADO.md` y `README.md` de `reorganizacion-modular/` («relevo hecho en el repo; UAT y ecosistema pendientes»); `CLAUDE.md` (la sección «en curso» pasa a «hecha»; el índice del sistema es `internal/arranque/orquestador.go`)
-  - **Hecho cuando**: el recuento de `diseno.md` §4 → 0 fuera de `reorganizacion-modular/` y de lo marcado «(histórico)»
+  - ✎ **2026-10-11 · D-F10-8 (Jhoan): sin documentación del código viejo.** Borrado el viejo, la documentación de la pieza describe **solo** lo que existe: `contratos.md`, `arquitectura.md`, `constitucion.md`, `operacion.md`, `esquema-postgres.md`, `deuda.md` (§6 incluida) y el `README.md` del repo se **reescriben** contra el árbol nuevo, no se anotan. La salida «(histórico)» **deja de valer** fuera de `reorganizacion-modular/`. El árbol de `04` §3 se **regenera** desde el código (`go list`), con el comando escrito: cierra la deuda D-40. La propia carpeta `reorganizacion-modular/` sale del repo al final, en T10.25 (D-F10-9)
+  - **Hecho cuando**: el recuento de `diseno.md` §4 → **0** fuera de `reorganizacion-modular/`, sin excepciones «(histórico)»; cada ruta, fichero y símbolo que la documentación de la pieza nombra **existe** en el árbol (comprobado con un comando, que se escribe)
   - **Commit**: `docs(reorganizacion-modular): relevo — las rutas nuevas en la documentación del repo`
   - Cierre del bloque: el gate del bloque C (`reglas.md` §4) con sus salidas en el acta, y `git push origin dev` (rc sin pipe).
 
@@ -102,12 +110,19 @@ D-10 (`diseno.md` §3.1). Si F10-05 no cabe en ~90 min, el punto limpio de corte
 
 - [ ] **T10.18 · La documentación del ecosistema** · dep. T10.17 · cumple R10.7.b
   - **Hecho cuando**: el recuento de `diseno.md` §3.1 (1.124 menciones hoy) → 0 fuera de lo histórico; `make check-docs` de la raíz verde
+  - ✎ 2026-10-11 · D-F10-8: «lo histórico» aquí es **solo** el eje `historia/` y las fichas de planes cerrados del ecosistema, que cuentan qué pasó; los ejes que describen el sistema (constitución, diagramas, operación, funcionalidades) no conservan rutas viejas
 - [ ] **T10.19 · ADR-0010: la regla de conteo nueva** · dep. T10.18 · D-F10-7
   - **Hecho cuando**: texto nuevo aprobado por Jhoan; su tabla re-medida con la regla nueva y el comando escrito; citas `bootstrap.go:1519/817/835` corregidas
 - [ ] **T10.20 · Los 12 comentarios de repos hermanos** · dep. T10.17 · cumple R10.7.c
   - **Hecho cuando**: el grep de `diseno.md` §3.3 → 0; un commit por repo a `dev`; `make ci-local` de cada repo rc=0
 - [ ] **T10.21 · La bóveda `analisis/` y `CLAUDE.md` de la raíz** · dep. T10.17
   - **Hecho cuando**: las 16 menciones re-apuntadas (skill `analizar-arquitectura` del ecosistema para las notas)
+- [ ] **T10.25 · La carpeta `reorganizacion-modular/` sale del repo y se archiva en la documentación de wApp** · dep. T10.21 · D-F10-9 · añadida el 2026-10-11 por decisión de Jhoan · **la última tarea que se hace desde esta carpeta**
+  - **Antes de moverla**: lo que siga siendo **norma del código nuevo** se rescata a `documentations/constitucion.md` de la pieza (de `05`: E-11 nombres en inglés, E-13 tope de tamaño, los candados y cómo se añade un módulo; de `DECISIONES.md`, solo lo que obligue a futuro), reescrito sin rutas viejas
+  - **Destino**: `documentations/archive/cloud-platform-modular-reorganization/` en la raíz de wApp (repo de documentación; carpeta `archive/` nueva, nombre en inglés), con un `README.md` que diga arriba: qué fue, fechas, el SHA de este repo donde vivía, y que **describe código que ya no existe**
+  - **En este repo**: `documentations/reorganizacion-modular/` borrada; queda una ficha corta en `documentations/` (qué se hizo, el enlace al archivo, el SHA); `CLAUDE.md`, `documentations/README.md` y las skills del repo (`contrato-tdd`, `reconstruir-modulo`, `validar-antes-de-cerrar`, `procesos-testcontainers`, `describir-pr`, `traspaso-web-local`) sin enlaces a la carpeta: cada skill se reescribe o se retira
+  - **Hecho cuando**: `ls documentations/reorganizacion-modular 2>&1 | grep -c 'No such file'` → 1; `grep -rn 'reorganizacion-modular' --include='*.md' . | wc -l` → solo la ficha; el recuento de rutas viejas de `diseno.md` §4 → **0 en todo el repo**; `make check-docs` de la raíz verde, con `archive/` tratado como archivo (sus enlaces internos resuelven; no cuenta para los literales canónicos)
+  - **Si se va a hacer F10-06 (`main`)**: sus instrucciones se leen ya desde el archivo
 
 ## Bloque F · `main` · sesión F10-06 · T10.22 — solo a petición expresa de Jhoan · necesita `main`, Docker y UAT (SSH)
 
