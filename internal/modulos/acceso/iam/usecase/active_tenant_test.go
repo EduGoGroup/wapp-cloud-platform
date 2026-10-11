@@ -337,6 +337,42 @@ func TestTenantsOfCaller_ActiveReadFailurePropagates(t *testing.T) {
 	}
 }
 
+// userTenantsStub es el repositorio de membresías cuya lectura CON NOMBRE (UserTenants, la del
+// listado) devuelve lo que se le programe; el resto es el del doble que envuelve.
+type userTenantsStub struct {
+	out.MembershipRepo
+	tenants []domain.UserTenant
+	err     error
+}
+
+func (s userTenantsStub) UserTenants(context.Context, string) ([]domain.UserTenant, error) {
+	return s.tenants, s.err
+}
+
+func TestTenantsOfCaller_MembershipReadFailurePropagates(t *testing.T) {
+	store := memory.NewStore()
+	broken := errors.New("tenant_members no contesta")
+	svc := newActiveTenantOver(t, userTenantsStub{MembershipRepo: store.Memberships, err: broken}, store.ActiveTenants)
+	tenants, activeID, err := svc.TenantsOfCaller(ctxNoCompany(uuid.NewString()))
+	if !errors.Is(err, broken) || tenants != nil || activeID != "" {
+		t.Fatalf("= %#v, %q, %v; quiere nil, vacío y %v: un fallo no se lee como «ninguna»", tenants, activeID, err, broken)
+	}
+}
+
+// El «vacía y no nil» lo promete el servicio y no lo deja al adaptador: uno que conteste nil sale
+// igualmente como lista vacía (un `null` en el cable rompería a la consola).
+func TestTenantsOfCaller_NilFromRepoIsEmptyNotNil(t *testing.T) {
+	store := memory.NewStore()
+	svc := newActiveTenantOver(t, userTenantsStub{MembershipRepo: store.Memberships}, store.ActiveTenants)
+	tenants, activeID, err := svc.TenantsOfCaller(ctxNoCompany(uuid.NewString()))
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if tenants == nil || len(tenants) != 0 || activeID != "" {
+		t.Fatalf("= %#v, %q; quiere lista vacía NO nil y activeID vacío", tenants, activeID)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // R-U18 · el selector y el canje nunca discrepan
 // ---------------------------------------------------------------------------
