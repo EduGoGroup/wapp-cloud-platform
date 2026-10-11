@@ -231,6 +231,11 @@ func (s *servidor) lanzar(ctx context.Context, o opcionesServidor, home string) 
 // debug, las cuatro direcciones y las salidas Entorno() de base, PKI, claves, S3 e identidad.
 // Los nombres van completos, con WAPP_. No pone WAPP_CONFIG_FILE, WAPP_IDENTITY_URL (salvo con
 // o.IdentityLogin), WAPP_IDENTITY_API_KEY, WAPP_LLM_PROMPTS_DIR ni WAPP_KEK_KMS_*. No falla.
+//
+// Única variable que SÍ se toma del entorno del test: WAPP_PROCESOS_COVERDIR. Si trae un
+// directorio, el servidor recibe GOCOVERDIR con ese valor, que es donde un binario compilado con
+// `go build -cover` vuelca sus contadores al salir (`make cobertura-combinada`). Sin ella —el caso
+// de `make test-procesos`— el entorno es el de siempre, sin GOCOVERDIR.
 func (s *servidor) entorno(o opcionesServidor, home string) []string {
 	env := []string{
 		"PATH=" + os.Getenv("PATH"),
@@ -258,8 +263,16 @@ func (s *servidor) entorno(o opcionesServidor, home string) []string {
 	if o.IdentityLogin {
 		env = append(env, s.Identidad.loginEnv()...)
 	}
+	if dir := os.Getenv(envCoverDir); dir != "" {
+		env = append(env, "GOCOVERDIR="+dir)
+	}
 	return env
 }
+
+// envCoverDir es la variable con la que `make cobertura-combinada` le dice al arnés dónde debe
+// volcar el servidor sus contadores de cobertura. No es GOCOVERDIR a secas para que un valor
+// heredado por accidente del entorno del desarrollador no cambie lo que recibe el servidor.
+const envCoverDir = "WAPP_PROCESOS_COVERDIR"
 
 // esperarListo sondea cada 100 ms hasta que el servidor está listo, con tope de 30 s. Recibe el
 // contexto del test. Devuelve nil cuando /healthz del admin da 200 y los otros tres listeners
