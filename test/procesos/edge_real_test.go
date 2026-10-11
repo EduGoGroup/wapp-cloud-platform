@@ -106,20 +106,22 @@ func edgeRealSource(dir string) (abs, revision string, err error) {
 	if dir == "" {
 		return "", "", fmt.Errorf("falta %s: la ruta del repo edge/wapp-edge-agent. El modo «Edge real» no se salta sin él", edgeRealDirEnv)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 	if abs, err = filepath.Abs(dir); err != nil {
 		return "", "", fmt.Errorf("%s=%q: %w", edgeRealDirEnv, dir, err)
 	}
-	module, err := edgeRealRun(abs, "go", "list", "-m")
+	module, err := edgeRealRun(abs, exec.CommandContext(ctx, "go", "list", "-m"))
 	if err != nil {
 		return "", "", fmt.Errorf("%s=%q no es un módulo de Go: %w", edgeRealDirEnv, abs, err)
 	}
 	if module != edgeRealModule {
 		return "", "", fmt.Errorf("%s=%q es el módulo %q, quería %q", edgeRealDirEnv, abs, module, edgeRealModule)
 	}
-	if revision, err = edgeRealRun(abs, "git", "rev-parse", "HEAD"); err != nil {
+	if revision, err = edgeRealRun(abs, exec.CommandContext(ctx, "git", "rev-parse", "HEAD")); err != nil {
 		return "", "", fmt.Errorf("la revisión de git de %q: %w", abs, err)
 	}
-	changes, err := edgeRealRun(abs, "git", "status", "--porcelain", "--untracked-files=no")
+	changes, err := edgeRealRun(abs, exec.CommandContext(ctx, "git", "status", "--porcelain", "--untracked-files=no"))
 	if err != nil {
 		return "", "", fmt.Errorf("el estado de git de %q: %w", abs, err)
 	}
@@ -134,29 +136,29 @@ func edgeRealSource(dir string) (abs, revision string, err error) {
 func edgeRealCompile(dir, revision, dest string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), edgeRealBuildTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-ldflags", "-X main.Version="+revision, "-o", dest, "./cmd/agent") //nolint:gosec // argumentos fijos del arnés
+	// cmd.Env se queda en nil a propósito, como en compilar (main_test.go): go build necesita el
+	// entorno de Go del desarrollador (GOWORK=off y GOTOOLCHAIN los pone `make`). El destino linux se
+	// añade con env(1), sin leer ni copiar ese entorno. El Edge que CORRE no hereda nada de aquí: su
+	// entorno se arma desde cero en edgeRealEnv.
+	cmd := exec.CommandContext(ctx, "env", "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0", //nolint:gosec // argumentos del arnés (la revisión y el destino los calcula él), sin entrada externa
+		"go", "build", "-trimpath", "-ldflags", "-X main.Version="+revision, "-o", dest, "./cmd/agent")
 	cmd.Dir = dir
-	// El entorno es el del desarrollador (GOWORK=off y GOTOOLCHAIN los pone `make`), más el destino.
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("go build ./cmd/agent en %s: %w\n%s", dir, err, out)
 	}
 	return nil
 }
 
-// edgeRealRun corre un comando corto en dir y devuelve su salida sin el salto final.
-func edgeRealRun(dir, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // argumentos fijos del arnés
+// edgeRealRun corre en dir un comando corto ya armado y devuelve su salida sin el salto final.
+func edgeRealRun(dir string, cmd *exec.Cmd) (string, error) {
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			return "", fmt.Errorf("%s %s: %w\n%s", name, strings.Join(args, " "), err, exit.Stderr)
+			return "", fmt.Errorf("%s: %w\n%s", strings.Join(cmd.Args, " "), err, exit.Stderr)
 		}
-		return "", fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+		return "", fmt.Errorf("%s: %w", strings.Join(cmd.Args, " "), err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -320,6 +322,25 @@ func (e *edgeReal) call(ctx context.Context, method, path, token string, body an
 		return 0, nil, fmt.Errorf("%s %s: código HTTP ilegible en %q", method, path, raw)
 	}
 	return status, raw[:cut], nil
+}
+
+// run corre un comando dentro del contenedor, con el usuario del daemon, y devuelve su salida sin
+// espacios alrededor. No falla el test: devuelve el error si el comando no pudo correr o salió ≠ 0.
+func (e *edgeReal) run(ctx context.Context, cmd ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, edgeRealCallTimeout)
+	defer cancel()
+	exit, out, err := e.ctr.Exec(ctx, cmd, tcexec.Multiplexed())
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", strings.Join(cmd, " "), err)
+	}
+	raw, err := io.ReadAll(out)
+	if err != nil {
+		return "", fmt.Errorf("%s: leer la salida: %w", strings.Join(cmd, " "), err)
+	}
+	if exit != 0 {
+		return "", fmt.Errorf("%s: salió con %d: %s", strings.Join(cmd, " "), exit, bytes.TrimSpace(raw))
+	}
+	return strings.TrimSpace(string(raw)), nil
 }
 
 // Log devuelve lo que el Edge lleva escrito (stdout y stderr del contenedor). Vacío si no hay
