@@ -74,9 +74,10 @@ tarea, directo en `dev`, en este orden (`arquitectura.md` §3). No necesita Dock
     `postgres.WithTx` y que el mutante `maxTxAttempts = 1` **cae**. Si no, **no se borra**
     `internal/flujos/contact/deadlock_integration_test.go` ni el resto de la integración vieja: la sesión para
   - **Ficheros**: los 26 directorios restantes de `diseno.md` §1, con sus tests; `go.mod`/`go.sum` tras `GOWORK=off go mod tidy`
-  - **Hecho cuando**: `ls -d internal/*/` → `apipublica arranque modulos nucleo platform`; `go build ./... && go vet ./...` rc=0; `go mod tidy` sin diff pendiente
+  - **Hecho cuando**: `ls -d internal/*/` → `apipublica arranque candados modulos nucleo pendiente platform` (✎ 2026-10-11, D-F10-10: `candados` se queda; `pendiente` sale en T10.12); `go build ./... && go vet ./...` rc=0; `go mod tidy` sin diff pendiente
 - [ ] **T10.12 · relevo: cero pendientes** · dep. T10.11 · cumple R10.4.a–b, R10.4.d
   - **Ficheros**: `no_pending_test.go` (donde lo ubique `00-marco/estructura.md`; las specs lo llamaban `sin_pendientes_test.go`: como aún no existe, nace con nombre en inglés, `05` E-11 y D-F1-12, 2026-10-02) con su caso `muerde`; `internal/modulos/fronteras_test.go` (puentes de import: lista vacía y caso `muerde`; `Conmutados`: todos los módulos); con D-F10-3: `internal/pendiente/` borrado, `Makefile` sin `test-pendiente` ni `vet -tags pendiente`, `.golangci.yml` sin la etiqueta
+  - ✎ **2026-10-11 · D-F10-10 (Jhoan)**: `internal/candados` **se queda**; en este commit se le recorta lo que distingue un contrato en rojo (el detector de `cobertura.go`, sus tests y su `testdata`, y las menciones en `candados.go`, `exportados.go` y `fronteras_test.go`: 11 líneas con `pendiente.Implementar` el 2026-10-11), para que el `grep` de abajo pueda dar 0
   - **Hecho cuando**: `grep -rn 'pendiente.Implementar\|go:build pendiente' --include='*.go' . | wc -l` → 0; `ls internal/arranque/bridge_*.go 2>/dev/null | wc -l` → 0
 - [ ] **T10.13 · relevo: la integración vieja, retirada** · dep. T10.11 · cumple R10.5.b–c
   - **Precondición**: la misma de T10.11 (hallazgo 38): lo que la batería vieja ejercía y nadie más, ya lo ejerce un proceso de F9

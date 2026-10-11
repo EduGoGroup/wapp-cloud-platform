@@ -45,8 +45,8 @@ ninguno). Sin umbral de cobertura (P2): `make cobertura-ficheros` es un informe.
 - `cmd/server/main.go` llama a `internal/arranque`; **no existen** `cmd/server-modular/`,
   `internal/bootstrap/`, `internal/publicapi/` ni los 26 directorios viejos restantes
   ([`diseno.md`](diseno.md) §1).
-- `internal/` contiene solo `arranque/`, `apipublica/`, `modulos/`, `nucleo/`, `platform/` (y, según
-  D-F10-3, nada de `pendiente/`).
+- `internal/` contiene solo `arranque/`, `apipublica/`, `candados/` (✎ 2026-10-11, D-F10-10: se queda, sin la
+  parte de «pendiente»), `modulos/`, `nucleo/`, `platform/` (y, según D-F10-3, nada de `pendiente/`).
 - `no_pending_test.go` activo; `fronteras_test.go` con **cero** puentes (import) y `Conmutados` completo;
   **cero** `bridge_*.go` en `internal/arranque`; `huella_test.go` compara contra una **dorada** congelada del viejo.
 - `make test-procesos` corre contra `cmd/server` (ya nuevo) y `WAPP_PROCESOS_BINARIO` desaparece.
@@ -127,7 +127,8 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
    de «Entradas» de este README, a `reglas.md` §4 y a T10.12: sus `grep` solo darán 0 cuando se retiren
    `internal/pendiente` **y** las partes de `internal/candados` que lo nombran. **D-F10-3 no dice qué pasa con
    `internal/candados`** (91 ficheros de producción y 71 de test), que tampoco está en la lista de lo que queda en
-   `internal/` según «Salidas». Lo decide Jhoan antes de F10-04.
+   `internal/` según «Salidas». ✅ **Decidido el 2026-10-11 (D-F10-10, Jhoan)**: los candados se quedan, sin la parte de
+   «pendiente»; el recorte va en T10.12.
 2. **La dorada ya existía, pero a medias.** F0 dejó `internal/arranque/testdata/huella.json` con la parte de ejecución;
    la estática (goroutines y hooks) se comparaba leyendo la fuente del arranque viejo y se habría perdido en T10.10.
    T10.2 las junta en `huella-vieja.golden` (texto, una entrada por línea, como pide `diseno.md` §5) y retira el JSON
