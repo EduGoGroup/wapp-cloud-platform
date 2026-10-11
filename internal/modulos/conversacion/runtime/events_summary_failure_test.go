@@ -12,6 +12,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime/runtimehelpertest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/trigger"
 )
 
@@ -94,5 +95,49 @@ func TestEvents_ComingBackWithoutSourcesSendsNoReminder(t *testing.T) {
 
 	if texts := h.texts(); len(texts) != 3 || texts[2] != texts[0] {
 		t.Errorf("textos = %q, quería tres pantallas y la última igual a la primera", texts)
+	}
+}
+
+// TestEvents_ComingBackGoesOnWhenTheReminderCannotBeSent (EV-3, camino 2): si el recordatorio
+// se arma pero su ENVÍO falla, el cliente vuelve a su evento igual: sale la pantalla del
+// flujo, el fallo se avisa y el hilo no cuenta un recordatorio que el cliente no tiene delante.
+func TestEvents_ComingBackGoesOnWhenTheReminderCannotBeSent(t *testing.T) {
+	h := eventsSwitchHarness(t, eventsWithCartLines(), threadWithoutWelcome(), threadWithFeature())
+	h.say("wa-1", eventsCartWord)
+	h.say("wa-2", eventsSurveyWord)
+	// Falla SOLO el primer envío del turno, que es el recordatorio; el siguiente ya pasa.
+	h.sender.FailText(errEventsInjected)
+	h.sender.OnSend(func(runtimehelpertest.Send) { h.sender.FailText(nil) })
+
+	err := h.handle(h.incoming("wa-3", eventsCartWord))
+
+	if err != nil {
+		t.Fatalf("HandleIncoming = %v, un recordatorio que no sale no tumba el rescate\nlog:\n%s", err, h.log.dump())
+	}
+	attempts := h.sender.Attempts()
+	if len(attempts) != 4 || !errors.Is(attempts[2].Err, errEventsInjected) || !strings.Contains(attempts[2].Text, eventsLineLabel) {
+		t.Fatalf("intentos = %+v, quería cuatro y el tercero —el recordatorio— fallido", attempts)
+	}
+	texts := h.texts()
+	if len(texts) != 3 || texts[2] != texts[0] {
+		t.Errorf("textos = %q, quería tres pantallas y la última la del flujo del pedido", texts)
+	}
+	for _, text := range texts {
+		if strings.Contains(text, eventsLineLabel) {
+			t.Errorf("se despachó %q, el recordatorio no debía llegar a salir", text)
+		}
+	}
+	cart := eventsAliveOfKind(t, h, trigger.EventKindCart)
+	if st, _ := h.state(); st.EventID != cart.ID || st.FlowID != eventsCartFlow {
+		t.Errorf("estado = %+v, el cliente debía quedar de vuelta en su pedido", st)
+	}
+	const notSent = "runtime: no se pudo enviar el resumen del rescate; se retoma igual"
+	if !eventsLogged(h, "warn", notSent) {
+		t.Errorf("no se avisó a WARN de que el recordatorio no salió\nlog:\n%s", h.log.dump())
+	}
+	for _, row := range threadRows(t, h, cart.ID) {
+		if row.Kind == events.KindMessageOutOfTurn {
+			t.Errorf("hilo: fila %d fuera de turno %q; un resumen que no llegó no es antecedente de nada", row.Seq, row.Text)
+		}
 	}
 }
