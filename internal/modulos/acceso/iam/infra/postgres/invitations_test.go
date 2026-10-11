@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,4 +123,27 @@ func TestScanInvitation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestInvitationRepo_Revoke_ReasonReadFailureIsNotNotFound: el UPDATE corrió y no tocó ninguna
+// fila, y la lectura que explica por qué falla. No saber el motivo NO es ninguno de los tres
+// motivos: ni «no existe» (ErrNotFound), ni «ya canjeada» (ErrConflict), ni «ya estaba revocada»
+// (nil, que daría por hecha una baja que nadie comprobó).
+func TestInvitationRepo_Revoke_ReasonReadFailureIsNotNotFound(t *testing.T) {
+	s := &scriptedSQL{
+		zeroRows: map[string]bool{stepMark: true},
+		fail:     map[string]error{stepRevokeReason: errScripted},
+	}
+	err := NewInvitationRepo(s.pool(t)).Revoke(t.Context(), testInvitationID, testTenantID)
+	if err == nil {
+		t.Fatal("Revoke sin poder leer el motivo = nil; quiere el error de la lectura")
+	}
+	if !errors.Is(err, errScripted) || !strings.HasPrefix(err.Error(), "iam: revocar invitación: ") {
+		t.Errorf("Revoke = %v; quiere «iam: revocar invitación: …» envolviendo la causa", err)
+	}
+	if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrConflict) {
+		t.Errorf("Revoke = %v; un motivo ilegible no es ausencia ni conflicto", err)
+	}
+	// El fallo es de la SEGUNDA sentencia: el UPDATE pasó (cero filas) y cayó la lectura.
+	wantSteps(t, s, stepMark, stepRevokeReason)
 }

@@ -54,7 +54,8 @@ type m2mRequest struct {
 }
 
 // m2mReply es la respuesta del fake a una petición de negocio. status >= 400 contesta el cuerpo
-// de error de identity con code y, si los hay, details (JSON crudo).
+// de error de identity con code y, si los hay, details (JSON crudo); con body no vacío, contesta
+// ese body TAL CUAL (un error que no es el JSON de identity: el HTML de un proxy, por ejemplo).
 type m2mReply struct {
 	status  int
 	code    string
@@ -120,6 +121,10 @@ func newFakeM2M(t *testing.T) *fakeM2M {
 		out := reply(req)
 		w.WriteHeader(out.status)
 		if out.status < http.StatusBadRequest {
+			writeBody(t, w, out.body)
+			return
+		}
+		if out.body != "" {
 			writeBody(t, w, out.body)
 			return
 		}

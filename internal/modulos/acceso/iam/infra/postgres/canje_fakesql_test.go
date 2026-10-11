@@ -28,6 +28,8 @@ const (
 	stepInsertRole   = "insert-role"
 	stepMark         = "mark"
 	stepCloseRequest = "close-request"
+	// stepRevokeReason no es del canje: es la lectura del motivo de InvitationRepo.Revoke.
+	stepRevokeReason = "revoke-reason"
 )
 
 // redeemLabels traduce un trozo de SQL (con los espacios comprimidos) a su etiqueta.
@@ -39,6 +41,7 @@ var redeemLabels = []struct{ match, label string }{
 	{"INSERT INTO public.iam_user_roles", stepInsertRole},
 	{"UPDATE public.tenant_invitations", stepMark},
 	{"UPDATE public.access_requests", stepCloseRequest},
+	{"SELECT redeemed_at, revoked_at FROM public.tenant_invitations", stepRevokeReason},
 }
 
 // redeemLabel devuelve la etiqueta de query, o la propia sentencia comprimida si no la conoce:

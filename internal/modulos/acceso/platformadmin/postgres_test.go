@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -189,5 +190,29 @@ func TestRepository_CreateTenant_RequiresSlugAndDisplayName_WithoutTouchingTheDB
 				t.Fatalf("con error no se devuelve empresa: %+v", created)
 			}
 		})
+	}
+}
+
+// Un fallo del INSERT que NO es una violación de unicidad (23505) no es un conflicto ni una entrada
+// inválida: sale con el texto de la operación y la causa envuelta, sin empresa. Sin Postgres: el
+// INSERT lo contesta el driver de mentira.
+func TestRepository_CreateTenant_NonUniqueErrorIsNotConflict(t *testing.T) {
+	const wantPrefix = "platformadmin: crear tenant: "
+	// Una violación de clave foránea (el plan no existe) es de Postgres, pero no de unicidad.
+	cause := &pgconn.PgError{Code: "23503", Message: "el plan no existe (test)"}
+	f := newFakeSQL(fakeRule{match: "INSERT INTO public.tenants", err: cause})
+	plan := "plan-fantasma"
+	created, err := f.repo(t, nil).CreateTenant(context.Background(), "empresa", "Empresa", &plan)
+	if !errors.Is(err, cause) {
+		t.Fatalf("err = %v, quiero un error que envuelva la causa", err)
+	}
+	if !strings.HasPrefix(err.Error(), wantPrefix) {
+		t.Fatalf("texto = %q, quiero el prefijo %q", err.Error(), wantPrefix)
+	}
+	if errors.Is(err, ErrConflict) || errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("err = %v: un fallo de la base no es conflicto ni entrada inválida", err)
+	}
+	if created != (CreatedTenant{}) {
+		t.Fatalf("con error no se devuelve empresa: %+v", created)
 	}
 }
