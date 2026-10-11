@@ -61,8 +61,9 @@ const (
 	p3FrozenNoticeID   = "AVISO_SESION_PASIVA_V1"
 	p3FrozenNoticeFile = "../../documentations/literal-aviso-sesion-pasiva.md"
 
-	// p3SelfPn es el número propio que la sesión declara en su latido. Ningún remitente lo usa: un
-	// entrante del número propio se corta por anti-bucle.
+	// p3SelfPn es el número propio que la sesión declara en su latido. Ningún remitente lo usa, salvo
+	// en p3_entrante_selfloop_test.go, que es el proceso de esa regla: un entrante del número propio
+	// de una sesión activa se corta por anti-bucle.
 	p3SelfPn = "573009990000"
 
 	// p3TextTimeout es el tope para que llegue un SendText del servidor.
