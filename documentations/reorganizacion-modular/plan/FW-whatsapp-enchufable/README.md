@@ -1,7 +1,8 @@
 # FW · WhatsApp enchufable — el Edge real conversa sin WhatsApp
 
-> **Estado**: 🟡 **bloque A (FW-01) hecho el 2026-10-11, PR #76 integrado; D-FW-1 decidida (ADR nuevo). Antes de FW-02 faltan de Jhoan
-> las decisiones D-FW-2, 4, 6, 7 y 8 y la aprobación del diseño y del texto del ADR-0049** (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
+> **Estado**: 🟡 **bloque B (FW-02) hecho el 2026-10-11: el transporte falso está escrito en el Edge, PR #12 de
+> `wapp-edge-agent` y PR #77 de este repo, los dos integrados. Siguiente sesión: FW-03.** Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
+> decididas y **ADR-0049 aprobado** (vigente; sin commitear en la raíz de wApp). Falta de Jhoan: D-FW-5 (es de FW-03) (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
 > [`deuda.md`](../../../deuda.md)). Medida sobre `edge/wapp-edge-agent` @ `38e5f91` (rama `main`; su rama por defecto es `dev`).
 > **Forma**: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Spec **corta a propósito**; lo que faltaba por
 > medir lo midió FW-01 (solo lectura) y está en [`diseno.md`](diseno.md) §2, con lo que solo se sabe ejecutando en su §6.
@@ -85,14 +86,14 @@ reconstrucción del Cloud.
 
 | # | Pregunta | Recomendación |
 |---|---|---|
-| **D-FW-1** | ¿ADR nuevo o enmienda del ADR-0041? | ✅ **Decidida: ADR nuevo** (Jhoan, 2026-10-11): el ADR-0049, en borrador. El 0041 decide un *inyector* sobre el adaptador real; esto decide un *adaptador sustituto*. Lo escribe FW-01, lo apruebas tú |
-| **D-FW-2** | ¿El WhatsApp falso va en el **mismo binario** tras una palanca, o en un binario / *build tag* aparte? | **Mismo binario, palanca apagada por defecto**. El ADR-0041 ya rechazó el binario aparte: «un instrumento que solo existe en un binario que no se despliega no mide el sistema desplegado» |
+| **D-FW-1** | ¿ADR nuevo o enmienda del ADR-0041? | ✅ **Decidida: ADR nuevo** (Jhoan, 2026-10-11): el ADR-0049, **aprobado** el mismo día. El 0041 decide un *inyector* sobre el adaptador real; esto decide un *adaptador sustituto*. Lo escribe FW-01, lo apruebas tú |
+| **D-FW-2** | ¿El WhatsApp falso va en el **mismo binario** tras una palanca, o en un binario / *build tag* aparte? | ✅ **Decidida: mismo binario tras palanca** (Jhoan, 2026-10-11) |
 | **D-FW-3** | ¿El relevo (F10-04) espera a esta fase? | ✅ **Decidida: sí** (Jhoan, 2026-10-11). F10-03 depende de FW y F10-04 de F10-03: el código viejo se borra solo cuando el flujo nuevo está visto funcionando, o le quedan detalles menores que se arreglan sin el viejo delante |
-| **D-FW-4** | ¿Se limpia toda la fuga de `whatsmeow` fuera de su adaptador? | **Solo lo que impida enchufar el falso**. El resto, deuda del Edge con número. Se decide con el inventario de TW.1 |
+| **D-FW-4** | ¿Se limpia toda la fuga de `whatsmeow` fuera de su adaptador? | ✅ **Decidida: solo lo que estorba** (Jhoan, 2026-10-11). El resto es deuda **del Edge** (A-5 de su `deuda.md`), y la frontera se diseñó para crecer |
 | **D-FW-5** | ¿Quién conduce la conversación? | **El arnés de `test/procesos`** de este repo, con un modo «Edge real» junto al Edge falso (que no se retira). ✅ Medido (FW-01): puede lanzarlo y enrolarlo; lo que falta montar está en [`diseno.md`](diseno.md) §2.5 |
-| **D-FW-6** | La contradicción ADR-0041 («permanente») ↔ comentario de `control/diag` («se borra») | Manda el ADR; el comentario se corrige en TW.4 |
-| **D-FW-7** | ✎ FW-01. La custodia de la DEK en macOS es el Keychain, fijado en compilación: cada binario nuevo abre un diálogo. ¿Cómo corre el caso sin nadie delante? | **Con la palanca echada, custodia en el archivo `0600` del cliente.** 🔴 Toca la custodia de la llave (no la mueve del cliente): no se hace sin tu sí. Alternativas en [`diseno.md`](diseno.md) §5 |
-| **D-FW-8** | ✎ FW-01. ¿El falso reutiliza la puerta de entrantes del adaptador real, o se escribe sin importar nada de `whatsmeow`? | **Reutiliza la puerta** (lección del ADR-0041: reescribir las guardas «mide otro tramo»). Se sustituye el transporte, no la puerta |
+| **D-FW-6** | La contradicción ADR-0041 («permanente») ↔ comentario de `control/diag` («se borra») | ✅ **Decidida: permanente, por mérito y no por jerarquía** (Jhoan, 2026-10-11): el inyector es la única puerta de entrada del transporte falso. Lo decide el ADR-0049 como decisión propia |
+| **D-FW-7** | ✎ FW-01. La custodia de la DEK en macOS es el Keychain, fijado en compilación: cada binario nuevo abre un diálogo. ¿Cómo corre el caso sin nadie delante? | ✅ **Decidida: Edge en contenedor Linux; la custodia no se toca** (Jhoan, 2026-10-11). Descartado el archivo en macOS tras la palanca, que era lo recomendado |
+| **D-FW-8** | ✎ FW-01. ¿El falso reutiliza la puerta de entrantes del adaptador real, o se escribe sin importar nada de `whatsmeow`? | ✅ **Decidida: reutiliza la puerta real** (Jhoan, 2026-10-11), pensando en más transportes |
 
 ## Hallazgos
 
@@ -131,3 +132,44 @@ reconstrucción del Cloud.
     `rc=0` con el gate de diagramas **saltado** (falta `mmdc`): un salto no es un verde, y el ADR no trae diagramas.
 13. ✎ D-FW-1 la decidió Jhoan en la misma sesión (ADR nuevo). **Las decisiones D-FW-2, D-FW-4, D-FW-5 y D-FW-6 siguen vacías** en [`../DECISIONES.md`](../DECISIONES.md) §8.
     FW-01 no las necesitaba; FW-02 sí (salvo D-FW-5, que es de FW-03), junto con D-FW-7 y D-FW-8.
+
+### FW-02 (2026-10-11) · el transporte falso, en `edge/wapp-edge-agent` (rama `feat/fw-02-whatsapp-falso`)
+
+14. 🔴 **`make ci-local` del Edge falla en la Mac sin tocar nada.** En `dev` @ `38e5f91` cae en el lint: el
+    `golangci-lint` del sistema (2.14.0, sobre Go 1.27.1) marca 3 `SA1019` en `cmd/wapp-ctl/proxy.go` e
+    `internal/auth/keystore.go`, y los tests no llegan a correr. El `Makefile` del Edge **no fija la toolchain** como el
+    de este repo. Con la fijada (`make ci-docker`: Go 1.26.5, lint v2.12.2) da `GATE_RC=0`. El punto 1 de
+    [`reglas.md`](reglas.md) §4 se midió con `ci-docker`, antes y después. Los 3 avisos no se arreglaron: no son de FW.
+15. **Corrección a FW-01 (hallazgo 7 y D-FW-7):** el archivo `0600` no es «la custodia de Linux». Linux usa Secret
+    Service y Windows DPAPI (`internal/adapters/keycustody/secretservice_linux.go`, `dpapi_windows.go`); el archivo
+    en claro es el último recurso, y ya es la deuda **S-6** del Edge. Con eso Jhoan cambió D-FW-7 a contenedor Linux.
+16. 🔴 **Hay una segunda forma de que RW.3.c salga verde sin medir**: `WAPP_AGENT_CLOUDLINK_LEASE_SHADOW_MODE`. Con
+    ella, un lease revocado solo avisa y el envío sale (`internal/adapters/cloudlink/adapter.go:133-139`). El default es
+    apagada; el caso de TW.8 tiene que afirmarlo, igual que la pública del lease (hallazgo 6).
+17. **El test de «sin lease no se despacha» ya existe y tiene control positivo**:
+    `TestWhatsAppFalso_ConElLeaseRevocadoNoSeCapturaNingunEnvio` monta el adaptador de CloudLink de verdad con el
+    transporte falso detrás; con lease válido captura, tras revocar no. El transporte falso no sabe nada del lease: el
+    gate está antes.
+18. **La frontera no cupo en `internal/app`**: la interfaz nombra tipos de `health` y `latencia`, que importan `app`.
+    Vive en `internal/app/sessionmgr/transporte.go` y la cola con cada adaptador en `internal/infra/wiring/transporte.go`.
+    Coste: los tests de cableado de `sessionmgr` llevan un calco de esa cola (no pueden importar `wiring`).
+19. **Reutilizar la puerta costó un fichero en el adaptador real**, `whatsmeow/sin_transporte.go`: `handleEvent` es
+    privado. Es código del adaptador real que solo alcanza el transporte falso.
+20. **`sessionmgr` sigue importando el paquete del adaptador real**, por `whatsmeow.Backoff`. El candado de RW.1.c
+    (`TestFronteraDelTransporte_SessionmgrNoConstruyeElAdaptadorReal`, sobre el AST) permite ese nombre y ninguno más;
+    probado con un mutante. La lista solo encoge.
+21. **Medido lo que FW-01 no pudo**: desvincular una sesión que nunca tuvo almacén de `whatsmeow` no falla.
+22. 🟡 **Para FW-03, sin medir** ([`diseno.md`](diseno.md) §6): cómo alcanza el arnés el socket unix del Edge dentro
+    del contenedor y con qué nombre de certificado llega el contenedor al Cloud; si el Cloud acepta el número propio
+    de una sesión falsa (`0000` + 8 cifras), que viaja en cada latido; y quién concede `edge.diag.inbound.inject`, que
+    es también el recurso de la ruta de lectura. 🔴 Lo del socket **no** se lo dije a Jhoan al decidir D-FW-7: es un
+    coste del contenedor que entonces no estaba medido.
+23. **El acuse `delivered` sale 50 ms después del envío**, por la puerta real. Es para no fabricar el orden contrario
+    al de WhatsApp (primero el `Ack`, luego el acuse); no garantiza el orden.
+24. **TW.5 y TW.6 van en un solo commit** (`94e29be`): la escucha falsa recibe y envía en el mismo tipo.
+25. 🟡 **«Con la palanca baja, igual que hoy» tiene dos excepciones visibles, las dos en el log**: la línea del latido
+    gana el campo `whatsapp=real` en **todos** los Edge (un `real` explícito es un dato; es el mismo criterio del campo
+    `inyector`), y el aviso de «sesión sin escucha» nombra `WithEscucha` en vez de `WithWhatsmeowListen`. Ni rutas, ni
+    proto, ni conducta. Si algo en campo parsea esa línea por posición, lo nota.
+26. **El ADR-0049 está aprobado (Jhoan, 2026-10-11) y sigue sin commitear** en la raíz de wApp, con las cinco decisiones y su fila en el índice. Los contadores de ADR de `documentations/README.md` y `ACTIVE.md` de la raíz ya iban atrasados (dicen 46) y no se tocaron. `make check-docs`
+    de la raíz: rc=0, 0 enlaces rotos, gate de diagramas **saltado** (falta `mmdc`).

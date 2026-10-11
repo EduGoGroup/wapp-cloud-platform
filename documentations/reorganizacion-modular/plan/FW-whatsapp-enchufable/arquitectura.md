@@ -69,6 +69,8 @@ no un sustituto (D-FW-5).
 3. **La inferencia.** ✅ Medido: el carrito no la necesita; el Edge real sin cajero contesta `OLLAMA_DOWN`, que es lo que
    el caso ya espera ([`diseno.md`](diseno.md) §2.6).
 4. **La DEK no es opcional aunque el falso no descifre nada**: la cola de entrantes sella con ella. Y en macOS su custodia
-   es el Keychain, fijado en compilación: decisión **D-FW-7**.
-5. **El lease sin validador.** Sin `WAPP_AGENT_CLOUDLINK_LEASE_PUBKEY_PATH` el Edge envía con el lease revocado: el caso
-   la pone siempre, o RW.3.c no mide nada.
+   es el Keychain, fijado en compilación: por **D-FW-7** (decidida el 2026-10-11) el Edge de la prueba corre en un
+   **contenedor Linux** y la custodia no se toca. El coste lo paga el arnés ([`diseno.md`](diseno.md) §2.5, punto 7).
+5. **El lease sin validador, o en modo sombra.** Sin `WAPP_AGENT_CLOUDLINK_LEASE_PUBKEY_PATH`, o con
+   `WAPP_AGENT_CLOUDLINK_LEASE_SHADOW_MODE` encendida, el Edge envía con el lease revocado: el caso pone la primera y
+   afirma que la segunda está apagada, o RW.3.c no mide nada.

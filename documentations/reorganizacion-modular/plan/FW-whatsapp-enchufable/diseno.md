@@ -2,7 +2,9 @@
 
 > ✅ **Medido por FW-01 el 2026-10-11** sobre `edge/wapp-edge-agent` @ `38e5f91` (`main`, igual que `origin/dev`) y este
 > repo @ `f84c9f49` (`dev`). Todo sale de **leer** código: no se ejecutó nada del Edge. Las rutas sin prefijo son del
-> Edge; las de este repo llevan `C:`. 🟡 **Pendiente de aprobación de Jhoan** (§3 y §5) antes de FW-02.
+> Edge; las de este repo llevan `C:`. ✅ **Decidido por Jhoan el 2026-10-11, al arrancar FW-02** (§3 y §5; D-FW-2, 4,
+> 6, 7 y 8 en [`../DECISIONES.md`](../DECISIONES.md) §8). ✎ FW-02 construyó §3 en el Edge, rama
+> `feat/fw-02-whatsapp-falso`: lo que cambió respecto a lo propuesto está marcado con ✎.
 > Lo que solo se puede saber ejecutando está en §6, con su porqué y con la sesión que lo mide.
 
 ## 1 · Lo que hay hoy
@@ -119,7 +121,14 @@ identificador de mensaje ni emiten acuse. Sirven de **molde**; el falso se escri
   5. **Rutas de socket cortas**: `t.TempDir()` no cabe en `sun_path` en macOS (`cmd/agent/serve_test.go:28-30`).
   6. **Activar la sesión**: nace pasiva y se descarta lo que entra; se activa por API con su `session_id` real
      (`C:test/procesos/p3_entrante_test.go:125-128`).
-  7. **La custodia de la DEK en macOS**: decisión D-FW-7 (§5).
+  7. **La custodia de la DEK**: ✎ D-FW-7 decidida, el Edge corre en un **contenedor Linux** (§5). 🔴 Trae dos
+     trabajos que este inventario no midió: el plano de control es un socket unix **dentro** del contenedor (el arnés
+     lo alcanza con `docker exec`, o montando el directorio del socket si el motor de Docker lo permite), y el
+     contenedor tiene que llegar a los puertos gRPC del Cloud del arnés con un certificado cuyo nombre valga desde
+     dentro. §6.
+  8. ✎ FW-02: **`WAPP_AGENT_CLOUDLINK_LEASE_SHADOW_MODE` apagada** (es el default). Con ella encendida un lease
+     revocado solo produce un `Warn` y el envío sale (`internal/adapters/cloudlink/adapter.go:133-139`): es la segunda
+     forma de que RW.3.c salga verde sin medir nada, junto al punto 3.
 
 ### 2.6 · ¿Cómo se resuelve la inferencia en el caso de TW.8?
 
@@ -133,19 +142,19 @@ Una diferencia a vigilar: el Edge falso late `READY` (`C:test/procesos/edge_fals
 `UNSPECIFIED` (`internal/adapters/cloudlink/readiness.go:132-141`). El Cloud trata el cero como «este Edge no lo dice»
 (`C:internal/modulos/edge/grpc/readiness.go:139`), no como caído. 🟡 Si eso cambia el paso «abc» solo se ve corriendo: §6.
 
-## 3 · Lo que se decide (TW.3) — 🟡 pendiente de aprobación de Jhoan
+## 3 · Lo que se decide (TW.3) — ✅ decidido (Jhoan, 2026-10-11) y construido por FW-02
 
 | Pregunta | Decisión propuesta | Por qué |
 |---|---|---|
 | **Palanca** | `WAPP_AGENT_WHATSAPP_FALSO` (campo `WhatsAppFalso bool`, yaml `whatsapp_falso`), default `false` **escrito** en `defaults()` | El molde es `InyectorEntrantes` (`internal/infra/config/config.go:513-533`, `:684`, `:771`) y la convención 6 de la constitución del Edge |
 | **Paquete del falso** | `internal/adapters/whatsappfalso/` | El Edge nombra en español; es un adaptador hermano de `internal/adapters/whatsmeow/` |
-| **La frontera (TW.4)** | `sessionmgr` deja de construir el adaptador: gana una interfaz con lo que hoy usa del tipo concreto (`listen.go:113-201`) y una opción pública que recibe el transporte; `ErrSinEscuchaViva` se muda a `internal/app`. El real y el falso se eligen en `internal/infra/daemon/daemon.go:226-227` | Es lo listado como «estorba» en §2.1, y nada más (D-FW-4) |
+| **La frontera (TW.4)** | `sessionmgr` deja de construir el adaptador: gana una interfaz con lo que hoy usa del tipo concreto (`listen.go:113-201`) y una opción pública que recibe el transporte; `ErrSinEscuchaViva` se muda a `internal/app`. El real y el falso se eligen en `internal/infra/daemon/daemon.go:226-227`. ✎ **Como quedó**: la interfaz `Escucha` y el struct `Transporte` viven en `internal/app/sessionmgr/transporte.go` (no en `internal/app`: nombra tipos de `health` y `latencia`, que importan `app`, y sería un ciclo); las opciones son `WithEscucha` y `WithEmparejamiento`; la cola entre cada adaptador y la frontera está en `internal/infra/wiring/transporte.go`; elige `elegirTransporte` (`internal/infra/daemon/daemon.go`). La frontera dice «un transporte», no «real o falso»: lo pidió Jhoan pensando en más transportes | Es lo listado como «estorba» en §2.1, y nada más (D-FW-4). Lo que queda fuera es la deuda **A-5** del `deuda.md` del Edge |
 | **Cómo nace la sesión** | Por el **emparejamiento de siempre** (`internal/adapters/control/server/pair.go:80`), con un `Connector` falso que contesta «conectado» con un JID sintético bien formado | La DEK la sigue generando `app.Pair.Run` en el cliente (`internal/app/pair.go:143`) y sellándola en su custodia (`:175`): **la doble llave no tiene un camino aparte** |
-| **Entrada** | Se **reutiliza** `POST /v1/diag/inbound/inject`, con su palanca `WAPP_AGENT_INYECTOR_ENTRANTES` también echada. El falso **reutiliza la puerta** del adaptador real (`NewListener` + `handleEvent`, sin cliente ni `Connect()`) | §2.3. Misma ruta, misma marca `SINTETICO-`, mismo `409`; ninguna guarda reescrita. El binario enlaza `whatsmeow` igual: lo que se sustituye es el **transporte** |
+| **Entrada** | Se **reutiliza** `POST /v1/diag/inbound/inject`, con su palanca `WAPP_AGENT_INYECTOR_ENTRANTES` también echada. El falso **reutiliza la puerta** del adaptador real (`NewListener` + `handleEvent`, sin cliente ni `Connect()`). ✎ **Como quedó**: `handleEvent` es privado, así que el adaptador real gana un fichero, `internal/adapters/whatsmeow/sin_transporte.go`, con lo justo para publicar ese mismo `Listener` sin socket; el falso lo envuelve y su `InyectarEntrante` **es** el del gateway real | §2.3. Misma ruta, misma marca `SINTETICO-`, mismo `409`; ninguna guarda reescrita. El binario enlaza `whatsmeow` igual: lo que se sustituye es el **transporte** |
 | **Salida** | Ruta nueva `GET /v1/diag/outbound/captured?session_id=…`, registrada **solo** con la palanca echada, con el recurso `edge.diag.inbound.inject` | RW.2.c. Un recurso nuevo no se puede dar de alta desde aquí: los *grants* no viven en el código de producción de este repo (`grep -rn 'edge\.diag' --include='*.go' .` solo da tests). 🟡 Quién los concede al operador del arnés: §6 |
 | **Dónde se guarda lo capturado** | **Memoria**, con tope (anillo); se pierde al reiniciar | Una tabla nueva en SQLite arrastra la trampa INV-E1 del Edge; el caso lee justo después de enviar. Sin Redis ni broker |
 | **Qué se captura** | `command_id`, destinatario, texto; en media, además URL, nombre, MIME, clase y pie. **La media no se descarga** | RW.2.b. El real sí la descarga (`internal/adapters/whatsmeow/listen_gateway.go:581`): es una diferencia declarada, no escondida |
-| **Acuses** | El `Ack` del comando es **el real** (`internal/adapters/cloudlink/adapter.go:841`, `:874`): el falso solo devuelve un id de mensaje con prefijo `SINTETICO-`. Además emite un acuse `delivered` por envío, por el manejador de acuses que ya existe (`internal/app/sessionmgr/listen.go:191-194`). `read`, no | Con eso el Cloud recibe `Ack` y `MessageReceipt` como de un Edge real, sin inventar una lectura que nadie hizo |
+| **Acuses** | El `Ack` del comando es **el real** (`internal/adapters/cloudlink/adapter.go:841`, `:874`): el falso solo devuelve un id de mensaje con prefijo `SINTETICO-`. Además emite un acuse `delivered` por envío, por el manejador de acuses que ya existe (`internal/app/sessionmgr/listen.go:191-194`). `read`, no. ✎ **Como quedó**: el acuse entra por la puerta como un `events.Receipt` y sale 50 ms después del envío, para no fabricar el orden contrario al real (primero el `Ack`, luego el acuse); no es una garantía de orden | Con eso el Cloud recibe `Ack` y `MessageReceipt` como de un Edge real, sin inventar una lectura que nadie hizo |
 | **Grito** | `Warn` al arrancar y campo propio en el latido, junto a `inyector` | RW.3.a; molde `daemon.go:503-507` y `latido.go:297-313` |
 | **El binario en el arnés (TW.7)** | Variable `WAPP_PROCESOS_EDGE_DIR` con la ruta del repo del Edge; el arnés compila allí `./cmd/agent` con `GOWORK=off`, y el caso afirma ruta y revisión de git antes que nada. Etiqueta de build `edgereal` (además de `integracion`) y objetivo `make test-procesos-edge-real`, **fuera** de `make test-procesos` | Este repo se compila solo. Sin la variable el objetivo **falla**, no se salta: un SKIP no cuenta como verde |
 
@@ -169,19 +178,21 @@ Una diferencia a vigilar: el Edge falso late `READY` (`C:test/procesos/edge_fals
 **En este repo** (FW-03), tras las etiquetas `integracion` y `edgereal`: `TestEdgeReal_CartConversation` (TW.8, con el
 caso de lease revocado dentro) y `TestEdgeReal_CartResumePolicy` (TW.11).
 
-## 5 · Decisiones nuevas que salieron del inventario
+## 5 · Decisiones nuevas que salieron del inventario — ✅ decididas (Jhoan, 2026-10-11)
 
-| # | Pregunta | Recomendación |
+| # | Pregunta | Decisión |
 |---|---|---|
-| **D-FW-7** | La custodia de la DEK en macOS es el Keychain, **fijado en compilación** (`internal/adapters/keycustody/file.go:1` es `//go:build !darwin`) y cada binario nuevo abre un diálogo en pantalla. ¿Cómo corre el caso sin nadie delante? | **(a)** Con la palanca del falso echada, la custodia de las sesiones es el **archivo `0600`** del cliente (el punto de elección ya es uno: `daemon.go:111`). La DEK sigue en el cliente y no cruza nada. Alternativas: **(b)** aceptar el diálogo en la Mac (el caso deja de ser «un comando»); **(c)** correr el Edge en un contenedor Linux (el plano de control es un socket unix y no se alcanza desde fuera). 🔴 Toca la custodia de la llave: **no se hace sin tu sí** |
-| **D-FW-8** | ¿El falso reutiliza la puerta del adaptador real (§2.3) o se escribe sin importar nada de `whatsmeow`? | **Reutiliza la puerta.** Es la lección del ADR-0041. El precio: el paquete del falso depende del paquete del real |
+| **D-FW-7** | La custodia de la DEK en macOS es el Keychain, **fijado en compilación**, y cada binario nuevo abre un diálogo en pantalla. ¿Cómo corre el caso sin nadie delante? | ✅ **El Edge corre en un contenedor Linux y la custodia no se toca.** Sin llavero, el Edge cae solo en el archivo `0600`, por el camino que ya existe (`internal/adapters/keycustody/secretservice_linux.go` degrada a `file.go`). **Descartado** el archivo en macOS tras la palanca, que era lo que FW-01 recomendaba: abría un segundo camino de custodia en el binario de producción, y el archivo en claro tiene un riesgo real (deuda **S-6** del Edge). ✎ **Corrige a FW-01**: en Linux la custodia es **Secret Service** y en Windows **DPAPI**; el archivo es solo el último recurso |
+| **D-FW-8** | ¿El falso reutiliza la puerta del adaptador real (§2.3) o se escribe sin importar nada de `whatsmeow`? | ✅ **Reutiliza la puerta.** El paquete del falso depende del paquete del real. Cuando llegue otro transporte, la puerta se saca a un sitio neutral y todos pasan por ella (deuda A-5 del Edge) |
 
 ## 6 · Lo que no se pudo medir sin ejecutar
 
 | Qué | Por qué | Quién lo mide |
 |---|---|---|
 | Si `Connect()` devuelve error síncrono con un device revocado | Depende del *handshake* real con WhatsApp | Nadie: deja de importar con el falso |
-| `cleanupPairing` y `unlink` con una sesión sin almacén de `whatsmeow` (`sessionmgr/pairing.go:181-183`, `unlink.go:262-266`) | `DeleteDevice` crea tablas `whatsmeow_*` al vuelo (`cryptostore/factory.go:127`); no se corrió contra una base sin emparejamiento real | FW-02, TW.5 |
+| ~~`cleanupPairing` y `unlink` con una sesión sin almacén de `whatsmeow`~~ | ✅ **Medido por FW-02**: desvincular una sesión falsa contra una base recién migrada no falla (`TestPalancaWhatsAppFalso_ConLaPalancaECHADAElDaemonArrancaSinDeviceNiRed`, paso 7). `cleanupPairing` no se ejercitó: el emparejamiento falso no falla | — |
 | Si con *readiness* `UNSPECIFIED` el Cloud llega a pedir la inferencia de «abc» | Se ve en el log del servidor del arnés | FW-03, TW.8 |
 | Quién concede `edge.sessions.pair` y `edge.diag.inbound.inject` al operador del arnés | El *login* se relaya al Cloud y este al doble de identidad; hay que verlo vivo | FW-03, TW.7 |
-| Si el archivo `0600` compila en darwin tal cual | Hoy está tras `!darwin` | FW-02, si D-FW-7 sale (a) |
+| ~~Si el archivo `0600` compila en darwin tal cual~~ | Ya no aplica: D-FW-7 salió (c), contenedor Linux | — |
+| ✎ FW-02 · Cómo alcanza el arnés el plano de control del Edge en contenedor, y con qué nombre de certificado llega el contenedor al gRPC del Cloud | El plano de control es un socket unix dentro del contenedor; el certificado de servidor del arnés se emite para el anfitrión | FW-03, TW.7 |
+| ✎ FW-02 · Si el Cloud acepta el número propio de una sesión falsa (`0000` + 8 cifras) que viaja en cada latido | Ningún prefijo internacional empieza por 0; si el Cloud valida el formato, se ve corriendo | FW-03, TW.7 |

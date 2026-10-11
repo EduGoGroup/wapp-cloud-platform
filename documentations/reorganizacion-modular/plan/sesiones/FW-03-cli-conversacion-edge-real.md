@@ -8,7 +8,7 @@
 | Duración objetivo | 45–90 min |
 | Tareas | TW.7–TW.8 y TW.11 |
 | Depende de | FW-02 integrada en el `dev` del Edge |
-| Decisiones | D-FW-1 … D-FW-6 ([`../DECISIONES.md`](../DECISIONES.md) §8) |
+| Decisiones | D-FW-1 … D-FW-8 ([`../DECISIONES.md`](../DECISIONES.md) §8). ✎ 2026-10-11: falta **D-FW-5**; por D-FW-7 el Edge real corre en un **contenedor Linux** ([`../FW-whatsapp-enchufable/diseno.md`](../FW-whatsapp-enchufable/diseno.md) §2.5 y §6) |
 | Se para cuando | el comando del carrito con Edge real da `RC=0`, 0 SKIP, 0 FAIL y `make test-procesos` conserva su `PASS`. |
 
 ## Antes de pegar el prompt (Jhoan)
