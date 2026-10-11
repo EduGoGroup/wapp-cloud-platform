@@ -679,6 +679,26 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 
 ---
 
+### D-48 · 🟡 El carrito con Edge real es un recorrido paralelo al del Edge falso, no la misma función
+
+> Abierta el 2026-10-11 tras FW-03 (hallazgo 33 del README de FW). **Deuda de test.** Decisión de Jhoan: **para después
+> del relevo**.
+
+- **Qué hay hoy**: dos funciones recorren el mismo carrito: `TestP3_CartConversation` (Edge falso, `make test-procesos`)
+  y `TestEdgeReal_CartConversation` (Edge real, `make test-procesos-edge-real`). Comparten las constantes de texto, el
+  catálogo y las consultas de estado; **no** el guion. RW.4.b de FW se cumple por esas constantes.
+- **Qué protege y qué no**: si cambia un texto, lo notan los dos. Si cambia el guion de uno (un paso nuevo), el otro se
+  queda atrás sin ponerse rojo.
+- **Qué comprueba de menos el del Edge real**: el hilo cifrado del evento, el detalle de `conversation_events`, la
+  revisión de la solicitud y el mensaje posterior al cierre. Tampoco cuenta inferencias: solo mira la línea del servidor.
+- **Por qué no se unificó**: el caso viejo afirma cosas que solo existen en el doble (las inferencias que le bajaron,
+  sus errores internos, unos `wa_message_id` que elige el test). Unificar pide una interfaz común en
+  `test/procesos/p3_entrante_test.go` y mover un caso que hoy pasa.
+- **Qué pediría**: un solo guion con dos conductores (Edge falso y Edge real), y lo propio de cada uno aparte.
+- **Veredicto**: pendiente. No bloquea el relevo: el Edge falso sigue siendo el oráculo fino.
+
+---
+
 ## 5 · Deudas con nombre heredadas de los planes
 
 | Marca | Dónde | Qué significa |
