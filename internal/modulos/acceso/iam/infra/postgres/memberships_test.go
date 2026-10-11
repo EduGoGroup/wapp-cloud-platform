@@ -214,7 +214,10 @@ func TestMultiCompanyGranted(t *testing.T) {
 // pasos dados HASTA ahí (el ROLLBACK de limpieza va después y no cuenta) junto con su error.
 func grantInScriptedTx(t *testing.T, s *scriptedSQL, roleID *string) ([]string, error) {
 	t.Helper()
-	tx, err := s.pool(t).BeginTx(t.Context(), nil)
+	// La transacción NO se ata a t.Context(): ese contexto se cancela al acabar el test, ANTES de los
+	// Cleanup, y database/sql deshace sola una transacción cuyo contexto muere. A veces ganaba al
+	// Rollback de abajo, que recibía sql.ErrTxDone (5 fallos de 300 con -race, deuda D-49).
+	tx, err := s.pool(t).BeginTx(context.WithoutCancel(t.Context()), nil)
 	if err != nil {
 		t.Fatalf("abrir la transacción guionizada: %v", err)
 	}
