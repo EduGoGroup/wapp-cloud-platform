@@ -1,6 +1,6 @@
 # F8 · `conversacion` — el Motor de Flujos, su runtime y el cierre de todos los puentes y adaptadores
 
-> **Estado: ✅ CERRADA el 2026-10-11** (F8-07, T8.38, rama `reorg/f8-07-cierre` desde `dev` @ `77c4805f`; los 10 puntos de [`reglas.md`](reglas.md) §4, con su evidencia, en el bloque F8-07 de [`ESTADO.md`](../../ESTADO.md); hallazgos 68–71). Código de la fase: de `15524e1` (F8-01) a `ffba56e7` (F8-07b), conmutada en `fe6305b9`; PR #60–#63 y #65–#71, todos en `dev` sin squash. Abierto para después: deudas D-36, D-37, D-38 y D-39. En curso desde el 2026-10-09 (F8-01, rama `reorg/f8-01-inventario-y-hojas` partida de `dev` @ `c0c0c03`; las 5 entradas, comprobadas: abajo). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Forma:
+> **Estado: ✅ CERRADA el 2026-10-11** (F8-07, T8.38, `5fde368d`, rama `reorg/f8-07-cierre` desde `dev` @ `77c4805f`, PR #72 **integrado**; los 10 puntos de [`reglas.md`](reglas.md) §4, con su evidencia, en el bloque F8-07 de [`ESTADO.md`](../../ESTADO.md); hallazgos 68–71). Código de la fase: de `15524e1` (F8-01) a `ffba56e7` (F8-07b), conmutada en `fe6305b9`; PR #60–#63 y #65–#72, todos en `dev` sin squash. Abierto para después: deudas D-36, D-37, D-38, D-39 y D-40. En curso desde el 2026-10-09 (F8-01, rama `reorg/f8-01-inventario-y-hojas` partida de `dev` @ `c0c0c03`; las 5 entradas, comprobadas: abajo). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Forma:
 > [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Rutas: **autoridad**
 > [`../FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas I1–I19 · J18–J22).
@@ -847,7 +847,7 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     `reorganizacion-modular/` y de `plan/README.md`, y un ✎ de estado en `05` §6 y en la cabecera de `04`. **No hecho**:
     `documentations/contratos.md` y `arquitectura.md` siguen describiendo el binario viejo, que es el que corre en UAT; el
     paso a las rutas nuevas es T10.14. El árbol de `04` §3 no se regeneró ni se cotejó contra `internal/modulos`: el ✎ lo
-    dice. Ninguna fase anterior tocó `05` ni `04` al cerrar (`05` no cambia desde F45-01; `04`, desde el 2026-10-03).
+    dice, y queda como deuda **D-40**. Ninguna fase anterior tocó `05` ni `04` al cerrar (`05` no cambia desde F45-01; `04`, desde el 2026-10-03).
 71. **(F8-07, gates) El gate corto, sobre `77c4805f`.** `GOWORK=off make ci-local` `GATE_RC=0` (239 `ok`, lint
     `0 issues.`; 🟡 233 paquetes de la caché de `go test`: el código es el de `ffba56e7`); `go test -count=1 -v` del código
     nuevo, rc=0, 4.462 PASS, **0 SKIP**; `PENDIENTES=0 · ROJOS=0`; `BINARIO=nuevo make test-procesos`
@@ -879,7 +879,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39, T8.40 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; el job de re-análisis nace con su sobre; caso de P4 verde contra el binario nuevo. ✎ **hecha** (2026-10-10; `a0144628` … `42a06574`; hallazgos 52–59; PR #69 en `dev`, merge `2902ec40`) |
 | F8-07a | limpieza tras D-F7-9 (✎ 2026-10-10, Jhoan: F8-07 se parte en tres) | medio | T8.41–T8.43 | `PutSourceText` y `ComposeAtFlush` borrados (D-35), tests de cableado al día sin debilitarse; el caso adversario del callback del CRM tolera el corte; los siete mutantes de D-F7-9 repetidos y muertos |
 | F8-07b ✅ | Docker y arranque real (✎ 2026-10-10) | — | T8.36, T8.37 | `make ci-docker` rc=0 (no corre desde F8-01); suites `Contrato` contra Postgres; `cmd/server-modular` arranca solo y recorre una conversación con el Edge falso; hallazgo 51 refutado. ✎ **hecha** (2026-10-10; rama `reorg/f8-07b-docker-y-arranque-real`, `866e47a6`, `02ad985a`, `ffba56e7`, PR #71 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-11), sin squash; `ci-docker` RC=0; tres casos de proceso nuevos; del hallazgo 51 quedan cuatro puntos sin ver desde fuera, que Jhoan da por buenos en estático el 2026-10-11: hallazgos 64–67) |
-| F8-07 ✅ | cierre | — | T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera (2026-10-11, rama `reorg/f8-07-cierre`: los 10 puntos en `ESTADO.md`; 31 mutantes de cableado, 31 muertos; hallazgos 68–71) |
+| F8-07 ✅ | cierre | — | T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera (2026-10-11, `5fde368d`, rama `reorg/f8-07-cierre`, PR #72 **integrado**: los 10 puntos en `ESTADO.md`; 31 mutantes de cableado, 31 muertos; hallazgos 68–71) |
 
 Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (medido en el código viejo):
 `admin` importa `runtime` (`handlers.go:24,306,308`), así que no puede nacer antes que sus contratos y va con la cara
