@@ -1,8 +1,8 @@
 # FW · WhatsApp enchufable — el Edge real conversa sin WhatsApp
 
-> **Estado**: 🟡 **bloque B (FW-02) hecho el 2026-10-11: el transporte falso está escrito en el Edge, PR #12 de
-> `wapp-edge-agent` y PR #77 de este repo, los dos integrados. Siguiente sesión: FW-03.** Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
-> decididas y **ADR-0049 aprobado** (vigente; sin commitear en la raíz de wApp). Falta de Jhoan: D-FW-5 (es de FW-03) (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
+> **Estado**: 🟡 **bloque C (FW-03) hecho el 2026-10-11: el carrito conversa con Cloud y Edge reales; PR #78 de este repo
+> abierto, en revisión.** Bloque B (FW-02): el transporte falso, en el Edge (PR #12 de `wapp-edge-agent` y PR #77 de este repo, integrados). Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
+> decididas y **ADR-0049 aprobado** (vigente; sin commitear en la raíz de wApp). D-FW-5 decidida al arrancar FW-03 (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
 > [`deuda.md`](../../../deuda.md)). Medida sobre `edge/wapp-edge-agent` @ `38e5f91` (rama `main`; su rama por defecto es `dev`).
 > **Forma**: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Spec **corta a propósito**; lo que faltaba por
 > medir lo midió FW-01 (solo lectura) y está en [`diseno.md`](diseno.md) §2, con lo que solo se sabe ejecutando en su §6.
@@ -90,7 +90,7 @@ reconstrucción del Cloud.
 | **D-FW-2** | ¿El WhatsApp falso va en el **mismo binario** tras una palanca, o en un binario / *build tag* aparte? | ✅ **Decidida: mismo binario tras palanca** (Jhoan, 2026-10-11) |
 | **D-FW-3** | ¿El relevo (F10-04) espera a esta fase? | ✅ **Decidida: sí** (Jhoan, 2026-10-11). F10-03 depende de FW y F10-04 de F10-03: el código viejo se borra solo cuando el flujo nuevo está visto funcionando, o le quedan detalles menores que se arreglan sin el viejo delante |
 | **D-FW-4** | ¿Se limpia toda la fuga de `whatsmeow` fuera de su adaptador? | ✅ **Decidida: solo lo que estorba** (Jhoan, 2026-10-11). El resto es deuda **del Edge** (A-5 de su `deuda.md`), y la frontera se diseñó para crecer |
-| **D-FW-5** | ¿Quién conduce la conversación? | **El arnés de `test/procesos`** de este repo, con un modo «Edge real» junto al Edge falso (que no se retira). ✅ Medido (FW-01): puede lanzarlo y enrolarlo; lo que falta montar está en [`diseno.md`](diseno.md) §2.5 |
+| **D-FW-5** | ¿Quién conduce la conversación? | ✅ **Decidida: el arnés de `test/procesos`** (Jhoan, 2026-10-11, al arrancar FW-03), con un modo «Edge real» junto al Edge falso, que no se retira. Descartado un script fuera del arnés |
 | **D-FW-6** | La contradicción ADR-0041 («permanente») ↔ comentario de `control/diag` («se borra») | ✅ **Decidida: permanente, por mérito y no por jerarquía** (Jhoan, 2026-10-11): el inyector es la única puerta de entrada del transporte falso. Lo decide el ADR-0049 como decisión propia |
 | **D-FW-7** | ✎ FW-01. La custodia de la DEK en macOS es el Keychain, fijado en compilación: cada binario nuevo abre un diálogo. ¿Cómo corre el caso sin nadie delante? | ✅ **Decidida: Edge en contenedor Linux; la custodia no se toca** (Jhoan, 2026-10-11). Descartado el archivo en macOS tras la palanca, que era lo recomendado |
 | **D-FW-8** | ✎ FW-01. ¿El falso reutiliza la puerta de entrantes del adaptador real, o se escribe sin importar nada de `whatsmeow`? | ✅ **Decidida: reutiliza la puerta real** (Jhoan, 2026-10-11), pensando en más transportes |
@@ -173,3 +173,61 @@ reconstrucción del Cloud.
     proto, ni conducta. Si algo en campo parsea esa línea por posición, lo nota.
 26. **El ADR-0049 está aprobado (Jhoan, 2026-10-11) y sigue sin commitear** en la raíz de wApp, con las cinco decisiones y su fila en el índice. Los contadores de ADR de `documentations/README.md` y `ACTIVE.md` de la raíz ya iban atrasados (dicen 46) y no se tocaron. `make check-docs`
     de la raíz: rc=0, 0 enlaces rotos, gate de diagramas **saltado** (falta `mmdc`).
+
+### FW-03 (2026-10-11) · la conversación con Cloud y Edge reales, en `test/procesos` (rama `reorg/fw-03-conversacion-edge-real`)
+
+Medido contra `edge/wapp-edge-agent` @ `0675d55` (su `dev`), en un contenedor `linux/arm64`. En el Edge, ni un commit.
+
+27. **Cómo llega el contenedor al servidor del arnés** (lo que el hallazgo 22 dejó sin medir). El servidor escucha en el
+    loopback del anfitrión; el contenedor lo alcanza por el túnel de testcontainers (`WithHostPortAccess`, un segundo
+    contenedor `testcontainers/sshd`). El certificado del arnés **no se tocó**: el Edge verifica `localhost` con
+    `WAPP_AGENT_CLOUDLINK_SERVER_NAME`. 🔴 El túnel se monta **después** de arrancar el contenedor y `agent enroll` no
+    reintenta: con dos casos en paralelo el enrolamiento moría con «connection refused». El contenedor espera al
+    puerto antes de enrolar (`edgeRealScript`).
+28. **Cómo se alcanza el plano de control**: `curl --unix-socket` lanzado dentro del contenedor, una llamada por
+    petición. El Edge no tiene cliente de línea de comandos para su plano de control (`wapp-ctl` es un supervisor con
+    web), y el mensaje de `internal/adapters/control/diag/inyector.go:328` cita un `wapp-ctl sessions` que no existe.
+29. **No hay imagen del Edge**: el binario se compila en el anfitrión para Linux (es Go puro, sin CGO) y se copia a
+    una imagen de terceros con `curl` (`curlimages/curl`, versión fijada). El Edge no tiene Dockerfile de ejecución ni
+    `.dockerignore`, y su árbol de trabajo guarda datos de sesiones reales: construir una imagen con el repo como
+    contexto los habría metido dentro. La corrida descarga dos imágenes públicas la primera vez.
+30. **Quién concede los permisos del plano de control**: nadie aparte. El operador es una persona con el rol de
+    administradora de la empresa; entra por `POST /v1/auth/login` del Edge, que relaya a la nube, y su token trae los
+    permisos. Hasta que el Edge recibe el JWKS de la nube solo deja leer (`403 degraded_read_only`): la escena reintenta.
+31. **La nube acepta el número propio de una sesión falsa** (`0000` + 8 cifras): le manda el aviso de sesión pasiva y
+    marca `greeted_at` cuando el Edge lo acusa. El aviso queda capturado, como cualquier envío.
+32. **Con la *readiness* sin afirmar, la nube sí pide la inferencia de «abc»**; el Edge, sin cajero, contesta
+    `ollama_down` y el carrito repregunta con el mismo texto que con el Edge falso.
+33. 🟡 **RW.4.b se cumple por constantes compartidas, no por función compartida.** `TestEdgeReal_CartConversation` es un
+    recorrido paralelo al de `TestP3_CartConversation`: mismas constantes de texto, mismo catálogo, mismas consultas
+    de estado. No es la misma función porque el caso viejo afirma cosas que solo existen en el doble (cuántas
+    inferencias le bajaron, sus errores internos) y sus `wa_message_id` son otros (los del Edge real llevan la marca:
+    `SINTETICO-CART-<n>-0000`). **No repite** del caso viejo: el hilo cifrado, el detalle de `conversation_events`, la
+    revisión de la solicitud ni el mensaje posterior al cierre. Si un texto cambia en un caso y no en el otro, lo
+    notan las constantes; si cambia el guion, no.
+34. **Con el lease revocado, lo que entra sigue subiendo y lo que sale se corta en el Edge.** El servidor ordena los
+    dos envíos (bienvenida y categorías) y el Edge los rechaza en su gate con «lease no vigente», antes del
+    transporte: cero capturados. El caso lo afirma por las dos caras (la línea del servidor y las dos del Edge), sin
+    esperas a ciegas. 🟡 Dos cosas que **no** mide: la inferencia con el lease revocado (el recorrido no llega a
+    pedirla), y que el servidor **sigue despachando** a un Edge revocado: la conversación de ese cliente queda con un
+    carrito abierto cuyas pantallas no recibió nadie. Es conducta heredada, igual con el binario viejo; no se tocó.
+35. **TW.11: la interrupción es un reinicio del servidor a mitad del carrito.** El Edge real reconecta solo y entrega
+    el mensaje siguiente; la lista sale paginada con el `page_size` de la empresa. **Mutante**: sin
+    `flowruntime.WithResumePolicy` en `internal/arranque/fase7_flujos.go` (worktree desechable, binario nuevo), el caso
+    cae —salen los dos artículos juntos— y `TestEdgeReal_CartConversation` **sigue pasando**, que es lo que decía D-39.
+    🟡 De paso: la **primera** pantalla del carrito no usa el `page_size` de la empresa (la pinta el arranque del
+    flujo, antes de sembrar los ajustes). Heredado, igual en el viejo; es deuda para después del relevo.
+36. **La custodia en el contenedor, vista**: la DEK cayó sola en su fichero (modo `600`, 32 bytes), sin tocar la
+    custodia (D-FW-7). El caso mira el fichero, no su contenido.
+37. ✎ **Desvíos del diseño, decididos por la sesión**: (a) `WAPP_PROCESOS_EDGE_DIR` tiene valor por defecto en el
+    `Makefile` (el repo hermano), para que sea de verdad un comando; si la ruta no existe o no es el Edge, el caso
+    **falla** diciéndolo (probado, también desde un worktree, donde la ruta por defecto no resuelve). (b) Hay un
+    tercer caso, `TestEdgeReal_BootsTheRealBinary`, que es el de TW.7. (c) El objetivo corre contra los **dos**
+    binarios del servidor, como `test-procesos`.
+38. **La línea base no era 1.291**: `make test-procesos` da hoy **1.302** `PASS` por binario, medido en `dev` antes de
+    tocar nada. Es el número que se conserva.
+39. **Un `//nolint:gosec` nuevo** (`edge_real_test.go`, el `go build` del Edge, con ruta y revisión calculadas por el
+    arnés), con el mismo motivo que los tres que ya tiene el arnés. Entra en la revisión de D-31.
+40. **El primer intento de gate salió rojo y lo cazó un candado**: el `go build` del Edge copiaba el entorno del shell
+    (`os.Environ`), que `TestSinBDViva` prohíbe en `test/procesos`. Arreglado sin tocar el candado.
+

@@ -43,16 +43,17 @@ Entrada: TW.3 aprobado; D-FW-1 y D-FW-2 decididas. Para cuando: definición de h
 
 Entrada: bloque B integrado en el `dev` del Edge. Para cuando: definición de hecho 5.
 ✎ D-FW-7 (2026-10-11): el Edge real corre en un **contenedor Linux**; TW.7 monta eso ([`diseno.md`](diseno.md) §2.5, puntos 7 y 8, y §6).
+✎ FW-03 (2026-10-11): D-FW-5 decidida al arrancar (el arnés conduce). Los tres casos viven tras las etiquetas `integracion` y `edgereal`; se corren con `make test-procesos-edge-real`. Todo en este repo, rama `reorg/fw-03-conversacion-edge-real`, **PR #78 abierto, en revisión**. En el Edge, ni un commit.
 
-- [ ] **TW.7 · El arnés lanza el Edge real** · Cloud (`test/procesos`, `Makefile`) · dep. TW.6 · cumple RW.4.a, RW.4.c
+- [x] **TW.7 · El arnés lanza el Edge real** · Cloud (`test/procesos`, `Makefile`) · dep. TW.6 · cumple RW.4.a, RW.4.c · `8f558749` y `b89bbbec` (este repo; ✎ el segundo añade la comprobación de la custodia y quita un `os.Environ` que el candado `TestSinBDViva` rechazaba). Trae su propio caso, `TestEdgeReal_BootsTheRealBinary`
   - **Hecho cuando**: un objetivo de `make` construye y lanza `wapp-edge-agent` con WhatsApp falso contra el Cloud del
     arnés, y el caso afirma **qué binario** corre; `make test-procesos` da el mismo `PASS` que antes
   - **Commit**: `procesos(edge-real): el arnés lanza el Edge real con WhatsApp falso`
-- [ ] **TW.8 · El golden con Edge real (cierra D-38)** · Cloud · dep. TW.7 · cumple RW.4.a, RW.4.b, RW.3.b, RW.3.c
+- [x] **TW.8 · El golden con Edge real (cierra D-38)** · Cloud · dep. TW.7 · cumple RW.4.a, RW.4.b, RW.3.b, RW.3.c · `1ffbf3a0` (este repo) · `TestEdgeReal_CartConversation`. ✎ Es un recorrido paralelo al de `TestP3_CartConversation` con sus mismas constantes de texto, no la misma función (hallazgo 33)
   - **Hecho cuando**: el carrito («carrito» → categoría → artículo → cantidad → resumen → confirmar) pasa con Edge real;
     los textos capturados son los del mismo caso con el Edge falso; tras revocar el lease, cero envíos; `RC=0`, 0 SKIP, 0 FAIL
   - **Commit**: `procesos(edge-real): el carrito con Cloud y Edge reales`
-- [ ] **TW.11 · La reanudación del carrito, vista desde fuera (cierra D-39)** · Cloud · dep. TW.8 · cumple RW.4.d · añadida el 2026-10-11 por decisión de Jhoan
+- [x] **TW.11 · La reanudación del carrito, vista desde fuera (cierra D-39)** · Cloud · dep. TW.8 · cumple RW.4.d · añadida el 2026-10-11 por decisión de Jhoan · `b82fb189` (este repo) · `TestEdgeReal_CartResumePolicy`; mutante corrido (hallazgo 35). ✎ No alarga `make test-procesos`: va en el objetivo aparte
   - **Hecho cuando**: una empresa con `page_size` propio (o con checklist de comprador) en `tenant_settings`; el carrito
     se interrumpe y se reanuda; el caso pasa con `flowruntime.WithResumePolicy` cableada y **cae** al quitarla de
     `internal/arranque/fase7_flujos.go` (mutante, en un *worktree* desechable); anotado cuánto alarga la suite
