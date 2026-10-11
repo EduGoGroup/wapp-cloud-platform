@@ -81,6 +81,9 @@
 F8 está hecha cuando **todo** esto es cierto y está escrito con su número en el bloque de `ESTADO.md`:
 
 1. `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/conversacion | wc -l` → **0**.
+   (✎ F8-07: el `grep` literal da **4**, las cuatro en `modules/cart/orden_consulta_ast_test.go`, que es el texto del
+   propio candado de orden; la medida buena es `make test-pendiente` → `PENDIENTES=0`, que excluye `_test.go` y
+   comentarios; hallazgos 28 y 68.)
 2. `make ci-local` → `GATE_RC=0` leído del log; `go vet -tags pendiente ./...` rc=0; lint `v2.12.2`.
 3. Un test por promesa del contrato en cada fichero de `C`; mutantes muertos en el nivel complejo (`runtime` y lo
    que fije el inventario E-12); las suites `Contrato` de `store`, `trigger`, `events.Store`, `self_numbers` y

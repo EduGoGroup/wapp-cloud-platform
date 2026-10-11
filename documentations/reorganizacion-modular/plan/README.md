@@ -1,5 +1,8 @@
 # El plan de trabajo de la reconstrucción modular
 
+> ✎ **2026-10-11: F8 cerrada** (F8-07, T8.38): `FaseActual = 8`, `Conmutados` completo (los ocho módulos), 0 adaptadores y
+> 0 puentes de import. Lo siguiente es **F9-05** (el cierre de F9) y después F10. El resumen de abajo es el del 2026-10-10.
+>
 > **Estado: EN EJECUCIÓN** — resumen al 2026-10-10 (**el estado al día vive en [`../ESTADO.md`](../ESTADO.md)**,
 > § «Avance de la ejecución», y en la tabla de [`sesiones/README.md`](sesiones/README.md)): F0, F1 (el piloto), F2 y
 > F3 cerradas y en `dev`; F4 y F5 cerradas el 2026-10-07 (F45-03); F6 cerrada el 2026-10-08 (F6-06) y F7 el

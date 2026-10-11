@@ -44,7 +44,7 @@ siempre la respuesta a «¿por qué está así?» está tres líneas más arriba
 | [`operacion.md`](operacion.md) | Cómo se arranca en local, cómo se prueba (los `make` reales y qué valida cada uno), cómo se publica una versión y cómo se depura cuando falla. |
 | [`deuda.md`](deuda.md) | La deuda viva con `fichero:línea`, su consecuencia y cómo se cerraría. Incluye el código muerto verificado. |
 | [`literal-aviso-sesion-pasiva.md`](literal-aviso-sesion-pasiva.md) | 🔒 **Contrato congelado, no lo edites de paso.** El literal exacto del aviso de sesión pasiva. |
-| [`reorganizacion-modular/`](reorganizacion-modular/README.md) | **En análisis (2026-09-27).** Factibilidad de ordenar `internal/` por módulos sin romper contratos hacia fuera. Aún no es un plan ejecutable. |
+| [`reorganizacion-modular/`](reorganizacion-modular/README.md) | **En ejecución** (✎ 2026-10-11; nació como análisis el 2026-09-27). La reconstrucción de `internal/` por módulos, por contratos y TDD: F0–F8 cerradas —los ocho módulos reconstruidos y conmutados en `cmd/server-modular`—; faltan el cierre de F9 y el relevo (F10). En UAT sigue corriendo el binario viejo. El estado al día, en [`ESTADO.md`](reorganizacion-modular/ESTADO.md). |
 
 ---
 

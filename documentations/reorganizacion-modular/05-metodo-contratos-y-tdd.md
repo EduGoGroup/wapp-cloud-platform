@@ -396,6 +396,10 @@ un **adaptador**: `internal/arranque/bridge_<x>.go`, que traduce sin estado. **N
 
 ## 6 · Las fases (sustituyen a las de `04` §2.3)
 
+> ✎ **Estado al 2026-10-11**: F0 a F8 **cerradas** (la última, `conversacion`, con todos los puentes y adaptadores
+> retirados); quedan el cierre de F9 y F10. Esta tabla es la norma y no lleva estado: el estado vive en
+> [`ESTADO.md`](ESTADO.md).
+
 Orden **de la base hacia arriba**, para que cada módulo encuentre reconstruido lo que importa:
 
 | Fase | Qué | Notas |

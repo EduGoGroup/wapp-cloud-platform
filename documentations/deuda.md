@@ -503,6 +503,34 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 
 ---
 
+### D-39 · 🟡 Ningún proceso nota que falte la política de reanudación del carrito (`WithResumePolicy`)
+
+> Abierta el 2026-10-11 al cerrar F8 (F8-07; hallazgos 66 y 69 del README de F8). **Para después del relevo.**
+
+- **Qué hay hoy**: quitar `flowruntime.WithResumePolicy(cart.NodeTypeCart, …)` de `internal/arranque/fase7_flujos.go`
+  **sí** pone rojo el candado estático de cableado (`TestCableado_TheRuntimeHasTheCartResumePolicy` y
+  `TestCableado_SinksAndResumePolicyGetRealArguments`; repetido en F8-07). El arranque no puede perderla sin que se vea.
+- **Qué falta**: un caso en `test/procesos` que lo note **desde fuera**. `TestP3_CartConversation` pasa igual sin la
+  opción: con `tenant_settings` sin `page_size` ni `buyer_fields`, los valores por defecto dan el mismo recorrido.
+- **Qué pediría**: una empresa con tamaño de página propio o con checklist de comprador, y una conversación de carrito
+  que se interrumpa y se reanude.
+- **Sin medir**: cuánto alarga `make test-procesos`.
+- **Veredicto**: pendiente. No bloquea el relevo: el invariante está cubierto en estático.
+
+---
+
+### D-40 · 🟡 El árbol de `04` §3 no está cotejado con el `internal/modulos` real
+
+> Abierta el 2026-10-11 al cerrar F8 (F8-07; hallazgo 70 del README de F8). **Documental.**
+
+- **Qué hay hoy**: [`04-estructura-final.md`](reorganizacion-modular/04-estructura-final.md) §3 es el dibujo generado el
+  2026-09-27, antes de reconstruir nada. Las fases partieron ficheros (E-13), renombraron al inglés (E-11) y movieron
+  cosas por decisión (inventarios E-12): el árbol real difiere, y **no se midió cuánto**.
+- **Las dos salidas**: regenerarlo desde `go list` tras el relevo, o marcarlo «(histórico)» en T10.14.
+- **Veredicto**: pendiente; se decide con T10.14 (F10).
+
+---
+
 ## 5 · Deudas con nombre heredadas de los planes
 
 | Marca | Dónde | Qué significa |

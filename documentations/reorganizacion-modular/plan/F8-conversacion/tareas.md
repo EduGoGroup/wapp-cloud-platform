@@ -291,7 +291,7 @@ Para cuando: `make ci-docker` rc=0; las suites `Contrato` de los puertos con BD 
 
 ## Bloque 7 · cierre · 💻 · sesión F8-07 · T8.38
 
-- [ ] **T8.38 · Cerrar F8** · 💻 · dep. T8.36, T8.41, T8.42, T8.43 (y T8.37 si aplica)
+- [x] **T8.38 · Cerrar F8** — `5fde368d` (`docs(reorganizacion-modular): F8 cerrada`, rama `reorg/f8-07-cierre`, PR #72; F8-07, 2026-10-11; sobre `77c4805f`: `GATE_RC=0`, procesos contra el nuevo `RC=0 · PASS=1291 · SKIP=0`; los 10 puntos, en el bloque F8-07 de `ESTADO.md`; hallazgos 68–71 del README) · 💻 · dep. T8.36, T8.41, T8.42, T8.43 (y T8.37 si aplica)
   - **Ficheros**: `ESTADO.md`, este `README.md` (estado «cerrada», SHA, hallazgos)
   - **Hecho cuando**: los 10 puntos de `reglas.md` §4 escritos con su número en `ESTADO.md`; `origin/dev` al día; la siguiente es F9/F10 (decisión de Jhoan). No se toca `main`.
   - **Commit**: `docs(reorganizacion-modular): F8 cerrada`
