@@ -83,12 +83,19 @@ atrás sea copiar un fichero.
 
 | Criterio | Cómo se mira | Corte (vuelta atrás) |
 |---|---|---|
-| Un mensaje real entra y se contesta | El e2e con WhatsApp real (runbook del ecosistema `operacion/runbooks/e2e-con-whatsapp-real.md`: comprobar antes sus «tres puertas», que existen porque un e2e contra el binario equivocado **parece verde**). Alternativa sin cliente real: el inyector de entrantes sintéticos del Edge (ADR-0041, apagado por defecto) | Un entrante sin respuesta o una respuesta distinta de la del viejo. ✎ **2026-10-11 (Jhoan)**: esta fila y la última («los textos no cambian») se miran con el **WhatsApp falso** de la fase [FW](../FW-whatsapp-enchufable/README.md), con la receta de TW.9, no con WhatsApp real (las sesiones estaban caducadas el 2026-10-10). La «alternativa» del inyector no vale sola: sin escucha viva responde `409` y no captura la respuesta |
+| Un mensaje real entra y se contesta | El e2e con WhatsApp real (runbook del ecosistema `operacion/runbooks/e2e-con-whatsapp-real.md`: comprobar antes sus «tres puertas», que existen porque un e2e contra el binario equivocado **parece verde**). Alternativa sin cliente real: el inyector de entrantes sintéticos del Edge (ADR-0041, apagado por defecto) | Un entrante sin respuesta o una respuesta distinta de la del viejo. ✎ **2026-10-11 (Jhoan)**: esta fila y la última («los textos no cambian») se miran con el **WhatsApp falso** de la fase [FW](../FW-whatsapp-enchufable/README.md), con la receta de TW.9, no con WhatsApp real (las sesiones estaban caducadas el 2026-10-10). La «alternativa» del inyector no vale sola: sin escucha viva responde `409` y no captura la respuesta. ✎ **FW-04 (2026-10-11)**: la receta está escrita y ejecutada en local, [`../FW-whatsapp-enchufable/receta-uat.md`](../FW-whatsapp-enchufable/receta-uat.md). **Cómo se mira**: el guion (pasos 5 y 6 de la receta) se corre **una vez con el binario viejo, antes de §2.2**, y **otra con el modular, después**, cada una con su número de cliente y su prefijo de `lote`; el Edge no se reinicia entre las dos. Se cumple si cada `POST /v1/diag/inbound/inject` da `inyectados:1, acusados:1` y `GET /v1/diag/outbound/captured` trae la respuesta de cada entrante con `descartados: 0` |
 | Un borrador nace por el pipeline P2→P4 (vía local, el Ollama de la máquina) | `select count(*) from intakes where created_at > <inicio>` y la bandeja de la consola del cliente | Jobs en `pending` sin avanzar: `select count(*) from intake_jobs where status in ('pending','processing') and created_at < now()-interval '10 min'` > 0 (vocabulario de `status`: `0072_…sql:479`) (el fallo de las goroutines de fondo es **mudo**: `documentations/operacion.md` §5.3) |
 | La dueña aprueba y el CRM recibe (si el tenant de UAT tiene puente) | `webhook_outbox` entregado; log del puente | Entregas atascadas |
 | Ni un error nuevo | `grep -c 'level=ERROR' cloud.log` por hora, contra la misma hora del día anterior con el viejo | Un tipo de error que el viejo no daba |
 | Los crons de la máquina siguen vivos | `ls -la /root/source/wApp/logs/autoreply-streak.tsv` (horario) | `mtime` > 1 h |
-| Los textos al cliente y a la dueña no cambian | Revisión del e2e: mismo menú, mismos avisos | Cualquier diferencia de texto |
+| Los textos al cliente y a la dueña no cambian | Revisión del e2e: mismo menú, mismos avisos. ✎ **FW-04**: `diff` de los capturados de las dos corridas de la fila 1 (paso 6 de la [receta](../FW-whatsapp-enchufable/receta-uat.md)), quitando el número del cliente. Los avisos a la dueña que no pasan por el Edge se siguen mirando en la consola | Cualquier diferencia de texto |
+
+✎ **FW-04 (2026-10-11) · lo que la receta añade a la ventana**: (1) **antes** de §2.1, el Edge de UAT tiene que correr un
+binario con el transporte falso (`wapp-edge-agent` `dev` ≥ `0675d55`; paso 0 de la receta), y se echan las dos palancas
+(pasos 1–4); (2) la primera corrida del guion va antes de §2.2 y la segunda después de §2.3; (3) **al terminar la ventana
+se baja la palanca** (paso 7), y su comprobación —cero líneas `PALANCA` tras el arranque, las dos rutas de `/v1/diag` en
+`404`, el latido con `inyector=no whatsapp=real`— va al acta de §2.6 (RW.5.b). Con la palanca echada el Edge de UAT **no
+habla con WhatsApp**: durante la ventana no hay tráfico real por él.
 
 ### 2.5 · Marcha atrás (objetivo < 5 min)
 

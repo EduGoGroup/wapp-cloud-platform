@@ -133,7 +133,7 @@ La columna «Nivel» es el **provisional** de la spec (`05` E-12); el que vale e
 | ∥ | [`FW-01-cli-inventario-y-adr`](FW-01-cli-inventario-y-adr.md) | 💻 | FW | A · inventario y ADR (✎ 2026-10-11: fase nueva; en paralelo a los pasos 54–56) | TW.1–TW.3 (Edge en solo lectura) | — | ✅ hecha el 2026-10-11 · PR #76 integrado · TW.2 cerrada después: Jhoan aprobó el texto del ADR-0049 el 2026-10-11 |
 | ∥ | [`FW-02-cli-adaptador-falso`](FW-02-cli-adaptador-falso.md) | 💻 | FW | B · el adaptador falso (en `edge/wapp-edge-agent`) | TW.4–TW.6 | — | ✅ hecha el 2026-10-11 · PR #77 (este repo) y PR #12 (`wapp-edge-agent`) integrados |
 | ∥ | [`FW-03-cli-conversacion-edge-real`](FW-03-cli-conversacion-edge-real.md) | 💻 | FW | C · la conversación con Edge real (Docker) | TW.7–TW.8, TW.11 (cierra D-38 y D-39) | — | ✅ hecha el 2026-10-11 · PR #78 integrado |
-| ∥ | [`FW-04-cli-cierre-y-receta-uat`](FW-04-cli-cierre-y-receta-uat.md) | 💻 | FW | D · cierre y receta de UAT | TW.9–TW.10 | — | pendiente |
+| ∥ | [`FW-04-cli-cierre-y-receta-uat`](FW-04-cli-cierre-y-receta-uat.md) | 💻 | FW | D · cierre y receta de UAT | TW.9–TW.10 | — | ✅ hecha el 2026-10-11 · PR #79 (este repo) y PR #13 (`wapp-edge-agent`) integrados · **FW cerrada** |
 | 57 | [`F10-03-cli-prueba-uat`](F10-03-cli-prueba-uat.md) | 💻 | F10 | B | T10.4–T10.6 (UAT por SSH, ventana ≥ 24 h) · ✎ 2026-10-11: **depende de FW cerrada** (D-FW-3) | — | pendiente |
 | 58 | [`F10-04-cli-relevo`](F10-04-cli-relevo.md) | 💻 | F10 | C | T10.7–T10.14, T10.23 (TX.25) | — | pendiente |
 | 59 | [`F10-05-cli-cierre-y-fuera-del-repo`](F10-05-cli-cierre-y-fuera-del-repo.md) | 💻 | F10 | D/E | T10.15–T10.21, T10.25 (✎ 2026-10-11: archivar `reorganizacion-modular/` en la raíz) | — | pendiente |

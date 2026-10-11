@@ -504,7 +504,7 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 - **Veredicto**: se deja. Lo primero, cuando toque, es confirmar el orden real de las dos escrituras. Arreglarlo pide una
   regla (qué se hace con el mensaje tardío), no un parche. Después del relevo de F10.
 
-### D-38 · 🟡 No hay prueba de integración con el Edge REAL sin WhatsApp
+### D-38 · ✅ CERRADA · No había prueba de integración con el Edge REAL sin WhatsApp
 
 > Abierta el 2026-10-10 por decisión de Jhoan tras F8-06b: **decidir antes de F10-03** (la prueba en UAT).
 > **No investigada**: del inyector solo se leyó la cabecera.
@@ -527,10 +527,16 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   [`reorganizacion-modular/plan/FW-whatsapp-enchufable/`](reorganizacion-modular/plan/FW-whatsapp-enchufable/README.md).
   La cierra TW.8 (el golden con Edge real). La línea «hoy temporal» de arriba queda corregida por esta nota.
 - ✎ **2026-10-11 · FW-03**: el caso existe, `TestEdgeReal_CartConversation` (`make test-procesos-edge-real`): Cloud y Edge reales, con el WhatsApp falso del ADR-0049. PR #78 integrado; la cierra TW.10.
+- ✅ **Cerrada el 2026-10-11 en FW-04 (TW.10)**. Lo que pedía existe y está en `dev` desde el PR #78: `make
+  test-procesos-edge-real` corre el carrito con los dos binarios reales, sin WhatsApp, contra el servidor viejo y el nuevo
+  (FW-04 lo repitió: ver el bloque FW-04 de [`reorganizacion-modular/ESTADO.md`](reorganizacion-modular/ESTADO.md)). Para
+  hacerlo a mano, y en UAT: [`receta-uat.md`](reorganizacion-modular/plan/FW-whatsapp-enchufable/receta-uat.md). Lo que
+  **no** cubre queda con su número: el caso es un recorrido paralelo al del Edge falso (D-48) y el WhatsApp falso no prueba
+  el protocolo de WhatsApp.
 
 ---
 
-### D-39 · 🟡 Ningún proceso nota que falte la política de reanudación del carrito (`WithResumePolicy`)
+### D-39 · ✅ CERRADA · Ningún proceso notaba que faltara la política de reanudación del carrito (`WithResumePolicy`)
 
 > Abierta el 2026-10-11 al cerrar F8 (F8-07; hallazgos 66 y 69 del README de F8). **Para después del relevo.**
 
@@ -547,6 +553,9 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   **TW.11** de [`reorganizacion-modular/plan/FW-whatsapp-enchufable/tareas.md`](reorganizacion-modular/plan/FW-whatsapp-enchufable/tareas.md). Deja de ser «para después del relevo».
 
 - ✎ **2026-10-11 · FW-03**: el caso existe, `TestEdgeReal_CartResumePolicy` (`make test-procesos-edge-real`), con su mutante corrido. PR #78 integrado; la cierra TW.10.
+- ✅ **Cerrada el 2026-10-11 en FW-04 (TW.10)**: `TestEdgeReal_CartResumePolicy` está en `dev` (PR #78) y cae sin
+  `WithResumePolicy` (mutante de FW-03, hallazgo 35 del README de FW). No alarga `make test-procesos`: va en
+  `make test-procesos-edge-real`. Queda aparte, con su número, lo que el caso destapó: D-47.
 
 ---
 
@@ -696,6 +705,25 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   `test/procesos/p3_entrante_test.go` y mover un caso que hoy pasa.
 - **Qué pediría**: un solo guion con dos conductores (Edge falso y Edge real), y lo propio de cada uno aparte.
 - **Veredicto**: pendiente. No bloquea el relevo: el Edge falso sigue siendo el oráculo fino.
+
+---
+
+### D-49 · 🟡 Un test de `iam/infra/postgres` falla de forma intermitente y pone rojo `make ci-local`
+
+> Abierta el 2026-10-11 en FW-04 (hallazgo 51 del README de FW). **Deuda de test**; no es de la fase FW.
+
+- **Qué pasó**: `GOWORK=off make ci-local` dio `GATE_RC=2` con un solo fallo, en una rama que solo tocaba documentación:
+  `TestGrantTenantAccess_RoleInsertFailureHasItsOwnText` — `memberships_test.go:223: deshacer la transacción guionizada:
+  sql: transaction has already been committed or rolled back`. Repetido el gate sin cambiar nada: `GATE_RC=0`.
+- **Medido**: ese test solo, con `-race -count=300` (toolchain `go1.26.5`): **5 fallos de 300**.
+- **Hipótesis, sin confirmar**: `grantInScriptedTx` (`internal/modulos/acceso/iam/infra/postgres/memberships_test.go:214`)
+  abre la transacción con `t.Context()`, que se cancela al acabar el test, **antes** de los `Cleanup`; `database/sql`
+  deshace sola una transacción cuyo contexto se cancela, y a veces gana al `Rollback` del `Cleanup`, que entonces recibe
+  `sql.ErrTxDone` y lo da por error. Es el único `BeginTx(t.Context()` de los tests de `internal/modulos`.
+- **Qué pediría**: abrir esa transacción con un contexto que no muera con el test, o aceptar `sql.ErrTxDone` en la
+  limpieza. Es test, no producción.
+- **Veredicto**: pendiente. No se arregló en FW-04: esa sesión no toca `internal/`. Mientras tanto, un `GATE_RC≠0` con
+  **solo** este fallo se repite antes de darlo por rojo, y se dice.
 
 ---
 
