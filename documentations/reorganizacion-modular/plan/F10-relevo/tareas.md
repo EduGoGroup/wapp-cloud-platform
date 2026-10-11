@@ -88,7 +88,8 @@ tarea, directo en `dev`, en este orden (`arquitectura.md` §3). No necesita Dock
   - **Commit**: `relevo: las supresiones de lint se arreglan o se justifican`
 - [ ] **T10.14 · docs: el repo dice las rutas nuevas** · dep. T10.11 · cumple R10.7.a
   - **Ficheros**: los de `diseno.md` §4 (147 menciones hoy); `ESTADO.md` y `README.md` de `reorganizacion-modular/` («relevo hecho en el repo; UAT y ecosistema pendientes»); `CLAUDE.md` (la sección «en curso» pasa a «hecha»; el índice del sistema es `internal/arranque/orquestador.go`)
-  - **Hecho cuando**: el recuento de `diseno.md` §4 → 0 fuera de `reorganizacion-modular/` y de lo marcado «(histórico)»
+  - ✎ **2026-10-11 · D-F10-8 (Jhoan): sin documentación del código viejo.** Borrado el viejo, la documentación de la pieza describe **solo** lo que existe: `contratos.md`, `arquitectura.md`, `constitucion.md`, `operacion.md`, `esquema-postgres.md`, `deuda.md` (§6 incluida) y el `README.md` del repo se **reescriben** contra el árbol nuevo, no se anotan. La salida «(histórico)» **deja de valer** fuera de `reorganizacion-modular/`. El árbol de `04` §3 se **regenera** desde el código (`go list`), con el comando escrito: cierra la deuda D-40. Qué se hace con la propia carpeta `reorganizacion-modular/`: D-F10-9, abierta
+  - **Hecho cuando**: el recuento de `diseno.md` §4 → **0** fuera de `reorganizacion-modular/`, sin excepciones «(histórico)»; cada ruta, fichero y símbolo que la documentación de la pieza nombra **existe** en el árbol (comprobado con un comando, que se escribe)
   - **Commit**: `docs(reorganizacion-modular): relevo — las rutas nuevas en la documentación del repo`
   - Cierre del bloque: el gate del bloque C (`reglas.md` §4) con sus salidas en el acta, y `git push origin dev` (rc sin pipe).
 
@@ -109,6 +110,7 @@ D-10 (`diseno.md` §3.1). Si F10-05 no cabe en ~90 min, el punto limpio de corte
 
 - [ ] **T10.18 · La documentación del ecosistema** · dep. T10.17 · cumple R10.7.b
   - **Hecho cuando**: el recuento de `diseno.md` §3.1 (1.124 menciones hoy) → 0 fuera de lo histórico; `make check-docs` de la raíz verde
+  - ✎ 2026-10-11 · D-F10-8: «lo histórico» aquí es **solo** el eje `historia/` y las fichas de planes cerrados del ecosistema, que cuentan qué pasó; los ejes que describen el sistema (constitución, diagramas, operación, funcionalidades) no conservan rutas viejas
 - [ ] **T10.19 · ADR-0010: la regla de conteo nueva** · dep. T10.18 · D-F10-7
   - **Hecho cuando**: texto nuevo aprobado por Jhoan; su tabla re-medida con la regla nueva y el comando escrito; citas `bootstrap.go:1519/817/835` corregidas
 - [ ] **T10.20 · Los 12 comentarios de repos hermanos** · dep. T10.17 · cumple R10.7.c

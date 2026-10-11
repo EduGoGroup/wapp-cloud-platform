@@ -544,6 +544,7 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   cosas por decisión (inventarios E-12): el árbol real difiere, y **no se midió cuánto**.
 - **Las dos salidas**: regenerarlo desde `go list` tras el relevo, o marcarlo «(histórico)» en T10.14.
 - **Veredicto**: pendiente; se decide con T10.14 (F10).
+- ✎ **2026-10-11 · Decidida por Jhoan (D-F10-8)**: se **regenera** desde el código en T10.14; la salida «(histórico)» queda descartada.
 
 ---
 
