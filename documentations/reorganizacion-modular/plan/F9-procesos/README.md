@@ -7,7 +7,12 @@
 > (suite entera, dos pasadas) y **el mutante `maxTxAttempts = 1` cae** en los dos binarios; hallazgos 31–43, abajo.
 > ✅ **Bloque B2 hecho** (F9-04 💻, 2026-10-03, rama `reorg/f9-b2`): P4–P8 y P10, más T9.22 (`nucleo`); la suite entera (P0–P10) da
 > `RC=0 · PASS=537 · SKIP=0 · FAIL=0` por binario y **ningún rojo solo contra el nuevo**; hallazgos 44–61, abajo. 🔴 La rotación real de KEK
-> no cabe en el arnés (hallazgo 57). C (salvo T9.22) y D sin empezar.
+> no cabe en el arnés (hallazgo 57).
+> ✅ **Bloque C hecho**: una pasada por módulo en el cierre local de cada fase (T9.23–T9.29, F2-05 … F8-07b).
+> 👉 **Bloque D (cierre), en revisión — PR #74 abierto** (F9-05 💻, 2026-10-11, rama `reorg/f9-05-cierre`): `CUENTA=3 make test-procesos`
+> da `RC=0 · PASS=3873 · FAIL=0 · SKIP=0` contra el viejo y contra el nuevo (1291 × 3, sin intermitencias); las 22 suites de contrato
+> con su `PASS`; recuento limpio; lo que sigue sin cubrir, clasificado (T9.36), y la suite queda en 1297 por binario; hallazgos 62–69, abajo.
+> **F9 no se da por cerrada hasta que el PR #74 entre en `dev`.**
 > Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`.
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3): B1–D pasan a
 > **solo local** (💻) y entran los hallazgos 35–41 del [piloto F1](../F1-nucleo-contact/README.md).
@@ -94,7 +99,7 @@ marca **🕐** en [`tareas.md`](tareas.md).
 | **B1 · procesos de plataforma y acceso** ✅ | F9-03 | 💻 | T9.13–T9.16 (P1, P2, P3 con el reintento de `WithTx`, P9) | Los cuatro verdes contra el viejo (y corridos contra el nuevo); el mutante `maxTxAttempts = 1` cae |
 | **B2 · procesos de negocio** ✅ | F9-04 | 💻 | T9.17–T9.21 (P4–P8, doble CRM), T9.35 (P10) y T9.22 (`nucleo`) | B1 + B2 verdes contra el viejo y el nuevo. De ella depende F2-01 |
 | **C · pasada por conmutación** 🕐 | el cierre local de cada módulo (F2…F8) | 💻 | T9.23–T9.29, **una por módulo** | Suites del módulo contra Postgres + suite entera contra el nuevo + test de cableado completo |
-| **D · cierre** | F9-05 | 💻 | T9.30–T9.33 | `-count=3` limpio contra los dos; recuento contra el código; docs al día |
+| **D · cierre** 👉 (PR #74, en revisión) | F9-05 | 💻 | T9.30–T9.33 y T9.36 | `-count=3` limpio contra los dos; recuento contra el código; lo que sigue sin cubrir, clasificado; docs al día |
 
 Desde B1, F9 es **solo local**: necesita testcontainers y los dos binarios, y así no gasta el saldo de la promoción
 web. Sesiones de 45–90 min; si un bloque no cabe, para en un punto limpio tras un proceso cerrado y se relanza. Cada
@@ -736,3 +741,85 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     F1 (`fase7_flujos.go` pasa el `NewPostgresResolver` viejo a `flowruntime.New`), reproducido en copia desechable
     sobre `7b092d5`: `go vet` rc=0 y `go test ./internal/arranque/` **rc=1** por
     `TestBootWiring_OnlyBridgeAndFlowsImportOldContact`.
+
+### Hallazgos de la sesión F9-05 (2026-10-11, bloque D, rama `reorg/f9-05-cierre` desde `dev` @ `085366a2`, PR #74 en revisión)
+
+62. **T9.30 · La corrida final, sin intermitencias.** `CUENTA=3 make test-procesos` sobre `085366a2` (antes de los tests de
+    T9.36): **viejo `RC=0 · PASS=3873 · FAIL=0 · SKIP=0`** y **nuevo `RC=0 · PASS=3873 · FAIL=0 · SKIP=0`** (1291 × 3).
+    515,7 s y 515,0 s de `go test` por binario; 1037 s (≈ 17 min) de pared los dos, Mac de 8 núcleos con la caché de Go
+    caliente (la referencia de F9-02, con solo P0 y el arnés, era 33 s). Las **22 filas** de [`diseno.md`](diseno.md) §5
+    tienen su `--- PASS` en las tres pasadas de cada binario: son 27 funciones `Test…Contrato…_Postgres` (`enroll` lleva
+    dos, `intake` tres, `flujos/runtime` dos, y `events` suma la de telemetría de la cara HTTP). `sin_errores` verde sin
+    salvedad (D-F9-10). Ningún rojo solo contra el nuevo. Tras T9.36, una pasada más por binario: **`RC=0 · PASS=1297 ·
+    FAIL=0 · SKIP=0`** los dos (173,7 s cada uno).
+63. **T9.36 · Lo que sigue sin cubrir en los ficheros entre 80 y 89 %, clasificado.** `make cobertura-combinada` sobre
+    `085366a2`: `FICHEROS_EVALUADOS=418 · POR_DEBAJO=0`; **266** al 100 %, **133** entre 90 y 99 y **19** entre 80 y 89
+    (F8-08 midió 261 · 134 · 23 con el mismo código de producción: el reparto **varía de una corrida a otra**, porque hay
+    bloques que los procesos alcanzan o no según el orden de las goroutines; no se investigó cuáles). Los 19 ficheros
+    suman **145 bloques** sin ejecutar, leídos uno a uno contra su contrato y sus tests vecinos (tres sub-agentes en solo
+    lectura):
+
+| Fichero | % antes → después | Bloques | Promesa sin test | Con un flujo | Guarda del 73 de F8 | Defensiva | Qué era |
+|---|---|---|---|---|---|---|---|
+| `acceso/platformadmin/postgres.go` | 80.6 → 83.8 | 18 | 1 | 2 | — | 15 | Promesa: el error de `CreateTenant` que no es 23505 no es conflicto. Flujo: `revoked_at` no nulo en `ListTenants` y `GetTenant` (P1) |
+| `conversacion/runtime/events_clock.go` | 81.4 → 85.1 | 5 | 1 | — | — | 4 | Promesa: sin plano de eventos el puntero no tiene reloj |
+| `conversacion/runtime/event_effects.go` | 81.8 → 81.8 | 2 | — | — | — | 2 | un evento sin ID (los 9 llamantes entran con evento conocido) y un corte que el propio comentario declara inalcanzable |
+| `edge/diagnostics/diagnostics.go` | 83.3 → 83.3 | 1 | — | — | — | 1 | fallo de `crypto/rand`, sin costura para inyectarlo |
+| `acceso/iam/infra/postgres/memberships.go` | 84.8 → 88.3 | 13 | 3 | — | — | 10 | Promesa: pasos 4 y 5 de `GrantTenantAccess` y el `Commit` fallido de `Add` |
+| `apipublica/export.go` | 84.9 → 84.9 | 15 | — | — | 1 | 14 | escrituras a un búfer en memoria y `excelize` |
+| `conversacion/runtime/events_menu.go` | 85.1 → 88.2 | 14 | 3 | — | — | 11 | Promesa: menú sin sello, oferta sin cupo, rescate sin cupo |
+| `acceso/iam/infra/postgres/audit.go` | 86.6 → 86.6 | 4 | — | — | — | 4 | `Scan`, `rows.Err` y un `meta` que `Record` nunca escribe |
+| `edge/enroll/ca.go` | 86.8 → 86.8 | 12 | — | — | — | 12 | generación de claves, seriales y certificados |
+| `apipublica/catalogtemplate.go` | 86.8 → 86.8 | 4 | — | — | — | 4 | plantilla fija a un búfer |
+| `acceso/iam/usecase/grants.go` | 87.0 → 87.0 | 4 | — | — | — | 4 | propagación sin traducir; el contrato no promete nada sobre los grants ilegibles |
+| `nucleo/contact/repository_postgres.go` | 87.4 → 88.8 | 17 | — | 2 | — | 15 | Flujo: el UUID mal formado en `Resolve` y en `Destino`, solo contra Postgres |
+| `apipublica/quotesuggestion.go` | 87.5 → 87.5 | 1 | — | — | 1 | — | la guarda «identidad sin empresa» |
+| `acceso/iam/infra/postgres/invitations.go` | 87.5 → 89.5 | 6 | 1 | — | — | 5 | Promesa: la lectura fallida del motivo al revocar no es «no encontrada» |
+| `conversacion/runtime/events_switch.go` | 88.0 → 88.0 | 9 | — | — | — | 9 | errores del almacén envueltos |
+| `apipublica/intakes_llm_gate.go` | 89.2 → 89.2 | 5 | — | — | — | 5 | `json.Marshal` de lo recién deserializado |
+| `acceso/iam/infra/identity/m2m_wire.go` | 89.2 → 96.4 | 9 | 6 | — | — | 3 | Promesa: texto opaco, 2xx ilegible, cuerpo de error ilegible, canje sin mapear, fallo de red en dos operaciones |
+| `apipublica/integrations.go` | 89.3 → 89.3 | 4 | — | — | 4 | — | la guarda «identidad sin empresa» |
+| `conversacion/runtime/events_summary.go` | 89.4 → 94.7 | 2 | 1 | — | — | 1 | Promesa: el recordatorio que no se puede enviar (el hallazgo 75 de F8 lo daba por defensivo) |
+| **Total (19 ficheros)** | | **145** | **16** | **4** | **6** | **119** | |
+
+    - **16 promesas del contrato sin test** → 16 tests unitarios, cada uno con su mutante muerto: `d1f12bdc` (5,
+      `conversacion/runtime`) y `23b6f80b` (11, `acceso`). Solo tests; dos dobles de test ganan tres y cinco líneas
+      (`scriptedSQL` etiqueta el `SELECT` del motivo; `fakeM2M` puede contestar un cuerpo que no es JSON en un ≥ 400).
+    - **4 alcanzables con un flujo** → `73f5e61e` (el UUID mal formado en `contact`, solo contra Postgres: la suite
+      compartida lo excluye porque la memoria diverge) y `bc92cc0a` (P1: `GET /admin/tenants` y `GET /admin/tenants/{id}`
+      ven el corte comercial y su restauración). Verdes contra los dos binarios, misma respuesta.
+    - **6 guardas «identidad sin empresa»** de la cara HTTP: son seis de las 14 que el hallazgo 73 de F8 dejó como
+      defensa en profundidad (antes corta el gate de entitlements). No se reabre.
+    - **119 defensivas o inalcanzables**: errores de `Scan`, `rows.Err`, `Commit` o `Exec` envueltos sin promesa propia,
+      cuerpos de un `Close` fallido, `crypto/rand`, `json.Marshal` de estructuras propias, escrituras a un búfer. Se
+      anotan y **no se prueban**.
+    - Después: **266 · 135 · 17**. `m2m_wire.go` (89,2 → 96,4) y `events_summary.go` (89,4 → 94,7) salen de la franja; el
+      más bajo ya no es `platformadmin/postgres.go` (80,6 → 83,8) sino `event_effects.go` (81,8, dos bloques defensivos).
+    - **Lo que no cupo**: los 135 ficheros entre 90 y 99 % siguen sin clasificar. Deuda **D-42**.
+64. **(T9.36) El hallazgo 75 de F8 dio por defensivas cuatro sentencias de `events_summary.go`; dos no lo eran.** El
+    argumento («el envío que va justo después tropieza con lo mismo») vale para un `Sender` roto del todo, no para un
+    fallo de **un** envío. Con el doble que ya existía (`FailText` + `OnSend`) el recordatorio falla y la pantalla sale:
+    la promesa «se avisa y se retoma igual, y lo que no llegó no va al hilo» es observable.
+    `TestEvents_ComingBackGoesOnWhenTheReminderCannotBeSent`. Las otras dos (sin destino) sí son defensivas.
+65. 🟡 **(T9.36, lateral) Un 404 del canje de la API key se lee como «la persona no está en el padrón».**
+    `mapExchangeError` devuelve el error crudo para los estados fuera de su tabla y el traductor de la operación lo
+    vuelve a traducir: con un 404 en `/api/v1/auth/token`, `GetUserSystems` devuelve `domain.ErrNotFound` **sin haber
+    preguntado por la persona** (medido con una sonda que no queda en el repo). El código viejo
+    (`internal/iam/infra/identity/m2m.go`) hace **lo mismo**: es rareza heredada, no una divergencia. No se toca aquí
+    (cambia conducta visible); deuda **D-41**, para después del relevo.
+66. **(T9.36) Los tests de `contact` en `test/procesos` comprueban los centinelas por su texto, no con `errors.Is`.**
+    El candado `TestProcessImports` (R9.4.d) solo deja usar de `contact` los constructores `New…`; la primera versión
+    usaba `contact.ErrNoRefs` y `contact.ErrContactNotFound` y el candado dio rojo. Se siguió el precedente de
+    `iam_redeem_contrato_test.go`. El candado hizo su trabajo.
+67. **(T9.36) Un mutante equivalente declarado.** En `events_menu.go` la rama «sello ausente o no string» es redundante
+    por semántica (el aserto de tipo fallido ya deja `""`): borrarla no la mata nadie; existe por
+    `errcheck.check-type-assertions`. El test nuevo la ejecuta y mata el mutante que cambia el valor.
+68. **T9.31 · Recuento limpio.** `TestProcessImports` y `TestSinBDViva` en verde y dentro de `make ci-local` (el paquete
+    `test/procesos` sin etiqueta); `grep -rn 't.Skip' test/procesos` vacío; `WAPP_PROCESOS_BINARIO` solo en
+    `main_test.go`. ✎ `tareas.md` decía en T9.33 «`git push origin dev`»: es anterior a la regla 6 del `CLAUDE.md`; la
+    sesión entra por rama y PR.
+69. **Lo que F9 deja abierto para F10 (no bloquea la condición del relevo, pero F10 lo tiene que leer).** (a) 🔴 Hallazgo
+    57: la rotación real de KEK no cabe en el arnés; hay que resolverlo **antes** de que F10 borre
+    `rekey_integration_test.go`. (b) Hallazgo 60: lo que cada proceso de B2 declaró sin cubrir. (c) D-39 (la política de
+    reanudación del carrito desde fuera) va en FW, TW.11. (d) D-41 y D-42, de esta sesión. (e) **No corrido aquí**:
+    `make ci-docker`, la integración vieja (`make test-integration`) y el Edge real.

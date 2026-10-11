@@ -548,6 +548,36 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 
 ---
 
+### D-41 · 🟡 Un 404 del canje de la API key se lee como «la persona no está en el padrón»
+
+> Abierta el 2026-10-11 en F9-05 (hallazgo 65 del README de F9). **Rareza heredada**: el código viejo hace lo mismo.
+
+- **Qué hay hoy**: `mapExchangeError` (`internal/modulos/acceso/iam/infra/identity/m2m_wire.go`) devuelve el error crudo
+  para los estados que no están en su tabla, y el traductor de la operación de negocio lo vuelve a traducir. Con un 404
+  en `/api/v1/auth/token`, `GetUserSystems` devuelve `domain.ErrNotFound` sin haber preguntado por la persona. Por
+  lectura, un 409 del canje se retraduciría igual en las rutas que mapean el 409.
+- **Por qué no se arregló**: cambia conducta visible desde fuera y el viejo (`internal/iam/infra/identity/m2m.go`) es
+  idéntico; identity no devuelve hoy un 404 en esa ruta.
+- **Qué pediría**: que el canje con estado sin mapear sea opaco **y terminal** (un error que los traductores de negocio
+  no reinterpreten), con su test.
+- **Veredicto**: pendiente, para después del relevo. No bloquea F10.
+
+---
+
+### D-42 · 🟡 Los 135 ficheros entre 90 y 99 % de cobertura combinada no están clasificados
+
+> Abierta el 2026-10-11 en F9-05 (T9.36; hallazgo 63 del README de F9).
+
+- **Qué hay hoy**: T9.36 clasificó los 19 ficheros entre 80 y 89 % (145 bloques: 16 promesas sin test, 4 alcanzables
+  con un flujo, 6 guardas ya decididas y 119 defensivas). Los 135 que quedan entre 90 y 99 % no se han leído.
+- **Qué cabe esperar**: en la muestra, uno de cada siete bloques era una promesa sin test o un flujo que faltaba; el
+  resto, defensa. No hay umbral que perseguir (`05` E-9).
+- **Sin medir**: cuántos bloques son, y por qué el reparto por franjas cambia de una corrida a otra (261 · 134 · 23 en
+  F8-08, 266 · 133 · 19 en F9-05, con el mismo código).
+- **Veredicto**: pendiente; no bloquea el relevo.
+
+---
+
 ## 5 · Deudas con nombre heredadas de los planes
 
 | Marca | Dónde | Qué significa |
