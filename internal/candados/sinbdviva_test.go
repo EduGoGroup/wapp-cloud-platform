@@ -201,7 +201,7 @@ func Skip()                    {}
 func g(t *testing.T, o otro) {
 	t.Helper()
 	t.Log("t.Skip y testing.Short() y os.Environ() solo en una cadena")
-	_ = os.Getenv("WAPP_PROCESOS_BINARIO")
+	_ = os.Getenv("WAPP_PROCESOS_EDGE_DIR")
 	_ = o.Environ()
 	_ = o.Short()
 	o.Skipper()

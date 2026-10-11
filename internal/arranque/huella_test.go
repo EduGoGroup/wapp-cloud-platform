@@ -55,7 +55,7 @@ const (
 
 // arbolNuevo son los directorios del árbol nuevo que no pueden leer entorno (R0.5.f); los
 // que aún no existen se saltan.
-var arbolNuevo = []string{"cmd/server-modular", "internal/arranque", "internal/apipublica", "internal/modulos", "internal/nucleo"}
+var arbolNuevo = []string{"cmd/server", "internal/arranque", "internal/apipublica", "internal/modulos", "internal/nucleo"}
 
 // TestHuella compara la huella de este arranque (ejecución y estática) con la dorada del viejo.
 func TestHuella(t *testing.T) {

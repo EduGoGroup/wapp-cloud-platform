@@ -58,7 +58,7 @@ func serverRestart(t *testing.T, s *servidor) (previousLog string) {
 	for attempt := 1; ; attempt++ {
 		err := s.serverRelaunch(t.Context(), old.cmd)
 		if err == nil {
-			t.Logf("servidor reiniciado (%s) y listo en %s sobre la base %s: admin=%s publica=%s enrolar=%s conectar=%s", binarioElegido(),
+			t.Logf("servidor reiniciado y listo en %s sobre la base %s: admin=%s publica=%s enrolar=%s conectar=%s",
 				time.Since(start).Round(time.Millisecond), s.Base.Nombre, s.AdminAddr, s.PublicaAddr, s.EnrolarAddr, s.ConectarAddr)
 			return previousLog
 		}

@@ -10,9 +10,9 @@ import (
 // no cuenta: el candado mira el AST, no el texto.
 func TestLegitimo(t *testing.T) {
 	t.Helper()
-	binario := os.Getenv("WAPP_PROCESOS_BINARIO")
-	if binario == "" {
-		t.Fatal("falta el binario del servidor: un proceso que no puede correr falla")
+	edge := os.Getenv("WAPP_PROCESOS_EDGE_DIR")
+	if edge == "" {
+		t.Fatal("falta el repo del Edge: un proceso que no puede correr falla")
 	}
-	t.Log("binario", binario)
+	t.Log("edge", edge)
 }

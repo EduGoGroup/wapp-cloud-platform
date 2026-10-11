@@ -195,7 +195,7 @@ func sweepPlant(t *testing.T, root string, now time.Time, f sweepFixture) string
 	t.Helper()
 	dir := filepath.Join(root, f.name)
 	sweepMust(t, "sweepPlant "+f.name, os.MkdirAll(filepath.Join(dir, "home"), 0o700))
-	for _, binary := range []string{"migrate", "servidor-nuevo"} {
+	for _, binary := range []string{"migrate", "servidor"} {
 		sweepMust(t, "sweepPlant "+f.name, os.WriteFile(filepath.Join(dir, binary), []byte("binario"), 0o600))
 	}
 	if f.marker != "" {

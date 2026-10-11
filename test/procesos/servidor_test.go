@@ -111,8 +111,8 @@ func arrancar(t *testing.T, o opcionesServidor) *servidor {
 	for intento := 1; ; intento++ {
 		listoEn, err := s.lanzar(t.Context(), o, home)
 		if err == nil {
-			t.Logf("servidor %q (%s) listo en %s: admin=%s publica=%s enrolar=%s conectar=%s", o.Proceso,
-				binarioElegido(), listoEn.Round(time.Millisecond), s.AdminAddr, s.PublicaAddr, s.EnrolarAddr, s.ConectarAddr)
+			t.Logf("servidor %q listo en %s: admin=%s publica=%s enrolar=%s conectar=%s", o.Proceso,
+				listoEn.Round(time.Millisecond), s.AdminAddr, s.PublicaAddr, s.EnrolarAddr, s.ConectarAddr)
 			return s
 		}
 		if intento == 1 && s.murioPorPuertoOcupado(err) {
@@ -209,7 +209,7 @@ func (s *servidor) lanzar(ctx context.Context, o opcionesServidor, home string) 
 	}
 	s.AdminAddr, s.PublicaAddr, s.EnrolarAddr, s.ConectarAddr = direcciones[0], direcciones[1], direcciones[2], direcciones[3]
 
-	cmd := exec.Command(rutaBinario(binarioElegido())) //nolint:gosec // binario compilado por este mismo arnés
+	cmd := exec.Command(rutaBinario("servidor")) //nolint:gosec // binario compilado por este mismo arnés
 	cmd.Dir = home
 	cmd.Env = s.entorno(o, home)
 
