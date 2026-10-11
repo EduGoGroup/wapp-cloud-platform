@@ -786,6 +786,9 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     | (f), (g) divergencias y P4–P8 | ✅ | Hallazgo 52, y otra vez aquí: 1.291 PASS por binario, 0 «no trae literal que analizar» |
     | (h) mutantes de F8-06 | 🟡 no repetidos | Los 22 del candado de cableado siguen siendo los declarados entonces. De los **12** de esta sesión, el orquestador repitió cuatro (`kp`, `RecoverAtBoot`, `OnIncoming`, fuente del gauge): los cuatro mueren |
     | (i) cabeceras de `05`, `04` y la documentación de la pieza | 🔴 sin tocar | No es de esta sesión: queda para F8-07 |
+
+    ✎ **Jhoan (2026-10-11): los cuatro se dan por buenos con lo estático que ya los cubre**; T8.36 pasa a `[x]` (el `entResolver`, el mux de detrás, `OnHeartbeat` y el runtime de J19). Verlos pediría tocar producción —una
+    ruta o una línea de log— solo para probar cableado.
 66. **(F8-07b, mutantes) Doce por overlay sobre el servidor, uno sobrevive.** `GOFLAGS=-overlay=<json>` con la copia
     mutada fuera del repo; el checkout no se tocó. Mueren: guard con otro `KeyProvider` (nuevo **y** viejo), sin
     `WithSelfNumbers`, sin `RecoverAtBoot` (nuevo y viejo), y en `internal/arranque/fase7_flujos.go` sin el registro del
@@ -830,7 +833,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-06 ✅ | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo (2026-10-10, rama `reorg/f8-06-cara-http-y-conmutar`, `5ba7f419` … `fe6305b9`; hallazgos 47–51) |
 | F8-06b | D-F7-9: cierre y sobre en un solo acto (✎ 2026-10-10, D-F8-13: sesión nueva) | complejo | T8.39, T8.40 | el agregador nuevo compone antes de cerrar y cierra con el sobre en una sentencia; el job de re-análisis nace con su sobre; caso de P4 verde contra el binario nuevo. ✎ **hecha** (2026-10-10; `a0144628` … `42a06574`; hallazgos 52–59; PR #69 en `dev`, merge `2902ec40`) |
 | F8-07a | limpieza tras D-F7-9 (✎ 2026-10-10, Jhoan: F8-07 se parte en tres) | medio | T8.41–T8.43 | `PutSourceText` y `ComposeAtFlush` borrados (D-35), tests de cableado al día sin debilitarse; el caso adversario del callback del CRM tolera el corte; los siete mutantes de D-F7-9 repetidos y muertos |
-| F8-07b ✅ | Docker y arranque real (✎ 2026-10-10) | — | T8.36, T8.37 | `make ci-docker` rc=0 (no corre desde F8-01); suites `Contrato` contra Postgres; `cmd/server-modular` arranca solo y recorre una conversación con el Edge falso; hallazgo 51 refutado. ✎ **hecha** (2026-10-10; rama `reorg/f8-07b-docker-y-arranque-real`, `866e47a6`, `02ad985a`, `ffba56e7`, PR #71 a `dev`; `ci-docker` RC=0; tres casos de proceso nuevos; del hallazgo 51 quedan cuatro puntos sin ver desde fuera y T8.36 queda `[~]`: hallazgos 64–67) |
+| F8-07b ✅ | Docker y arranque real (✎ 2026-10-10) | — | T8.36, T8.37 | `make ci-docker` rc=0 (no corre desde F8-01); suites `Contrato` contra Postgres; `cmd/server-modular` arranca solo y recorre una conversación con el Edge falso; hallazgo 51 refutado. ✎ **hecha** (2026-10-10; rama `reorg/f8-07b-docker-y-arranque-real`, `866e47a6`, `02ad985a`, `ffba56e7`, PR #71 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-11), sin squash; `ci-docker` RC=0; tres casos de proceso nuevos; del hallazgo 51 quedan cuatro puntos sin ver desde fuera, que Jhoan da por buenos en estático el 2026-10-11: hallazgos 64–67) |
 | F8-07 | cierre | — | T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
 
 Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (medido en el código viejo):
