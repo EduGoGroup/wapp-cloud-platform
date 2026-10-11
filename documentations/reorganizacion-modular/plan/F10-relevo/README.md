@@ -1,6 +1,6 @@
 # F10 · Relevo — `cmd/server` pasa al arranque nuevo y lo viejo se borra
 
-> **Estado**: 🔧 **bloque A en revisión (F10-02, 2026-10-11, PR #75 abierto)**: verdad de campo limpia, dorada de la
+> **Estado**: 🔧 **bloque A cerrado (F10-02, 2026-10-11, PR #75 integrado)**: verdad de campo limpia, dorada de la
 > huella congelada, acta abierta e inventario de divergencias. Falta el bloque B, que espera a la fase FW. Spec escrita el
 > 2026-09-28 sobre `dev` @ `1b18932`.
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).

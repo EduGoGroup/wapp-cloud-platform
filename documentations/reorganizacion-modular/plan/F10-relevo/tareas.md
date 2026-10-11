@@ -13,7 +13,7 @@
 
 Entrada: F9 `CERRADO`; F10-01 hecha. Para cuando: la dorada commiteada y verificada contra el viejo en ejecución.
 
-- [x] **T10.1 · Verdad de campo y capturas de referencia** · dep. F9 cerrada · cumple R10.3.c, R10.3.d, R10.4.d — hecha en `7434ea91` (F10-02, 2026-10-11; PR #75, en revisión): acta §1 y §3. Las cuatro condiciones se cumplen y el mutante cae; el `grep` de `pendiente.Implementar` da 24 y no 0 (ninguna es un contrato: hallazgo 1 del README)
+- [x] **T10.1 · Verdad de campo y capturas de referencia** · dep. F9 cerrada · cumple R10.3.c, R10.3.d, R10.4.d — hecha en `7434ea91` (F10-02, 2026-10-11; PR #75, integrado): acta §1 y §3. Las cuatro condiciones se cumplen y el mutante cae; el `grep` de `pendiente.Implementar` da 24 y no 0 (ninguna es un contrato: hallazgo 1 del README)
   - **Ficheros**: `traspasos/TRASPASO-F10-relevo.md` (§1 y §3)
   - **Hecho cuando**: re-medidos con los comandos de `diseno.md` §1 y §4 (los números de hoy crecerán);
     adaptadores `bridge_*.go` en `internal/arranque` = 0, puentes (import) = 0, `Conmutados` con todos los módulos
@@ -22,15 +22,15 @@ Entrada: F9 `CERRADO`; F10-01 hecha. Para cuando: la dorada commiteada y verific
     `go run ./cmd/prompts -comprobar <dir>` y de `go run ./cmd/casebank` sin `-consentido` para comparar después
   - **Gate**: el de la cabecera
   - **Commit**: `docs(reorganizacion-modular): F10, verdad de campo antes del relevo`
-- [x] **T10.2 · relevo: la huella del viejo, congelada** · dep. T10.1 · cumple R10.2.c — hecha en `374d8652` (F10-02, 2026-10-11; PR #75, en revisión): la dorada es de texto e incluye la parte estática; `huella.json` de F0 se retira (hallazgo 2); mutante real `/healthz` caído
+- [x] **T10.2 · relevo: la huella del viejo, congelada** · dep. T10.1 · cumple R10.2.c — hecha en `374d8652` (F10-02, 2026-10-11; PR #75, integrado): la dorada es de texto e incluye la parte estática; `huella.json` de F0 se retira (hallazgo 2); mutante real `/healthz` caído
   - **Ficheros**: `internal/arranque/testdata/huella-vieja.golden`, `internal/arranque/huella_test.go` (compara con la dorada **y**, mientras exista, con el viejo en ejecución), el `huella_vieja_test.go` de F0 (bandera de regeneración)
   - **Hecho cuando**: la dorada casa con el viejo en ejecución y con el nuevo; un caso `muerde` (quitar una ruta) hace fallar el test
   - **Gate**: el de la cabecera
   - **Commit**: `relevo: la huella del viejo, congelada`
-- [x] **T10.3 · Preparación de la prueba en UAT** · dep. T10.2 — hecha en el commit de cierre de F10-02 (2026-10-11; PR #75, en revisión): acta §4. ✎ No hay `git push origin dev` (regla 6: rama y PR), y el SHA de `dev` lo fija F10-03 al abrir la ventana (hallazgo 3); el acta fija el último commit de código, `374d8652`
+- [x] **T10.3 · Preparación de la prueba en UAT** · dep. T10.2 — hecha en el commit de cierre de F10-02 (2026-10-11; PR #75, integrado): acta §4. ✎ No hay `git push origin dev` (regla 6: rama y PR), y el SHA de `dev` lo fija F10-03 al abrir la ventana (hallazgo 3); el acta fija el último commit de código, `374d8652`
   - **Ficheros**: `traspasos/TRASPASO-F10-relevo.md` (§4: los comandos de `diseno.md` §2, literales)
   - **Hecho cuando**: T10.1–T10.2 empujados a `dev` (`git push origin dev`, rc sin pipe); el SHA que se desplegará está escrito en el acta
-- [x] **T10.24 · Inventario de las divergencias visibles desde fuera (primera mitad de la deuda D-36)** · dep. F9 cerrada · añadida el 2026-10-11 por decisión de Jhoan · solo lectura — hecha en `7541c4f8` (F10-02, 2026-10-11; PR #75, en revisión): 33 divergencias, 11 visibles y 22 internas; hecha leyendo el código, sin ejecutar los binarios (hallazgo 5)
+- [x] **T10.24 · Inventario de las divergencias visibles desde fuera (primera mitad de la deuda D-36)** · dep. F9 cerrada · añadida el 2026-10-11 por decisión de Jhoan · solo lectura — hecha en `7541c4f8` (F10-02, 2026-10-11; PR #75, integrado): 33 divergencias, 11 visibles y 22 internas; hecha leyendo el código, sin ejecutar los binarios (hallazgo 5)
   - **Por qué antes del relevo**: saber qué respondía el viejo es directo mientras existe (se corren los dos binarios); después hay que deducirlo de los comentarios
   - **Ficheros**: `divergencias-visibles.md` (nuevo, en esta carpeta); `documentations/deuda.md` (D-36)
   - **Hecho cuando**: cada comentario «Divergencia deliberada del viejo» de producción (26 en 14 ficheros el 2026-10-10: se re-mide, con el comando) y cada decisión de `plan/DECISIONES.md` que cambie conducta está clasificada **interna** / **visible desde fuera**; cada visible lleva ruta o trama, qué respondía el viejo y qué responde el nuevo (código, cuerpo, texto), y qué consumidor la recibe. **No** se abre ni se toca ningún consumidor: eso es la segunda mitad, tras el relevo
