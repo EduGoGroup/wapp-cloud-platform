@@ -782,8 +782,9 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 | `conversacion/runtime/events_summary.go` | 89.4 → 94.7 | 2 | 1 | — | — | 1 | Promesa: el recordatorio que no se puede enviar (el hallazgo 75 de F8 lo daba por defensivo) |
 | **Total (19 ficheros)** | | **145** | **16** | **4** | **6** | **119** | |
 
-    - **16 promesas del contrato sin test** → 16 tests unitarios, cada uno con su mutante muerto: `d1f12bdc` (5,
-      `conversacion/runtime`) y `23b6f80b` (11, `acceso`). Solo tests; dos dobles de test ganan tres y cinco líneas
+    - **16 promesas del contrato sin test** → 14 funciones de test unitario (las del M2M cubren seis promesas con
+      subtests), cada promesa con su mutante muerto: `d1f12bdc` (5, `conversacion/runtime`) y `23b6f80b` (11, `acceso`).
+      Solo tests; dos dobles de test cambian nueve líneas entre los dos (✎ el mensaje de `23b6f80b` dice «dos líneas»)
       (`scriptedSQL` etiqueta el `SELECT` del motivo; `fakeM2M` puede contestar un cuerpo que no es JSON en un ≥ 400).
     - **4 alcanzables con un flujo** → `73f5e61e` (el UUID mal formado en `contact`, solo contra Postgres: la suite
       compartida lo excluye porque la memoria diverge) y `bc92cc0a` (P1: `GET /admin/tenants` y `GET /admin/tenants/{id}`
