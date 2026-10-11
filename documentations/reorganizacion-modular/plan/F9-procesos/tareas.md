@@ -158,6 +158,11 @@ Entrada: F8 conmutada, T9.29 `CERRADO`, puentes = 0. Para cuando: condición del
   - ✎ **D-F9-10 decidida (2026-10-08, Jhoan): (a) + (c).** `sin_errores` tolera los `ERROR` de cancelación posteriores a la señal de parada (`p0CountedErrors`), en los dos binarios: esta corrida exige `RC=0` sin salvedad, y un rojo de `sin_errores` ya **no** es esta carrera. `CUENTA=3` sigue valiendo para cazar otras intermitencias, no para esta
   - **Gate**: los dos logs, leídos sin pipe
   - **Commit**: — (resultado en T9.33)
+- [ ] **T9.36 · Clasificar lo que sigue sin cubrir, con la cobertura combinada** · 💻 · dep. T9.30 · añadida el 2026-10-11 (Jhoan; hallazgo 74 del README de F8)
+  - **Por qué**: el plan apostó a que los flujos completos pasarían por los huecos de los unitarios; medido en F8-08, ningún fichero queda bajo el 80 %, pero 157 de 418 no llegan al 100 % y **nadie ha mirado qué bloques son**
+  - **Qué**: `make cobertura-combinada` (necesita Docker; deja los perfiles en `COBERTURA_COMBINADA_DIR`); de los bloques sin ejecutar, empezando por los ficheros más bajos, cada uno a un cajón: **promesa del contrato sin test** → se escribe el test · **alcanzable con un flujo** → se añade al proceso · **defensiva o inalcanzable** → se anota y no se prueba. Sin umbral: no se persigue un número
+  - **Hecho cuando**: la tabla fichero · bloques · cajón, al menos de los 23 ficheros entre 80 y 89 %, en el README de F9; los tests del primer cajón, escritos; lo que no quepa, deuda con número
+  - **Commit**: `test(<módulo>): …` por promesa; `docs(reorganizacion-modular): F9, lo que queda sin cubrir, clasificado`
 - [ ] **T9.31 · Recuento contra el código** · 💻 · dep. T9.30 · cumple R9.4.d, R9.8.b
   - **Hecho cuando**: `TestProcessImports` en verde (`test/procesos/domain_imports_test.go`: el candado por fichero de R9.4.d que creó F1-06, `7937772`) **y** sigue corriendo en `make ci-local` (hallazgo 37 de F1); la comprobación a mano del hallazgo 36 ya no hace falta; `WAPP_PROCESOS_BINARIO` solo en `main_test.go`; `grep -rn 't.Skip' test/procesos` vacío; el candado verde
 - [ ] **T9.32 · docs: F9 cerrada** · 💻 · dep. T9.31
