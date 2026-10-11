@@ -6,9 +6,9 @@
 > | § | Qué | Sesión | Estado |
 > |---|---|---|---|
 > | 1 | Verdad de campo antes del relevo | F10-02 (T10.1) | escrita el 2026-10-11 |
-> | 2 | La dorada de la huella | F10-02 (T10.2) | pendiente |
+> | 2 | La dorada de la huella | F10-02 (T10.2) | escrita el 2026-10-11 |
 > | 3 | Capturas de referencia (`cmd/prompts`, `cmd/casebank`) | F10-02 (T10.1) | escrita el 2026-10-11 |
-> | 4 | Preparación de la prueba en UAT y SHA a desplegar | F10-02 (T10.3) | pendiente |
+> | 4 | Preparación de la prueba en UAT y SHA a desplegar | F10-02 (T10.3) | escrita el 2026-10-11; el SHA de `dev` lo fija F10-03 |
 > | 5 | La ventana de UAT y el veredicto | F10-03 (T10.4–T10.6) | pendiente |
 > | 6 | Cierre del relevo | F10-04 y F10-05 | pendiente |
 
@@ -129,7 +129,41 @@ contaba 9 y 25). En todo el repo, 99 ficheros de test leen `WAPP_TEST_DB_DSN`.
 
 ## 2 · La dorada de la huella (T10.2)
 
-*Pendiente: se escribe en el commit de T10.3 de esta misma sesión.*
+Commit `374d8652` (`relevo: la huella del viejo, congelada`).
+
+**Qué había y qué cambia.** F0 ya había dejado una dorada, `internal/arranque/testdata/huella.json`, pero solo con la
+parte de **ejecución**. La parte **estática** (qué goroutines lanza el arranque y qué hooks de métricas cablea) no
+estaba en ningún fichero: `TestHuellaEstatica` la comparaba leyendo la **fuente** de `internal/bootstrap/arranque`, y
+habría desaparecido con ese directorio en T10.10. Ahora todo está en un solo fichero de texto:
+
+| | |
+|---|---|
+| Fichero | `internal/arranque/testdata/huella-vieja.golden` (239 entradas, una por línea, ordenadas, más 4 líneas de cabecera) |
+| Formato | `perfil <TAB> clase <TAB> listener (o -) <TAB> valor`; lo leen y escriben `huellatest.ReadGolden` y `WriteGolden` (`internal/arranque/huellatest/golden.go`) |
+| Perfiles `minimo` y `con-m2m` | cada uno 95 rutas (22 en `:8100`, 73 en `:8103`), 2 rpc (`:8101` y `:8102`) y 11 familias `wapp_*` |
+| Perfil `estatica` | 10 sentencias `go` y 13 hooks de `*metrics.Metrics` |
+| Quién la escribe | solo `go test -run '^TestHuellaVieja$' ./internal/bootstrap/arranque/ -args -actualizar`, y solo mientras ese paquete exista |
+
+**Verificada contra el viejo en ejecución.** `TestHuellaVieja` arma el arranque viejo en el proceso (fases 2–8
+reales, sin red ni Postgres), mide su huella y la compara con la dorada: **PASS**. La parte de ejecución es, entrada a
+entrada, la del JSON de F0 (216 de 216, comparadas con un script antes de borrar el JSON): la reconstrucción de F1–F8
+no movió ni una ruta, ni un rpc, ni una métrica.
+
+**Verificada contra el nuevo.** `TestHuella` (`internal/arranque/huella_test.go`) compara el arranque nuevo con la
+dorada entera, incluida la lectura de entorno del árbol nuevo, que debe ser vacía: **PASS** (`entorno=0`).
+`TestHuellaEstatica` sigue comparando además con la fuente viva del viejo, y se borra con él en T10.10.
+
+**Muerde.** Dos pruebas:
+
+- `TestHuellaBites`, que se queda en el repo: seis casos (sin tocar; una ruta de menos; una de más; una goroutine de
+  menos; un hook de más; una lectura de entorno), cada uno con la línea exacta que debe salir.
+- Un mutante real, hecho a mano y deshecho: con `mux.Handle("/healthz", …)` comentado en
+  `internal/arranque/rutas_admin.go`, `TestHuella` **cae** con `huella [minimo] :8100 falta /healthz` y
+  `huella [con-m2m] :8100 falta /healthz`.
+
+**Gates sobre este commit**: `make toolchain` rc=0 · `GOWORK=off make ci-local` → `GATE_RC=0` (leído del log), 239
+paquetes `ok`, lint `0 issues.` · `make test-pendiente` → `PENDIENTES=0`, `ROJOS=0`, rc=0 · cobertura (informe):
+`golden.go` 100,0 %, `huellatest.go` 96,7 % · SKIP con `-v` en `./internal/arranque/...`: **0**.
 
 ## 3 · Capturas de referencia (T10.1)
 
@@ -176,7 +210,78 @@ con datos y queda para T10.7.
 
 ## 4 · Preparación de la prueba en UAT (T10.3)
 
-*Pendiente: se escribe en el commit de T10.3 de esta misma sesión.*
+### 4.1 · Qué SHA se despliega
+
+**En la ventana se despliega `origin/dev` tal como esté cuando F10-03 la abra**, no un SHA de esta rama. Dos razones:
+esta sesión entra en `dev` por PR, así que el commit que quedará en `dev` es el del merge, que aún no existe; y F10-03
+espera a que la fase FW esté cerrada (D-FW-3), que meterá más commits en `dev` antes.
+
+Lo que esta sesión sí fija:
+
+| | |
+|---|---|
+| Último commit de **código** de esta rama | `374d8652` (`relevo: la huella del viejo, congelada`), sobre `dev` @ `bf2d0ae9` |
+| Qué cambia en el binario respecto de `bf2d0ae9` | **nada**: solo tests, `testdata` y el paquete `internal/arranque/huellatest`, que ningún binario importa (`GOWORK=off go list -deps ./cmd/server ./cmd/server-modular \| grep -c huellatest` → 0) |
+| Cómo fija F10-03 el SHA | tras el `git reset --hard origin/dev` de §4.3, `git rev-parse HEAD`; lo escribe en §5 y lo comprueba contra `vcs.revision` del proceso (§4.4 · 1) |
+| Condición | ese `dev` contiene `374d8652` (`git merge-base --is-ancestor 374d8652 HEAD; echo rc=$?` → 0) y `make ci-local` da `GATE_RC=0` sobre él |
+
+### 4.2 · Antes de la ventana (captura) — `diseno.md` §2.1, literal
+
+Acceso: `ssh wapp-vps`. Las credenciales viven en el `EnvironmentFile` de la máquina
+(`/root/source/wApp/cloud/wapp-cloud-platform/.env`, modo `600`); aquí no se escribe ninguna.
+
+```bash
+cd /root/source/wApp/cloud/wapp-cloud-platform
+pid=$(systemctl show -p MainPID --value wapp-cloud)
+go version -m /proc/$pid/exe | grep -E '^\s+path|vcs\.(revision|modified)'   # el viejo: path …/cmd/server
+cp bin/server bin/server.viejo-$(git rev-parse --short HEAD)                 # marcha atrás
+md5sum bin/server bin/server.viejo-*
+curl -s 127.0.0.1:8100/metrics | grep -oE '^wapp_[a-z_]+' | sort -u > /root/metricas-antes.txt
+docker exec wapp-postgres pg_dump -U wapp -d wapp -Fc > /root/backups/wapp-antes-f10-$(date +%F).dump
+GOWORK=off go run ./cmd/migrate -status                                    # version y content_hash del viejo
+```
+
+### 4.3 · El cambio de binario — `diseno.md` §2.2, literal
+
+```bash
+git fetch origin && git checkout dev && git reset --hard origin/dev         # el SHA de §4.1
+GOWORK=off go build -o bin/server ./cmd/server-modular                      # 🔴 el modular, en la MISMA ruta
+GOWORK=off go run ./cmd/migrate -status                                     # mismo content_hash que en 4.2: si no, PARAR
+systemctl restart wapp-cloud                                                # restart, nunca stop+start
+systemctl restart wapp-client-console wapp-platform-console
+```
+
+No se toca la unidad systemd ni el `.env`: se sustituye **el fichero**.
+
+### 4.4 · Verificación inmediata (los 10 primeros minutos) — `diseno.md` §2.3, literal
+
+1. **Qué corre**: `go version -m /proc/$(systemctl show -p MainPID --value wapp-cloud)/exe` → `path …/cmd/server-modular`, `vcs.revision` = SHA de §4.1, `vcs.modified=false`; `md5sum` de `/proc/$pid/exe` = `bin/server`.
+2. **Las líneas de clave**: `grep -E "clave pública de(l)? (cifrado|lease)" /root/source/wApp/logs/cloud.log | tail -2` → `key_source=config` o `file`. 🔴 `generated` = el Edge no puede abrir ni validar: **vuelta atrás ya**.
+3. **Las nueve fases**: `grep 'arranque: fase completada' /root/source/wApp/logs/cloud.log | tail -9`.
+4. **Salud**: `curl -s 127.0.0.1:8100/healthz` (200, postgres `healthy`), `:8104/healthz`, `:8106/healthz`, `:8107/healthz`.
+5. **Edge**: la sesión vuelve a `online` en la consola de plataforma (`GET /admin/tenants/{id}/installations`) en menos de un minuto; `LeaseUpdate` válido en el log del Edge.
+6. **Métricas**: `curl -s 127.0.0.1:8100/metrics | grep -oE '^wapp_[a-z_]+' | sort -u | diff /root/metricas-antes.txt -` → vacío (o solo `CounterVec` que aún no se incrementaron: se anotan y se re-miran al final).
+
+### 4.5 · Marcha atrás (objetivo < 5 min) — `diseno.md` §2.5, literal
+
+```bash
+cd /root/source/wApp/cloud/wapp-cloud-platform
+cp bin/server.viejo-<sha> bin/server
+systemctl restart wapp-cloud && systemctl restart wapp-client-console wapp-platform-console
+# y repetir 4.4 · 1–4 sobre el viejo: path …/cmd/server
+```
+
+Los criterios de la ventana son los de [`diseno.md`](../plan/F10-relevo/diseno.md) §2.4, que la fase FW reescribe en
+TW.9 (las filas 1 y 6 se miran con el WhatsApp falso): por eso no se copian aquí.
+
+### 4.6 · Lo que F10-03 tiene que saber de las divergencias
+
+El binario que entra en UAT **no** responde igual que el viejo en 11 casos, a propósito
+([`divergencias-visibles.md`](../plan/F10-relevo/divergencias-visibles.md) §5). Un error de esos durante la ventana no
+es un «tipo de error que el viejo no daba» en el sentido del corte de §2.4: se coteja con esa lista antes de volver
+atrás. Los que un consumidor puede ver sin provocarlos: V1 (`POST …/reanalyze` → 500 donde el viejo daba 200), V7 y V8
+(más tramas `LeaseUpdate` y `ConfigPush` hacia el Edge) y V10 (el stream de CloudLink se corta en ≈ 0,06 s al parar,
+no en 10 s).
 
 ## 5 · La ventana de UAT y el veredicto (T10.4–T10.6)
 

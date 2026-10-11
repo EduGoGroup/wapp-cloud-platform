@@ -1,6 +1,8 @@
 # F10 · Relevo — `cmd/server` pasa al arranque nuevo y lo viejo se borra
 
-> **Estado**: ⏳ sin empezar (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`).
+> **Estado**: 🔧 **bloque A en revisión (F10-02, 2026-10-11, PR #75 abierto)**: verdad de campo limpia, dorada de la
+> huella congelada, acta abierta e inventario de divergencias. Falta el bloque B, que espera a la fase FW. Spec escrita el
+> 2026-09-28 sobre `dev` @ `1b18932`.
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 > **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §6 (fila F10), §4.1 (cero puentes de import), §4.2 (cero
 > adaptadores `bridge_*.go`, `Conmutados` completo), §5
@@ -113,3 +115,44 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
    `/healthz` y `/metrics` en `internal/bootstrap/bootstrap.go:1426-1427`: hoy están en
    `internal/bootstrap/arranque/rutas_admin.go:64-65`, y tras el relevo en `internal/arranque/`.
    ADR-0010 cita `internal/bootstrap/bootstrap.go:1519`, que tampoco existe ya (`bootstrap.go` mide 42 líneas).
+
+## Hallazgos de la ejecución
+
+### F10-02 · bloque A (2026-10-11)
+
+1. **Los `grep` de «cero pendientes» de la spec no dan 0 y no pueden darlo hasta T10.12.**
+   `grep -rn 'pendiente.Implementar' --include='*.go' internal cmd | wc -l` da **24**: 9 en `internal/pendiente`, 11 en
+   `internal/candados` (el detector, sus tests y su `testdata`) y 4 en un candado sobre el AST de `cart`. Ninguna es un
+   contrato sin lógica. La cifra que vale es la de `make test-pendiente` (`PENDIENTES=0`, `ROJOS=0`). Afecta a la fila
+   de «Entradas» de este README, a `reglas.md` §4 y a T10.12: sus `grep` solo darán 0 cuando se retiren
+   `internal/pendiente` **y** las partes de `internal/candados` que lo nombran. **D-F10-3 no dice qué pasa con
+   `internal/candados`** (91 ficheros de producción y 71 de test), que tampoco está en la lista de lo que queda en
+   `internal/` según «Salidas». Lo decide Jhoan antes de F10-04.
+2. **La dorada ya existía, pero a medias.** F0 dejó `internal/arranque/testdata/huella.json` con la parte de ejecución;
+   la estática (goroutines y hooks) se comparaba leyendo la fuente del arranque viejo y se habría perdido en T10.10.
+   T10.2 las junta en `huella-vieja.golden` (texto, una entrada por línea, como pide `diseno.md` §5) y retira el JSON
+   y `huellatest.Leer`/`Escribir`. Las 216 entradas de ejecución son las mismas que escribió F0 el 2026-09-30: la
+   reconstrucción no movió ni una ruta. Las specs de F0 y de F6 siguen nombrando `huella.json`: son historia y no se
+   tocan.
+3. **«El SHA que se desplegará» no se puede escribir en esta sesión.** La spec suponía commits directos en `dev`; con
+   rama y PR (regla 6) el commit de `dev` es el del merge, y además F10-03 espera a FW, que añade commits. El acta
+   (§4.1) fija el último commit de código de la rama y la condición que debe cumplir el `dev` que se despliegue;
+   F10-03 escribe el SHA. Las cabeceras de `tareas.md` y la sección «Bloques de sesión» de este README siguen diciendo
+   «sin PR» y «directo en `dev`»: contradicen la regla 6 y manda la regla.
+4. **La integración vieja se corrió entera, por última vez**: `INTEG_RC=0`, 17.497 PASS, 0 FAIL, **0 SKIP**, con `-v` y
+   `WAPP_TEST_REQUIRE_DB=1`. `make test-integration` no lleva `-v`, así que no sirve para contar SKIP: se corrió su
+   procedimiento a mano.
+5. **El inventario de divergencias (T10.24) se hizo leyendo, no ejecutando.** La tarea decía que «se corren los dos
+   binarios»; no se corrió ninguno. Lo que quedó sin verificar está en `divergencias-visibles.md` §8. Tres cosas que
+   salen de él: la frase «Divergencia deliberada» solo cubre 1 de las 11 visibles; V5 (un callback del CRM con un
+   timestamp absurdo pasa de 200 a 401) no tiene decisión escrita; y un comentario de
+   `internal/modulos/captacion/reanalisis/reanalisis.go:337-338` dice que un error temprano «no ha tocado una sola
+   fila» cuando el texto pegado ya está guardado.
+6. **Las cifras de la spec que han cambiado** (todas en el acta §1): 498 tests viejos y no 497; 165 menciones de rutas
+   viejas en la documentación del repo y no 147; 6 ficheros y 22 `Test*` con base de datos en `internal/platform` y no
+   9 y 25; 7 directorios en `cmd/`.
+7. **La fecha de la ventana de UAT no está escrita.** D-F10-1 decide la duración (≥ 24 h), pero la fila de «Entradas»
+   pide fecha y hora. No bloquea el bloque A; la sesión F10-01 sigue «pendiente» en el índice de sesiones aunque sus
+   tres decisiones (D-F10-1, 2 y 6) tienen respuesta desde el 2026-09-30.
+8. **`make ci-docker` y `make test-procesos` no se corrieron en esta sesión.** Los procesos valen por F9-05 (el binario
+   no cambia: solo tests y `testdata`).
