@@ -210,7 +210,7 @@ esta decisión no arranca nada de F2 en adelante (ni F9-B).
 
 | # | Pregunta | Recomendación | Bloquea | Decisión |
 |---|---|---|---|---|
-| D-F10-1 | Ventana de la prueba en UAT en sustitución: **≥ 24 h** | Sí | F10 bloque B | sí (2026-09-30). ✎ **2026-10-11 (Jhoan) · la fecha es relativa**: la ventana se abre al cerrar la fase FW (TW.10), el primer día en que Jhoan pueda dar el veredicto 24 h después y hacer F10-04 en los 7 días siguientes (D-F10-2). F10-03 escribe el día y la hora reales en el acta (§5) al abrirla |
+| D-F10-1 | Ventana de la prueba en UAT en sustitución: **≥ 24 h** | Sí | F10 bloque B | sí (2026-09-30). ✎ **2026-10-11 (Jhoan) · la fecha es relativa**: la ventana se abre al cerrar la fase FW (TW.10), el primer día en que Jhoan pueda dar el veredicto 24 h después y hacer F10-04 en los 7 días siguientes (D-F10-2). F10-03 escribe el día y la hora reales en el acta (§5) al abrirla. ✎ **2026-10-11 (Jhoan, en F10-03) · sin ventana**: «la ventana no es necesaria ya que nadie usa UAT, así que no va a cambiar»; el modular quedó en UAT a las 22:17:54 UTC y la prueba funcional se hizo en local (acta §5) |
 | D-F10-2 | Si la prueba sale bien, dejar `server-modular` corriendo en UAT si el relevo llega en ≤ 7 días | Sí | F10 bloque B | sí (2026-09-30) |
 | D-F10-3 | Retirar `internal/pendiente` en el relevo | Sí | F10 bloque C | sí (2026-09-30) |
 | D-F10-4 | Portar `integration_test.go` y borrar `cmd/server/flows_integration_test.go` | Sí | F10 bloque C | sí (2026-09-30) |
