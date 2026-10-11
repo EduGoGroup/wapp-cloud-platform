@@ -259,18 +259,18 @@ Para cuando: un job de ventana nunca es visible para el worker en `pending` sin 
 > de esta línea y antes de T8.41 es la cabecera del bloque 7 original.
 Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 entera.
 
-- [ ] **T8.41 · Borrar `PutSourceText` y `ComposeAtFlush` (deuda D-35)** · 💻 · dep. T8.40 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgo 55 del README)
+- [x] **T8.41 · Borrar `PutSourceText` y `ComposeAtFlush` (deuda D-35)** — `d01e23a0` (F8-07a, 2026-10-10) · 💻 · dep. T8.40 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgo 55 del README)
   - **Ficheros**: `C/runtime/source_composer_flush.go` y su test (`ComposeAtFlush`), `C/runtime/source_composer.go` (`SourceTextWriter`, el campo `jobs` y el argumento del constructor), `internal/modulos/captacion/intake/{store,postgres,memory}.go` y sus tests (`PutSourceText`), `intakehelpertest/` (los casos `PutSourceText_*` y lo que solo ellos usen), `internal/arranque/fase5_captacion.go` y las aserciones de cableado que miran `composer.jobs`.
   - **Hecho cuando**: ninguna de las dos operaciones existe en el árbol nuevo; `intake.JobStore` vuelve a cuatro operaciones; los tests de cableado se actualizan en el mismo commit **sin debilitarse** (lo que afirmaba la identidad de `composer.jobs` desaparece con el campo, no se relaja); `G` rc=0 con 0 SKIP; suite `Contrato` de `intake` verde en memoria y en Postgres; D-35 marcada cerrada en `deuda.md`. **Fuera**: el código viejo.
   - **Gate**: `G` · `make test-procesos` (nuevo) · **Commit**: `refactor(captacion): fuera PutSourceText y ComposeAtFlush, sin llamante desde F8-06b (D-35)`
 
-- [ ] **T8.42 · El caso adversario del callback del CRM tolera el corte de conexión** · 💻 · dep. T8.35 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgos 14 y 58 del README)
+- [x] **T8.42 · El caso adversario del callback del CRM tolera el corte de conexión** — `c7700226` (F8-07a, 2026-10-10; la causa no era el 413: hallazgo 61 del README) · 💻 · dep. T8.35 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgos 14 y 58 del README)
   - **Ficheros**: `test/procesos/p6_crm_test.go` (`callback_body_adversarial`, ≈ :270) y sus helpers.
   - **Antes de tocar**: leer el caso y **confirmar** que el «connection reset by peer» / «broken pipe» es el servidor rechazando el cuerpo adversario mientras el test aún lo envía, y no otra cosa. En F8-06b solo se leyó el mensaje del log. Si no es eso, PARA y dilo.
   - **Hecho cuando**: el caso acepta como rechazo válido la respuesta de error **o** el corte al enviar, y sigue fallando si el servidor **acepta** el cuerpo; sin tocar el servidor; sin `time.Sleep` ni `t.Skip`; `-run TestP6_CRMBridge -count=10` verde contra los dos binarios.
   - **Gate**: `make vet-integracion` · `make test-procesos` · **Commit**: `procesos(solicitudes): el callback adversario del CRM tolera el corte de conexión`
 
-- [ ] **T8.43 · Repetir los mutantes que sostienen el arreglo de D-F7-9** · 💻 · dep. T8.41 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgo 57 del README)
+- [x] **T8.43 · Repetir los mutantes que sostienen el arreglo de D-F7-9** — sin commit: los siete mueren, sobre `c7700226` (F8-07a, 2026-10-10; tabla en el hallazgo 62 del README) · 💻 · dep. T8.41 — ✎ 2026-10-10 (Jhoan, tras F8-06b; hallazgo 57 del README)
   - **Qué**: en F8-06b, 37 de los 39 mutantes los corrieron los sub-agentes que escribieron el código; el orquestador solo repitió los dos del SQL contra Postgres real. Aquí los repite **quien no escribió el código**, sobre la cabeza integrada y **después de T8.41** (que cambia el compositor).
   - **Los siete**: en `C/runtime/aggregator_sweep.go` — (1) volver al orden viejo (cerrar y después componer y escribir), (2) cerrar sin sobre, (3) escribir el sobre sin cerrar, (4) quitar la guarda de «la ventana no cambió» (en el gemelo `intake/memory.go`, corriendo los tests de `runtime`); en `captacion/reanalisis/reanalisis.go` — (5) abrir el job y componer después, (6) abrir el job pese al fallo de composición, (7) tragarse el fallo de composición.
   - **Hecho cuando**: cada uno **compila** y mata al menos un test, con el nombre del test anotado; un mutante que no compila no cuenta como muerto; en serie y por `go test -overlay` sobre copias fuera del repo, nunca editando el checkout; si alguno sobrevive, nace su caso en un commit `test(…)`.

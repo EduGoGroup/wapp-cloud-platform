@@ -133,22 +133,21 @@ func TestAppendAndOpenJob_CarryNoText(t *testing.T) {
 	}
 }
 
-// TestJobStore_IsFiveOperations_AndBothImplementationsSatisfyIt: el puerto son CINCO operaciones
+// TestJobStore_IsFourOperations_AndBothImplementationsSatisfyIt: el puerto son CUATRO operaciones
 // y ninguna más —su tamaño es lo que impide que el sink lea en línea con el mensaje—, y lo
-// satisfacen el adaptador y el gemelo. La quinta, CloseWithSourceText, recibe el OpenJob que
+// satisfacen el adaptador y el gemelo. La cuarta, CloseWithSourceText, recibe el OpenJob que
 // se leyó y el sobre (D-F7-9, D-F8-13).
-func TestJobStore_IsFiveOperations_AndBothImplementationsSatisfyIt(t *testing.T) {
-	// Una interfaz con exactamente estos cinco métodos es asignable a JobStore y viceversa:
-	// añadir un sexto al puerto rompe la segunda asignación.
-	type five interface {
+func TestJobStore_IsFourOperations_AndBothImplementationsSatisfyIt(t *testing.T) {
+	// Una interfaz con exactamente estos cuatro métodos es asignable a JobStore y viceversa:
+	// añadir un quinto al puerto rompe la segunda asignación.
+	type four interface {
 		OpenOrAppend(ctx context.Context, a Append) error
 		CloseWindow(ctx context.Context, k WindowKey) (bool, error)
 		ListAggregating(ctx context.Context, limit int) ([]OpenJob, error)
-		PutSourceText(ctx context.Context, k WindowKey, env SourceText) (bool, error)
 		CloseWithSourceText(ctx context.Context, seen OpenJob, env SourceText) (bool, error)
 	}
 	for name, port := range map[string]JobStore{"gemelo": (*MemoryStore)(nil), "adaptador": (*Postgres)(nil)} {
-		var narrow five = port
+		var narrow four = port
 		var back JobStore = narrow
 		if back == nil {
 			t.Errorf("el %s no satisface JobStore", name)

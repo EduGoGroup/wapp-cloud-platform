@@ -2,19 +2,135 @@ package runtime
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
-// Compose: leer el hilo, componer y cifrar, SIN escribir (D-F7-9, D-F8-13). Es lo que el agregador
-// llama antes de cerrar la ventana. El montaje (composerRig) es el de source_composer_flush_test.go:
-// su almacén tiene UNA fila `pending` sin sobre, que aquí tiene que quedar intacta.
+// Compose: el compositor cableado —leer el hilo, componer y cifrar, SIN escribir (D-F7-9, D-F8-13)—.
+// Es lo que el agregador llama antes de cerrar la ventana. La función pura que reparte el hilo se
+// prueba en source_composer_test.go. El almacén del montaje (composerRig) tiene UNA fila `pending`
+// sin sobre, que aquí tiene que quedar intacta.
+
+// composerRead es una lectura del hilo tal como llegó al doble.
+type composerRead struct {
+	marked  bool
+	eventID string
+	limit   int
+}
+
+// composerThread es el ThreadReader: devuelve siempre las mismas entradas (o falla).
+type composerThread struct {
+	entries []events.ThreadEntry
+	err     error
+	reads   []composerRead
+}
+
+type composerCtxKey struct{}
+
+func composerCtx() context.Context {
+	return context.WithValue(context.Background(), composerCtxKey{}, "marked")
+}
+
+func (th *composerThread) ListThread(ctx context.Context, eventID string, limit int) ([]events.ThreadEntry, error) {
+	th.reads = append(th.reads, composerRead{marked: ctx.Value(composerCtxKey{}) == "marked", eventID: eventID, limit: limit})
+	if th.err != nil {
+		return nil, th.err
+	}
+	return th.entries, nil
+}
+
+// composerBrokenKeys es un KeyProvider que no sabe envolver: hace fallar el cifrado.
+type composerBrokenKeys struct{ err error }
+
+func (k composerBrokenKeys) WrapDEK([]byte) ([]byte, string, error)   { return nil, "", k.err }
+func (k composerBrokenKeys) UnwrapDEK([]byte, string) ([]byte, error) { return nil, k.err }
+func (composerBrokenKeys) BlindIndex(string, string) string           { return "" }
+func (composerBrokenKeys) CurrentKeyID() string                       { return "broken" }
+
+// Aserciones de compilación: el compositor llena el hueco del agregador, y su único puerto lo
+// cumple el doble del hilo.
+var (
+	_ SourceComposer     = (*SourceTextComposer)(nil)
+	_ ThreadReader       = (*composerThread)(nil)
+	_ crypto.KeyProvider = composerBrokenKeys{}
+)
+
+// composerClientText es el literal del cliente: no puede aparecer en ningún log ni en ningún error.
+const composerClientText = "dos tortas de chocolate zzq"
+
+// composerRig es un compositor con sus tres dependencias y, aparte, un almacén con una ventana
+// recién cerrada. El almacén NO es una dependencia del compositor (no tiene por dónde escribir en
+// él): está para que requireUntouchedStore pruebe que componer no toca `intake_jobs`.
+type composerRig struct {
+	log    *sinkLogRecorder
+	thread *composerThread
+	jobs   *intake.MemoryStore
+	cipher *crypto.FieldCipher
+	key    intake.WindowKey
+}
+
+func newComposerRig(t *testing.T, entries ...events.ThreadEntry) *composerRig {
+	t.Helper()
+	kek := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x33}, 32))
+	index := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x44}, 32))
+	keys, err := crypto.NewEnvKeyProvider(crypto.KeyringConfig{KeyringB64: "K1:" + kek, CurrentID: "K1", IndexB64: index})
+	if err != nil {
+		t.Fatalf("no se pudo montar el keyring del test: %v", err)
+	}
+	at := time.Date(2026, 3, 4, 10, 0, 0, 0, time.UTC)
+	rig := &composerRig{
+		log:    newSinkLogRecorder(),
+		thread: &composerThread{entries: entries},
+		jobs:   intake.NewMemoryStore(func() time.Time { return at }),
+		cipher: crypto.NewFieldCipher(keys),
+		key:    intake.WindowKey{TenantID: "tenant-1", SessionID: "session-9", ContactID: "contact-opaque", EventID: "event-7"},
+	}
+	rig.jobs.Seed(intake.Job{Key: rig.key, Status: intake.StatusPending})
+	rig.jobs.ResetCounters()
+	return rig
+}
+
+func (r *composerRig) composer(opts ...SourceTextComposerOption) *SourceTextComposer {
+	return NewSourceTextComposer(r.log, r.thread, r.cipher, opts...)
+}
+
+// envelope devuelve el sobre de la única fila del almacén.
+func (r *composerRig) envelope(t *testing.T) intake.SourceText {
+	t.Helper()
+	jobs := r.jobs.Jobs()
+	if len(jobs) != 1 {
+		t.Fatalf("el almacén tiene %d filas, quería 1", len(jobs))
+	}
+	return jobs[0].SourceText
+}
+
+// requireNoContent falla si el literal del cliente aparece en el log o en el error.
+func (r *composerRig) requireNoContent(t *testing.T, err error) {
+	t.Helper()
+	if dump := r.log.dump(); strings.Contains(dump, "zzq") {
+		t.Errorf("el log lleva contenido del hilo (REQ-10c):\n%s", dump)
+	}
+	if err != nil && strings.Contains(err.Error(), "zzq") {
+		t.Errorf("el error cita contenido del hilo (REQ-10c): %v", err)
+	}
+}
+
+// composerThreadFixture es un hilo con las dos clases de entrada que cuentan.
+func composerThreadFixture() []events.ThreadEntry {
+	return []events.ThreadEntry{
+		composerEntry(events.KindSummary, events.RoleSystem, "tenías un pan zzq"),
+		composerClient(composerClientText), composerBusiness("anotado zzq"),
+	}
+}
 
 // requireUntouchedStore falla si Compose escribió algo en intake_jobs.
 func (r *composerRig) requireUntouchedStore(t *testing.T) {
@@ -31,7 +147,7 @@ func (r *composerRig) requireUntouchedStore(t *testing.T) {
 // evento de la clave y el límite por defecto, y DEVUELVE un sobre de tres piezas que se abre con el
 // mismo keyring y da exactamente el Text compuesto. En intake_jobs no toca nada.
 //
-// Mata: «Compose escribe con PutSourceText».
+// Mata: «Compose escribe en intake_jobs».
 func TestSourceTextComposer_Compose_ReturnsTheSealedEnvelopeWithoutWriting(t *testing.T) {
 	rig := newComposerRig(t, composerThreadFixture()...)
 
@@ -43,6 +159,9 @@ func TestSourceTextComposer_Compose_ReturnsTheSealedEnvelopeWithoutWriting(t *te
 	wantRead := composerRead{marked: true, eventID: "event-7", limit: 200}
 	if len(rig.thread.reads) != 1 || rig.thread.reads[0] != wantRead {
 		t.Errorf("lecturas del hilo = %+v, quería una: %+v", rig.thread.reads, wantRead)
+	}
+	if DefaultThreadLimit != 200 {
+		t.Errorf("DefaultThreadLimit = %d, quería 200", DefaultThreadLimit)
 	}
 	if !env.Complete() || env.KEKID != "K1" {
 		t.Fatalf("sobre = (enc %d bytes, dek %d bytes, kek %q), quería las tres piezas con la KEK current", len(env.Enc), len(env.DEK), env.KEKID)
@@ -83,21 +202,29 @@ func TestSourceTextComposer_Compose_LogsNumbersNeverContent(t *testing.T) {
 	rig.requireNoContent(t, nil)
 }
 
-// TestSourceTextComposer_Compose_WorksWithoutAJobStore: Compose no escribe y por tanto no necesita
-// `jobs`. Con jobs a nil sigue devolviendo el sobre (ComposeAtFlush, en cambio, es un no-op).
-//
-// Mata: «la guarda de nil de Compose exige jobs» (el agregador cerraría toda ventana sin sobre).
-func TestSourceTextComposer_Compose_WorksWithoutAJobStore(t *testing.T) {
-	rig := newComposerRig(t, composerClient(composerClientText))
-	composer := NewSourceTextComposer(rig.log, rig.thread, nil, rig.cipher)
-
-	env, err := composer.Compose(composerCtx(), rig.key)
-
-	if err != nil || !env.Complete() {
-		t.Fatalf("Compose sin jobs = (sobre completo %v, %v), quería un sobre completo y nil", env.Complete(), err)
+// TestWithThreadLimit: el límite inyectado es el que se pide al lector; <= 0 se ignora.
+func TestWithThreadLimit(t *testing.T) {
+	cases := []struct {
+		name string
+		opts []SourceTextComposerOption
+		want int
+	}{
+		{"positive", []SourceTextComposerOption{WithThreadLimit(3)}, 3},
+		{"zero is ignored", []SourceTextComposerOption{WithThreadLimit(0)}, DefaultThreadLimit},
+		{"negative is ignored", []SourceTextComposerOption{WithThreadLimit(-5)}, DefaultThreadLimit},
+		{"ignored value keeps the previous one", []SourceTextComposerOption{WithThreadLimit(7), WithThreadLimit(0)}, 7},
+		{"last positive wins", []SourceTextComposerOption{WithThreadLimit(7), WithThreadLimit(9)}, 9},
 	}
-	if plain, derr := rig.cipher.Decrypt(env.Enc, env.DEK, env.KEKID); derr != nil || !strings.Contains(plain, composerClientText) {
-		t.Errorf("el sobre no abre al hilo (error %v)", derr)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rig := newComposerRig(t, composerClient("hola"))
+			if _, err := rig.composer(c.opts...).Compose(composerCtx(), rig.key); err != nil {
+				t.Fatalf("Compose devolvió %v, quería nil", err)
+			}
+			if len(rig.thread.reads) != 1 || rig.thread.reads[0].limit != c.want {
+				t.Errorf("lecturas = %+v, quería una con límite %d", rig.thread.reads, c.want)
+			}
+		})
 	}
 }
 
@@ -108,11 +235,14 @@ func TestSourceTextComposer_Compose_NoOpWithoutADependency(t *testing.T) {
 	var nilComposer *SourceTextComposer
 	cases := map[string]*SourceTextComposer{
 		"nil receiver": nilComposer,
-		"nil logger":   NewSourceTextComposer(nil, rig.thread, rig.jobs, rig.cipher),
-		"nil thread":   NewSourceTextComposer(rig.log, nil, rig.jobs, rig.cipher),
-		"nil cipher":   NewSourceTextComposer(rig.log, rig.thread, rig.jobs, nil),
+		"nil logger":   NewSourceTextComposer(nil, rig.thread, rig.cipher),
+		"nil thread":   NewSourceTextComposer(rig.log, nil, rig.cipher),
+		"nil cipher":   NewSourceTextComposer(rig.log, rig.thread, nil),
 	}
 	for name, composer := range cases {
+		if name != "nil receiver" && composer == nil {
+			t.Errorf("%s: NewSourceTextComposer devolvió nil", name)
+		}
 		env, err := composer.Compose(composerCtx(), rig.key)
 		if err != nil || !env.Empty() {
 			t.Errorf("%s: Compose = (sobre vacío %v, %v), quería el sobre vacío y nil", name, env.Empty(), err)
@@ -158,6 +288,9 @@ func TestSourceTextComposer_Compose_NoMessagesIsAnEmptyEnvelope(t *testing.T) {
 			composerEntry(events.KindSummary, events.RoleSystem, "tenías dos tortas zzq"),
 			composerEntry(events.KindMessageOutOfTurn, events.RoleBusiness, "¿sigues ahí? zzq"),
 		}, 2},
+		{"only decisions and empty messages", []events.ThreadEntry{
+			composerEntry(events.KindDecision, events.RoleClient, "zzq"), composerClient(""),
+		}, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -208,7 +341,7 @@ func TestSourceTextComposer_Compose_Failures(t *testing.T) {
 			name: "encrypting",
 			build: func(rig *composerRig) *SourceTextComposer {
 				broken := crypto.NewFieldCipher(composerBrokenKeys{err: boom})
-				return NewSourceTextComposer(rig.log, rig.thread, rig.jobs, broken)
+				return NewSourceTextComposer(rig.log, rig.thread, broken)
 			},
 			wantPrefix: "compositor: cifrar el literal de la ventana del evento event-7: ",
 		},

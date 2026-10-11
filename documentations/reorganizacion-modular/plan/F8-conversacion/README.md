@@ -673,6 +673,71 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     cambiado**: el hilo y la cola no se escriben en un solo acto, así que un mensaje ya en el hilo cuya fila aún no movió
     `OpenOrAppend` puede entrar en el sobre y abrir después otra ventana; pasaba igual con el orden viejo y no es D-F7-9. ✎ Deuda **D-37** de `deuda.md` (Jhoan, 2026-10-10: post-migración;
     deducido leyendo, sin verificar el orden real de las dos escrituras).
+60. **(F8-07a, T8.41) `PutSourceText` y `ComposeAtFlush`, borrados; arrastraban más de lo que decía la ficha.** `d01e23a0`:
+    27 ficheros, 3 borrados enteros (`source_composer_flush.go`, su test y `intakehelpertest/queue_put_contrato.go`).
+    `intake.JobStore` vuelve a **cuatro** operaciones y el compositor ya no conoce `intake_jobs`
+    (`NewSourceTextComposer(log, thread, cipher, opts...)`). **No apareció ningún llamante de producción.** Lo que la
+    ficha no listaba: (a) con las operaciones caen `putSourceTextSQL`, `Counters.PutSourceText`, `FailPutWith` y
+    `lastPendingLocked`, que solo ellas usaban; (b) dos tests del **agregador** leían ese contador: pierden ese sumando y
+    nada más; (c) **solo un** test de cableado miraba `composer.jobs` (`captacion_cableado_test.go`); en
+    `conversacion_cableado_test.go` el `"jobs"` es el del agregador y no se tocó; (d) `source_composer_flush_test.go`
+    alojaba el montaje que usa `source_composer_compose_test.go`: se movió tal cual (queda en 372 líneas); (e) cuatro
+    conductas las custodiaba **solo** el fichero de flush y se portaron a `Compose` en vez de perderse —
+    `TestWithThreadLimit`, `DefaultThreadLimit == 200`, «el constructor nunca devuelve nil» y el Warn del hilo con solo
+    decisiones—. Se pierden a propósito, por ser conducta de lo borrado: el fallo al guardar el sobre, `DoesNotOverwrite`
+    (hallazgo 35) y el caso «sin almacén». La suite `Contrato` de la cola baja en **6 casos**, y con ellos la única
+    custodia en Postgres real del `ORDER BY` de `putSourceTextSQL`, que también se fue. 🟡 Quedan nueve comentarios que
+    nombran `PutSourceText`/`ComposeAtFlush`: todos hablan del árbol **viejo** o en pasado; tres están en presente
+    (`aggregator_sweep.go:298`, `intake/store.go:202`, `intake/postgres.go:142`) y pasarán a mentir cuando el viejo muera
+    en F10. Deuda **D-35 cerrada**.
+61. **(F8-07a, T8.42) 🟡 La causa de la intermitencia del callback del CRM no era el 413.** La ficha suponía «el servidor
+    rechaza el cuerpo adversario mientras el test aún lo envía». El mecanismo es ese, **el culpable no**: (a) un **413 no
+    puede provocarlo**, porque para darlo `MaxBytesReader` ya leyó el cuerpo hasta el techo; (b) lo provoca la respuesta
+    que sale **sin leer el cuerpo** —el 401 «fuera de ventana», que va antes que el cuerpo, o un **429** del límite por IP
+    (≈ 75 por pasada de `TestP6_CRMBridge`), que puede caer sobre cualquiera de los cuatro cuerpos de 64 KiB, también el
+    que espera 200—: `net/http` cierra sin drenar lo que el handler no leyó y el cliente, a medio escribir, pierde a veces
+    la carrera. Igual en los dos binarios. **Cómo se comprobó**: leyendo las dos caras y `net/http`, y con un programa
+    aislado fuera del repo (401 sin leer un cuerpo de 64 KiB + 1: **10 cortes en 3.000**; 413 con `MaxBytesReader`: **0 en
+    3.000**). 🟡 **En los procesos, antes del arreglo, no se reprodujo** (10 pasadas de
+    `TestP6_CRMBridge` contra el nuevo, 0 fallos); después, en 40 pasadas más (20 por binario) **ocurrió una vez**, contra
+    el nuevo, y el reintento lo absorbió (contador «callbacks reintentados por corte al enviar: 1»). Cuál de las dos
+    respuestas fue —401 o 429— **no se sabe**, ni en esa ni en las de los hallazgos 14 y 58. De paso:
+    `p6_crm_test.go:270` era el helper `post`, por donde pasan todos los callbacks, no el subcaso. **El arreglo**
+    (`c7700226`, solo `test/procesos/`): `post` reintenta el corte dentro del tope con el que ya reintentaba el 429, así
+    que el de 64 KiB justos sigue exigiendo su 200 y los 413 su código; los tres callbacks sobre el techo van por
+    `postRejected`, que da por rechazo la respuesta de error o, si en todo el tope no llega ninguna, el corte. **Sigue
+    mordiendo**: con `crmCallbackMaxBody` subido a 128 KiB (overlay, sin commit) el caso da rojo («HTTP 200 …; quería
+    413»). Como la rama casi nunca se ejercita sola, nace `TestP6CutWhileSending`, que fija el clasificador contra un
+    corte real; y encontró algo: el mismo corte sale con una **tercera cara**, «use of closed network connection» (6 de
+    300 antes de incluirla; 1.000 de 1.000 después), que los hallazgos 14 y 58 no habían visto.
+62. **(F8-07a, T8.43) Los siete mutantes, repetidos por el orquestador: ninguno sobrevive.** Sobre `c7700226`, en serie,
+    `GOWORK=off GOTOOLCHAIN=go1.26.5 go test -count=1 -overlay <json> <paquete>` con el paquete entero y la copia mutada
+    fuera del repo; antes, `go vet` con el mismo overlay: **los ocho compilan** (el 2 va en dos variantes). 🟡 Tras T8.41
+    los mutantes **(1) y (3) ya no se pueden escribir al pie de la letra**: sin `PutSourceText` no hay operación que
+    ponga un sobre en una fila ya `pending`; van en su variante más fiel.
+
+    | # | Mutante | Dónde | Tests que caen |
+    |---|---|---|---|
+    | 1 | orden viejo: `CloseWindow`, después componer e intentar `CloseWithSourceText` (variante) | `runtime/aggregator_sweep.go` | 10 — `TestSweep_TheEnvelopeTravelsWithTheClose`, `TestSweep_ComposesOncePerWindowItClosed`, `TestSweep_TheClosedJobCarriesExactlyTheComposedEnvelope`, `TestSweep_AMessageDuringTheCompositionKeepsTheWindowOpen`, `TestSweep_EmptyThreadClosesWithAnEmptyEnvelope`, `TestSweep_CloseWithEnvelopeFailure_IsAnErrorOnlyWhileTheContextLives`, `TestSweep_StoreFailuresAreLoggedAndSkipped`, `TestWithSourceComposer_DefaultsToAnEmptyComposer`, `TestRun_ContextCancelled_ReturnsWithoutLoggingAtError`, `TestRun_AHintDuringASweepIsNotLost` |
+    | 2a | cerrar sin sobre, por `CloseWindow` | ídem | 8 — los de (1) menos los dos `TestRun_…` |
+    | 2b | cerrar con el sobre vacío | ídem | 5 — `…TravelsWithTheClose`, `…ComposesOncePerWindowItClosed`, `…CarriesExactlyTheComposedEnvelope`, `…AMessageDuringTheCompositionKeepsTheWindowOpen`, `…StoreFailuresAreLoggedAndSkipped` |
+    | 3 | componer y no cerrar (variante) | ídem | 36 — casi todo test que espera un cierre; entre ellos `TestSweep_ComposesOncePerWindowItClosed` y `TestSweep_SilenceIsTheMainPath` |
+    | 4 | sin la guarda `updated_at` | el gemelo `intake/memory.go`, con los tests de `runtime` | **1** — `TestSweep_AMessageDuringTheCompositionKeepsTheWindowOpen` |
+    | 5 | abrir el job y componer después | `reanalisis/reanalisis.go` | 6 — `TestReanalyze_TheJobIsBornWithExactlyTheComposedEnvelope`, `TestReanalyze_FullStepSequenceIsTheContract`, `TestReanalyze_LocalVia_SequenceSkipsTheViaGate`, `TestReanalyze_ComposerDown_FailsTheRequestAndOpensNoJob`, `TestReanalyze_OpenJobFails_ErrorAsIsAndNoJob`, `TestReanalyze_TextThatSanitizesToEmpty_IsLikeNotSendingIt` |
+    | 6 | abrir pese al fallo de composición | ídem | **1** — `TestReanalyze_ComposerDown_FailsTheRequestAndOpensNoJob` |
+    | 7 | tragarse el fallo de composición | ídem | **1** — el mismo |
+
+    Tres mutantes —el (4), el (6) y el (7)— cuelgan de **un solo test** cada uno, y el (6) y el (7) del mismo: confirma
+    lo que el hallazgo 57 decía del (4) y lo extiende al re-análisis. No nació ningún caso nuevo.
+63. **(F8-07a, gates y método) Verdes sobre `c7700226`.** `GOWORK=off make ci-local` rc=0 (239 `ok`, lint `0 issues.`,
+    también con `--build-tags pendiente,integracion`); `PENDIENTES=0 · ROJOS=0`; 0 `--- SKIP` (4.462 PASS de primer nivel,
+    eran 4.475); `BINARIO=nuevo make test-procesos` `RC=0 · PASS=1288 · FAIL=0 · SKIP=0` a la primera (eran 1.293: −6
+    casos de `PutSourceText`, +1 `TestP6CutWhileSending`); `-run TestP6_CRMBridge -count=10` rc=0 contra los dos binarios.
+    **Sin correr**: `make ci-docker`, la integración vieja, el arranque real (F8-07b) y los procesos **enteros** contra
+    el viejo. Método: (a) una pasada de `TestP6_CRMBridge` cuesta ≈ 50 s, así que cada `-count=10` son ≈ 8,5 min y la
+    sesión gastó ≈ 45 min solo en ellos; (b) el overlay llega al binario que compila el arnés con
+    `GOFLAGS=-overlay=<json>`, porque `compilar` hereda el entorno: así se mutó el **servidor** sin tocar el checkout;
+    (c) un selftest del clasificador de errores encontró en 300 pasadas lo que 30 pasadas del proceso no enseñaban.
 
 ## Orden de lectura
 

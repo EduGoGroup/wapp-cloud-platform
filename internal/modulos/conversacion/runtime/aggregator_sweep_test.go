@@ -284,7 +284,7 @@ func TestSweep_LostRaceIsNotAClose(t *testing.T) {
 	if job := rig.jobs.Jobs()[0]; job.Status != intake.StatusAggregating || !job.SourceText.Empty() {
 		t.Errorf("job = (status %q, sobre vacío %v): quien pierde la carrera no toca la fila", job.Status, job.SourceText.Empty())
 	}
-	if got := rig.jobs.Counters(); got.PutSourceText != 0 || got.Close != 0 {
+	if got := rig.jobs.Counters(); got.Close != 0 {
 		t.Errorf("presupuesto = %+v: el sobre de una carrera perdida no se escribe por otra vía", got)
 	}
 	if len(rig.log.at("error"))+len(rig.log.at("debug")) != 0 {

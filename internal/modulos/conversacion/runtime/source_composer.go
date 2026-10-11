@@ -283,18 +283,6 @@ type ThreadReader interface {
 	ListThread(ctx context.Context, eventID string, limit int) ([]events.ThreadEntry, error)
 }
 
-// SourceTextWriter es lo ÚNICO que el compositor necesita de `intake_jobs`: dejar
-// el sobre. No puede listar, no puede cerrar y no puede abrir ventanas. Lo satisface
-// intake.JobStore.
-//
-// ⚠️ Solo lo usa ComposeAtFlush, que desde T8.40 no tiene llamante de producción en el
-// árbol nuevo (el agregador y el re-análisis usan Compose, que no escribe). Se conserva
-// a propósito, con ComposeAtFlush y PutSourceText (decisión de Jhoan, 2026-10-10); qué
-// se hace con ellos se decide después.
-type SourceTextWriter interface {
-	PutSourceText(ctx context.Context, k intake.WindowKey, env intake.SourceText) (bool, error)
-}
-
 // DefaultThreadLimit acota cuántas entradas del hilo entran al `source_text`: 200. Es
 // un techo de TAMAÑO DE PROMPT, no una regla de negocio: el pipeline paga por token y
 // un hilo de mil entradas no cabe en ninguna ventana de contexto útil. El recorte
@@ -307,14 +295,13 @@ type SourceTextWriter interface {
 const DefaultThreadLimit = 200
 
 // SourceTextComposer implementa SourceComposer (aggregator.go): lee el hilo, compone y
-// cifra (Compose). Guardar el sobre ya no es suyo en el cierre de una ventana —lo guarda
-// el agregador, en la misma sentencia que cierra—, ni al abrir un job de re-análisis
-// —nace con él, T8.40—; sí lo es en ComposeAtFlush (source_composer_flush.go), que
-// desde T8.40 no tiene llamante de producción y se conserva a propósito.
+// cifra (Compose). Guardar el sobre NO es suyo: en el cierre de una ventana lo guarda el
+// agregador, en la misma sentencia que cierra, y un job de re-análisis nace con él
+// (T8.40). Por eso el compositor no conoce `intake_jobs`: no tiene ningún puerto de
+// escritura (el que tuvo, con el método que componía Y guardaba, se borró en T8.41, D-35).
 type SourceTextComposer struct {
 	log    logger.Logger
 	thread ThreadReader
-	jobs   SourceTextWriter
 	// cipher es el MISMO stack de claves que cifra el hilo, los contactos y los
 	// datos del comprador (keyring versionado del Plan 012). Un segundo cipher sería
 	// una segunda rotación que gestionar.
@@ -343,14 +330,12 @@ func WithThreadLimit(n int) SourceTextComposerOption {
 // comprador (keyring versionado del Plan 012). Un segundo cipher sería una segunda
 // rotación que gestionar.
 //
-// Con log, thread o cipher a nil el compositor es un no-op seguro (ver Compose y
-// ComposeAtFlush): el job se queda en `pending` con el sobre a NULL, que es una forma
-// legítima en la 0072. Con jobs a nil, ComposeAtFlush es un no-op también, pero Compose
-// funciona igual: no escribe y por tanto no lo necesita. No lee ni escribe nada al
-// construir.
-func NewSourceTextComposer(log logger.Logger, thread ThreadReader, jobs SourceTextWriter,
+// Con log, thread o cipher a nil el compositor es un no-op seguro (ver Compose): el job
+// se queda en `pending` con el sobre a NULL, que es una forma legítima en la 0072. No
+// lee ni escribe nada al construir.
+func NewSourceTextComposer(log logger.Logger, thread ThreadReader,
 	cipher *crypto.FieldCipher, opts ...SourceTextComposerOption) *SourceTextComposer {
-	c := &SourceTextComposer{log: log, thread: thread, jobs: jobs, cipher: cipher, limit: DefaultThreadLimit}
+	c := &SourceTextComposer{log: log, thread: thread, cipher: cipher, limit: DefaultThreadLimit}
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -366,8 +351,7 @@ func NewSourceTextComposer(log logger.Logger, thread ThreadReader, jobs SourceTe
 // Los pasos, en orden, todos con el ctx recibido:
 //
 //  1. No-op: sobre un receptor nil, o un compositor construido con log, thread o cipher
-//     a nil, devuelve el sobre vacío y nil sin leer ni loguear. 🔴 `jobs` NO se mira:
-//     Compose no escribe.
+//     a nil, devuelve el sobre vacío y nil sin leer ni loguear.
 //  2. Clave incompleta (intake.WindowKey.Valid() == false): devuelve el error de texto
 //     "compositor: clave de ventana incompleta", sin leer el hilo.
 //  3. Lee el hilo UNA vez: ListThread(ctx, key.EventID, límite). Si falla, devuelve
@@ -407,11 +391,10 @@ func (c *SourceTextComposer) Compose(ctx context.Context, key intake.WindowKey) 
 	return env, nil
 }
 
-// seal es el núcleo que comparten Compose y ComposeAtFlush: los pasos 2 a 5 de Compose
-// (clave, lectura del hilo, composición, aviso del hilo sin mensajes y cifrado). No
-// escribe en `intake_jobs` y NO deja el Debug del literal compuesto: devuelve el
-// Composed para que cada llamante lo registre en su momento —Compose al devolver el
-// sobre, ComposeAtFlush solo si de verdad lo escribió, como hacía el viejo—.
+// seal es el núcleo de Compose: sus pasos 2 a 5 (clave, lectura del hilo, composición,
+// aviso del hilo sin mensajes y cifrado). No escribe en `intake_jobs` y NO deja el Debug
+// del literal compuesto: devuelve el Composed para que Compose lo registre al devolver
+// el sobre.
 //
 // Con cero mensajes devuelve el sobre vacío, el Composed (Empty) y nil, tras el Warn.
 // Quien llama ya comprobó las dependencias: aquí log, thread y cipher no son nil.

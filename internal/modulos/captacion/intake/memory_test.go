@@ -21,7 +21,6 @@ var (
 	_ intake.JobStore                                                 = (*intake.MemoryStore)(nil)
 	_ func(func() time.Time) *intake.MemoryStore                      = intake.NewMemoryStore
 	_ func(*intake.MemoryStore, error)                                = (*intake.MemoryStore).FailOpenWith
-	_ func(*intake.MemoryStore, error)                                = (*intake.MemoryStore).FailPutWith
 	_ func(*intake.MemoryStore) intake.Counters                       = (*intake.MemoryStore).Counters
 	_ func(*intake.MemoryStore)                                       = (*intake.MemoryStore).ResetCounters
 	_ func(*intake.MemoryStore) []intake.Job                          = (*intake.MemoryStore).Jobs
@@ -29,7 +28,7 @@ var (
 	_ func(*intake.MemoryStore, context.Context, intake.Append) error = (*intake.MemoryStore).OpenOrAppend
 )
 
-// La quinta operación y su gancho de fallo (D-F7-9, D-F8-13). Sus tests propios están en
+// La cuarta operación y su gancho de fallo (D-F7-9, D-F8-13). Sus tests propios están en
 // close_with_source_text_test.go, y las promesas del puerto, en la suite de la cola.
 var _ func(*intake.MemoryStore, error) = (*intake.MemoryStore).FailCloseWithSourceTextWith
 
@@ -187,13 +186,7 @@ func TestMemoryStore_Counters_CountCallsNotEffects(t *testing.T) {
 			t.Fatalf("ListAggregating: error inesperado %v", err)
 		}
 	}
-	if _, err := store.PutSourceText(ctx, k, fullEnvelope()); err != nil {
-		t.Fatalf("PutSourceText: error inesperado %v", err)
-	}
-	if _, err := store.PutSourceText(ctx, k, intake.SourceText{}); err == nil { // rechazado, y cuenta
-		t.Fatal("PutSourceText con un sobre vacío: quería error")
-	}
-	want := intake.Counters{OpenOrAppend: 3, Close: 2, Reads: 4, PutSourceText: 2}
+	want := intake.Counters{OpenOrAppend: 3, Close: 2, Reads: 4}
 	got := store.Counters()
 	if got != want {
 		t.Errorf("Counters = %+v, quería %+v", got, want)
@@ -241,46 +234,6 @@ func TestMemoryStore_FailOpenWith_FailsWithoutWriting(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_FailPutWith_LeavesTheClosedWindowWithoutEnvelope: con el fallo puesto,
-// PutSourceText devuelve (false, ESE error) —antes incluso de mirar el sobre— y la ventana se
-// queda `pending` con el sobre vacío; nil vuelve a la normalidad.
-func TestMemoryStore_FailPutWith_LeavesTheClosedWindowWithoutEnvelope(t *testing.T) {
-	store := intake.NewMemoryStore(newMemoryClock().Now)
-	ctx := context.Background()
-	k := key("e1")
-	if err := store.OpenOrAppend(ctx, intake.Append{Key: k}); err != nil {
-		t.Fatalf("OpenOrAppend: error inesperado %v", err)
-	}
-	if ok, err := store.CloseWindow(ctx, k); err != nil || !ok {
-		t.Fatalf("CloseWindow = (%v, %v), quería (true, nil)", ok, err)
-	}
-	boom := errors.New("el compositor no pudo")
-	store.FailPutWith(boom)
-	for name, env := range map[string]intake.SourceText{"completo": fullEnvelope(), "incompleto": {}} {
-		if ok, err := store.PutSourceText(ctx, k, env); !errors.Is(err, boom) || ok {
-			t.Errorf("PutSourceText (sobre %s) con el fallo puesto = (%v, %v), quería (false, %v)", name, ok, err, boom)
-		}
-	}
-	if job := store.Jobs()[0]; job.Status != intake.StatusPending || job.SourceText.Complete() || len(job.SourceText.Enc) != 0 {
-		t.Errorf("tras el fallo la fila es (status %q, sobre %+v), quería pending y sin sobre", job.Status, job.SourceText)
-	}
-	store.FailPutWith(nil)
-	if ok, err := store.PutSourceText(ctx, k, fullEnvelope()); err != nil || !ok {
-		t.Errorf("PutSourceText tras quitar el fallo = (%v, %v), quería (true, nil)", ok, err)
-	}
-}
-
-// TestMemoryStore_PutSourceText_IncompleteEnvelopeMessage: el rechazo del sobre a medias lleva
-// el texto del gemelo viejo, byte a byte.
-func TestMemoryStore_PutSourceText_IncompleteEnvelopeMessage(t *testing.T) {
-	store := intake.NewMemoryStore(newMemoryClock().Now)
-	_, err := store.PutSourceText(context.Background(), key("e1"), intake.SourceText{Enc: []byte("enc")})
-	const want = "intake: sobre del literal incompleto (son las tres o ninguna)"
-	if err == nil || err.Error() != want {
-		t.Errorf("error = %v, quería %q", err, want)
-	}
-}
-
 // TestMemoryStore_IncompleteKey_CountsAndComesBeforeTheInjectedFailure: la llamada rechazada por
 // su clave CUENTA en el presupuesto (cuenta llamadas, como las fallidas), y la clave se mira antes
 // que el fallo inyectado, que simula la base: a Postgres esa llamada ni le llega.
@@ -289,7 +242,6 @@ func TestMemoryStore_IncompleteKey_CountsAndComesBeforeTheInjectedFailure(t *tes
 	ctx := context.Background()
 	boom := errors.New("la base no contesta")
 	store.FailOpenWith(boom)
-	store.FailPutWith(boom)
 	noEvent := key("")
 	if err := store.OpenOrAppend(ctx, intake.Append{Key: noEvent}); err == nil || errors.Is(err, boom) {
 		t.Errorf("OpenOrAppend = %v, quería el rechazo de la clave y no el fallo inyectado", err)
@@ -297,10 +249,7 @@ func TestMemoryStore_IncompleteKey_CountsAndComesBeforeTheInjectedFailure(t *tes
 	if ok, err := store.CloseWindow(ctx, noEvent); err == nil || ok {
 		t.Errorf("CloseWindow = (%v, %v), quería (false, el rechazo de la clave)", ok, err)
 	}
-	if ok, err := store.PutSourceText(ctx, noEvent, fullEnvelope()); err == nil || errors.Is(err, boom) || ok {
-		t.Errorf("PutSourceText = (%v, %v), quería (false, el rechazo de la clave) y no el fallo inyectado", ok, err)
-	}
-	if got, want := store.Counters(), (intake.Counters{OpenOrAppend: 1, Close: 1, PutSourceText: 1}); got != want {
+	if got, want := store.Counters(), (intake.Counters{OpenOrAppend: 1, Close: 1}); got != want {
 		t.Errorf("Counters = %+v, quería %+v (las rechazadas cuentan)", got, want)
 	}
 	if jobs := store.Jobs(); len(jobs) != 0 {
@@ -331,12 +280,9 @@ func TestMemoryStore_Jobs_CopiesInCreationOrder(t *testing.T) {
 		}
 	}
 
-	k := key("event-1")
-	if _, err := store.CloseWindow(ctx, k); err != nil {
-		t.Fatalf("CloseWindow: error inesperado %v", err)
-	}
-	if _, err := store.PutSourceText(ctx, k, fullEnvelope()); err != nil {
-		t.Fatalf("PutSourceText: error inesperado %v", err)
+	seen := intake.OpenJob{ID: jobs[0].ID, Key: key("event-1"), LastActivity: jobs[0].UpdatedAt, CreatedAt: jobs[0].CreatedAt}
+	if ok, err := store.CloseWithSourceText(ctx, seen, fullEnvelope()); err != nil || !ok {
+		t.Fatalf("CloseWithSourceText = (%v, %v), quería (true, nil)", ok, err)
 	}
 	first := store.Jobs()[0]
 	first.SourceRefs[0] = "mutated"

@@ -9,7 +9,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intake"
 )
 
-// Los tests propios del gemelo para la quinta operación de la cola,
+// Los tests propios del gemelo para la cuarta operación de la cola,
 // intake.JobStore.CloseWithSourceText (D-F7-9, D-F8-13): su contador, su gancho de fallo y el
 // orden de sus rechazos. Van aparte de memory_test.go por tamaño (E-13). Las promesas del puerto
 // las corre TestMemoryStore_ContratoQueue, con el resto de la suite de la cola.
@@ -35,7 +35,7 @@ func liveWindow(t *testing.T) (*intake.MemoryStore, intake.OpenJob) {
 
 // TestMemoryStore_CloseWithSourceText_CountsCallsNotEffects: el presupuesto de I/O cuenta las
 // LLAMADAS a CloseWithSourceText en su propio contador —la que cierra, la que ya no encuentra la
-// ventana y las rechazadas—, y no en el de CloseWindow ni en el de PutSourceText.
+// ventana y las rechazadas—, y no en el de CloseWindow.
 func TestMemoryStore_CloseWithSourceText_CountsCallsNotEffects(t *testing.T) {
 	store, seen := liveWindow(t)
 	ctx := context.Background()
@@ -59,8 +59,8 @@ func TestMemoryStore_CloseWithSourceText_CountsCallsNotEffects(t *testing.T) {
 }
 
 // TestMemoryStore_CloseWithSourceText_IncompleteEnvelopeMessage: el rechazo del sobre a medias
-// lleva el texto del gemelo, el mismo que en PutSourceText, byte a byte; y la ventana sigue viva
-// y sin sobre.
+// lleva el texto del gemelo (el del gemelo viejo), byte a byte; y la ventana sigue viva y sin
+// sobre.
 func TestMemoryStore_CloseWithSourceText_IncompleteEnvelopeMessage(t *testing.T) {
 	store, seen := liveWindow(t)
 	ok, err := store.CloseWithSourceText(context.Background(), seen, intake.SourceText{Enc: []byte("enc")})
