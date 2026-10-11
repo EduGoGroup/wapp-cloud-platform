@@ -1,6 +1,7 @@
 # F9 · Procesos — la integración de cero, por proceso, con testcontainers
 
-> **Estado**: ✅ **bloque A cerrado** (F9-01 🌐 lo escribió el 2026-10-01 → PR #18, `dev` @ `af7b8e9`; F9-02 💻 lo cerró el mismo
+> **Estado: ✅ CERRADA el 2026-10-11** (F9-05, PR #74 integrado; la condición del relevo, en el bloque F9-05 de
+> [`ESTADO.md`](../../ESTADO.md)). Por bloques: ✅ **bloque A cerrado** (F9-01 🌐 lo escribió el 2026-10-01 → PR #18, `dev` @ `af7b8e9`; F9-02 💻 lo cerró el mismo
 > día en local): `make test-procesos` da `RC=0 · PASS=146 · SKIP=0 · FAIL=0` por binario (`CUENTA=3`: 438), con **una intermitencia
 > conocida en `TestP0_Arranque/sin_errores`, diferida a F6** (contradicción 19; decisión de Jhoan, 2026-10-01).
 > ✅ **Bloque B1 hecho** (F9-03 💻, 2026-10-03, rama `reorg/f9-b1`): P1, P2, P3 y P9 dan `RC=0 · PASS=287 · SKIP=0 · FAIL=0` por binario
@@ -9,11 +10,11 @@
 > `RC=0 · PASS=537 · SKIP=0 · FAIL=0` por binario y **ningún rojo solo contra el nuevo**; hallazgos 44–61, abajo. 🔴 La rotación real de KEK
 > no cabe en el arnés (hallazgo 57).
 > ✅ **Bloque C hecho**: una pasada por módulo en el cierre local de cada fase (T9.23–T9.29, F2-05 … F8-07b).
-> 👉 **Bloque D (cierre), en revisión — PR #74 abierto** (F9-05 💻, 2026-10-11, rama `reorg/f9-05-cierre`): `CUENTA=3 make test-procesos`
+> ✅ **Bloque D (cierre) hecho — F9 CERRADA el 2026-10-11, PR #74 integrado** (F9-05 💻, 2026-10-11, rama `reorg/f9-05-cierre`): `CUENTA=3 make test-procesos`
 > da `RC=0 · PASS=3873 · FAIL=0 · SKIP=0` contra el viejo y contra el nuevo (1291 × 3, sin intermitencias); las 22 suites de contrato
 > con su `PASS`; recuento limpio; lo que sigue sin cubrir, clasificado **entero** (T9.36 y D-42: 464 bloques, 101 promesas con su test); la
 > rotación real de KEK, sobre filas y con testcontainers (hallazgo 57, resuelto); la suite queda en **1302** por binario; hallazgos 62–73, abajo.
-> **F9 no se da por cerrada hasta que el PR #74 entre en `dev`.**
+> **Lo que F10 hereda abierto**: hallazgos 60 y 69, y las deudas D-41, D-43, D-44 y D-45.
 > Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`.
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3): B1–D pasan a
 > **solo local** (💻) y entran los hallazgos 35–41 del [piloto F1](../F1-nucleo-contact/README.md).
@@ -100,7 +101,7 @@ marca **🕐** en [`tareas.md`](tareas.md).
 | **B1 · procesos de plataforma y acceso** ✅ | F9-03 | 💻 | T9.13–T9.16 (P1, P2, P3 con el reintento de `WithTx`, P9) | Los cuatro verdes contra el viejo (y corridos contra el nuevo); el mutante `maxTxAttempts = 1` cae |
 | **B2 · procesos de negocio** ✅ | F9-04 | 💻 | T9.17–T9.21 (P4–P8, doble CRM), T9.35 (P10) y T9.22 (`nucleo`) | B1 + B2 verdes contra el viejo y el nuevo. De ella depende F2-01 |
 | **C · pasada por conmutación** 🕐 | el cierre local de cada módulo (F2…F8) | 💻 | T9.23–T9.29, **una por módulo** | Suites del módulo contra Postgres + suite entera contra el nuevo + test de cableado completo |
-| **D · cierre** 👉 (PR #74, en revisión) | F9-05 | 💻 | T9.30–T9.33 y T9.36 | `-count=3` limpio contra los dos; recuento contra el código; lo que sigue sin cubrir, clasificado; docs al día |
+| **D · cierre** ✅ (PR #74, integrado) | F9-05 | 💻 | T9.30–T9.33 y T9.36 | `-count=3` limpio contra los dos; recuento contra el código; lo que sigue sin cubrir, clasificado; docs al día |
 
 Desde B1, F9 es **solo local**: necesita testcontainers y los dos binarios, y así no gasta el saldo de la promoción
 web. Sesiones de 45–90 min; si un bloque no cabe, para en un punto limpio tras un proceso cerrado y se relanza. Cada
@@ -745,7 +746,7 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     sobre `7b092d5`: `go vet` rc=0 y `go test ./internal/arranque/` **rc=1** por
     `TestBootWiring_OnlyBridgeAndFlowsImportOldContact`.
 
-### Hallazgos de la sesión F9-05 (2026-10-11, bloque D, rama `reorg/f9-05-cierre` desde `dev` @ `085366a2`, PR #74 en revisión)
+### Hallazgos de la sesión F9-05 (2026-10-11, bloque D, rama `reorg/f9-05-cierre` desde `dev` @ `085366a2`, PR #74 integrado)
 
 62. **T9.30 · La corrida final, sin intermitencias.** `CUENTA=3 make test-procesos` sobre `085366a2` (antes de los tests de
     T9.36): **viejo `RC=0 · PASS=3873 · FAIL=0 · SKIP=0`** y **nuevo `RC=0 · PASS=3873 · FAIL=0 · SKIP=0`** (1291 × 3).
