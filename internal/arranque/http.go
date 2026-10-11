@@ -1,11 +1,7 @@
-// Copia de internal/bootstrap/arranque/http.go @ 80807ba (F0 · 05 §6). Nació registrando el
-// publicapi viejo en el :8103, y cada conmutar(<módulo>) mudó sus rutas a la cara nueva,
-// internal/apipublica: acceso (F2, T2.31), edge (F3, T3.28), inferencia (F4), solicitudes (F6) y
-// captación (F7).
-//
-// 🔀 F8 · conmutar(conversacion) (T8.34 · FX TX.24): las 73 rutas del :8103 las sirve la cara
-// nueva. publicapi.Register ya no se llama y este fichero no importa internal/publicapi; el mux
-// de detrás del estrangulador sigue existiendo, VACÍO, hasta que el estrangulador muera (TX.25).
+// Copia de internal/bootstrap/arranque/http.go @ 80807ba (F0 · 05 §6), con una desviación: el
+// :8103 no lo sirve el publicapi viejo sino la cara única, internal/apipublica, que monta las
+// 73 rutas (caraNueva, mudanzas.go). Va sola, sin nada detrás: lo que ella no registra recibe el
+// 404 de ruta inexistente de su propio ServeMux (F10 · T10.9 · FX TX.25).
 package arranque
 
 import (
@@ -52,8 +48,6 @@ type publicAPIDeps struct {
 	// MISMO, con su caché, que gatea el resto de la plataforma (T-2). Aquí lo leen la guarda del
 	// alta del plano de roles, el canje de invitaciones y C2.
 	//
-	// 🔀 F8 · conmutar(conversacion): hasta F8 llegaba dentro de oldFace (publicapi.Deps), las
-	// dependencias del mux VIEJO. Ese campo murió con la cara vieja y de él solo se leía esto.
 	entResolver entitlements.Resolver
 	// newFace llega con las áreas de los MÓDULOS ya armadas por la fase 8 (edge, inference,
 	// requests, capture y conversation). Las cinco de acceso (common, auth, rolePlane, audit,
@@ -64,11 +58,10 @@ type publicAPIDeps struct {
 	platformRepo *platformadmin.Repository
 }
 
-// buildPublicAPIServer arma el :8103: la cara NUEVA (internal/apipublica, con las rutas de las
-// fases ≤ FaseActual: desde F8, las 73) delante de un mux VACÍO (hasta F8, el del publicapi
-// viejo), compuestos una vez y envueltos una vez con rate-limit y métricas. Devuelve también la
-// cara y el compuesto, que el contenedor guarda para el candado de mudanzas.
-func buildPublicAPIServer(d publicAPIDeps) (*http.Server, *apipublica.Cara, *apipublica.Compuesto, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+// buildPublicAPIServer arma el :8103: la cara (internal/apipublica, con sus 73 rutas) envuelta
+// UNA vez con rate-limit y métricas. Devuelve también la cara, que el contenedor guarda para que
+// los candados miren sus Patrones() sobre el arranque real.
+func buildPublicAPIServer(d publicAPIDeps) (*http.Server, *apipublica.Cara, *httpapi.Middleware, httpapi.AuditRecorder, error) {
 	// Los nombres locales son los de los parámetros de antes: el cuerpo no cambia. face es una
 	// COPIA (como lo era el parámetro por valor), así que lo que aquí se le escribe no vuelve al
 	// que llama.
@@ -87,8 +80,7 @@ func buildPublicAPIServer(d publicAPIDeps) (*http.Server, *apipublica.Cara, *api
 	// AQUÍ porque es una dependencia que solo existe para esta API y que este
 	// constructor puede armar entero.
 	//
-	// 🔀 F2 · conmutar(acceso): los tres servicios ya no van a publicapi.Deps sino a la
-	// cara nueva (apipublica.MountRolePlane, B1–B14). Ninguna ausencia da error: un
+	// Los tres servicios van a la cara (apipublica.MountRolePlane, B1–B14). Ninguna ausencia da error: un
 	// grupo sin su servicio NO existe y responde 404 de ruta inexistente —
 	// indistinguible desde fuera del 404 que estas mismas rutas dan al recurso ajeno—.
 	// Eso es lo que vigila roleplane_cableado_test.go.
@@ -104,7 +96,7 @@ func buildPublicAPIServer(d publicAPIDeps) (*http.Server, *apipublica.Cara, *api
 	// plano por la guarda del alta, no por las rutas: ver buildRolePlane.
 	rolesPlane, err := buildRolePlane(db, as.m2mClient, d.entResolver, log)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if as.m2mClient == nil {
 		log.Warn("POST /api/v1/members: falta WAPP_IDENTITY_API_KEY; el alta de miembros responde 503 " +
@@ -118,21 +110,12 @@ func buildPublicAPIServer(d publicAPIDeps) (*http.Server, *apipublica.Cara, *api
 	// fallo de construcción es de cableado y aborta el arranque, no degrada la ruta.
 	invitationRedeem, err := buildInvitationRedeem(db, d.entResolver)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	activeTenant, err := buildActiveTenantPlane(db)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-
-	// 🔀 F8 · conmutar(conversacion) (FX TX.24): EL MUX DE DETRÁS, VACÍO. Hasta F8 era el de la
-	// cara VIEJA: publicapi.Register le montaba las rutas que la nueva aún no servía (de F2 a
-	// F7 se le fueron apagando áreas poniendo a nil sus dependencias). Con I1–I19 mudadas no
-	// le queda ninguna, así que nadie registra nada en él: se conserva solo porque
-	// apipublica.Componer pide el mux de detrás, y lo que la cara nueva no sirve cae aquí y
-	// responde el 404 de ruta inexistente de http.ServeMux, como antes. Muere con el
-	// estrangulador (TX.25/F10). Lo vigila cara_nueva_cableado_test.go.
-	publicMux := http.NewServeMux()
 
 	// El PRESUPUESTO DE LA PETICIÓN de envío (Plan 050 · Ola 5 · T5.4, REQ-050.19) se
 	// DERIVA del mismo writeTimeout con el que se arma el http.Server unas líneas más
@@ -141,37 +124,32 @@ func buildPublicAPIServer(d publicAPIDeps) (*http.Server, *apipublica.Cara, *api
 	// rehizo al añadir un reloj. Aquí no hay aritmética que mantener — mover
 	// writeTimeout arrastra el presupuesto solo. Ver apipublica.SendBudgetFrom.
 	//
-	// 🔀 F3 · conmutar(edge): D1 la sirve la cara nueva, así que el presupuesto va a SUS
-	// deps. (De F3 a F8 la D1 del mux viejo siguió registrada, tapada por la nueva; desde F8
-	// ya no existe.)
+	// D1 la sirve la cara, así que el presupuesto va a SUS deps.
 	face.edge.messages.SendBudget = apipublica.SendBudgetFrom(writeTimeout)
 
 	// Operación pública (Plan 018 · T5): mensajes + flujos CRUD/arranque, cada ruta
 	// autenticada por Context Token + grants (mismo authMW) y las escrituras
 	// auditadas (mismo auditor). El tenant SIEMPRE sale del token (INV-8). T10
-	// añade GET /api/v1/audit. Desde F8 todo eso lo monta caraNueva (mudanzas.go), más abajo.
+	// añade GET /api/v1/audit. Todo eso lo monta caraNueva (mudanzas.go), más abajo.
 
 	// Blindaje transversal de la API pública (Plan 018 · T10, R11): rate-limit por
-	// credencial + métricas de request/latencia. Envuelven el mux ENTERO. Orden de
-	// ejecución: métricas (siempre cuenta, incluso un 429) → rate-limit → mux. NO
+	// credencial + métricas de request/latencia. Envuelven la cara ENTERA. Orden de
+	// ejecución: métricas (siempre cuenta, incluso un 429) → rate-limit → cara. NO
 	// tocan /healthz/metrics (viven en el listener admin). El cubo por IP del
 	// login se fue con el login (identity Plan 003 · Ola 5).
 	//
-	// 🔀 F0 · desviación de la copia (T0.16/TX.3, D-10): delante del mux de detrás va la
-	// cara NUEVA (internal/apipublica) con las rutas de las fases ≤ FaseActual
-	// (caraNueva, mudanzas.go; desde F8, las 73: 23 de acceso, 6 de edge, 4 de inferencia, 18 de
-	// solicitudes, 3 de captación y 19 de conversación). El Compuesto sirve por la
-	// nueva lo que ella registre y delega el resto en publicMux (vacío desde F8) con el MISMO
-	// *http.Request, así que r.Pattern sigue llegando a la métrica. Rate-limit y métricas
-	// envuelven el COMPUESTO una sola vez (RX.2.c; lo vigila cara_nueva_cableado_test.go).
-	// La cara y el compuesto se devuelven para que el candado de mudanzas los mire patrón
-	// a patrón (Cara.Patrones, Compuesto.Resolver).
+	// La cara (internal/apipublica) lleva las 73 rutas del :8103 (caraNueva, mudanzas.go: 23 de
+	// acceso, 6 de edge, 4 de inferencia, 18 de solicitudes, 3 de captación y 19 de
+	// conversación) y se sirve DIRECTAMENTE, con el *http.Request que le llega, así que
+	// r.Pattern sube hasta la métrica. Rate-limit y métricas la envuelven una sola vez (RX.2.c;
+	// lo vigila cara_nueva_cableado_test.go). Se devuelve para que los candados miren sus
+	// Patrones() sobre el arranque real.
 	//
 	// Common es el MISMO para todas las áreas: el mismo middleware, el mismo auditor (que
 	// además sirve C1 como lector) y el mismo logger.
 	//
-	// Las áreas de los módulos (edge desde F3, inferencia desde F4, solicitudes desde F6,
-	// captación desde F7, conversación desde F8) ya vienen en face, armadas por la fase 8;
+	// Las áreas de los módulos (edge, inferencia, solicitudes, captación y conversación) ya
+	// vienen en face, armadas por la fase 8;
 	// aquí solo se rellenan las de acceso, cuyos servicios se construyen arriba.
 	face.common = apipublica.Common{MW: authMW, Auditor: auditor, Log: log}
 	face.auth = apipublica.AuthDeps{
@@ -196,9 +174,8 @@ func buildPublicAPIServer(d publicAPIDeps) (*http.Server, *apipublica.Cara, *api
 	face.audit = apipublica.AuditDeps{Audit: auditor}
 	face.entitlements = apipublica.EntitlementsDeps{Entitlements: d.entResolver}
 	cara := caraNueva(face)
-	compuesto := apipublica.Componer(cara, publicMux)
 	publicLim := httpapi.NewLimiter(rate.Limit(cfg.RateLimit.PublicRPS), cfg.RateLimit.PublicBurst)
-	var handler http.Handler = compuesto
+	var handler http.Handler = cara
 	handler = httpapi.PublicRateLimit(handler, publicLim, mtx, log)
 	handler = mtx.InstrumentHTTP("public", handler)
 
@@ -212,7 +189,7 @@ func buildPublicAPIServer(d publicAPIDeps) (*http.Server, *apipublica.Cara, *api
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  idleTimeout,
 	}
-	return srv, cara, compuesto, authMW, auditor, nil
+	return srv, cara, authMW, auditor, nil
 }
 
 // adminHandler blinda un endpoint /admin/* con la cadena de la fase IAM (Plan

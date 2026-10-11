@@ -19,7 +19,7 @@
 // handler: una línea por petición, en un solo sitio, es lo que hace que «toda petición deja
 // rastro» no pueda volver a caducar al añadir un `return` nuevo.
 //
-// POR QUÉ AQUÍ Y NO EN EL ARRANQUE. El rate limit y la métrica envuelven el compuesto entero desde
+// POR QUÉ AQUÍ Y NO EN EL ARRANQUE. El rate limit y la métrica envuelven la cara entera desde
 // el arranque, que sería el sitio natural, pero los tests de la cara montan sus rutas con los
 // Mount* y NO montan esa capa: un access-log puesto allí sería código sin cobertura desde donde
 // se prueba el comportamiento. Aquí entra en la misma cadena que los handlers y se prueba con

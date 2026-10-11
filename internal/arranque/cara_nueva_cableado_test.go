@@ -1,24 +1,20 @@
 package arranque
 
-// cara_nueva_cableado_test.go — QUE LA CARA NUEVA ESTÉ DELANTE DE UN MUX VACÍO, Y
-// ENVUELTA UNA SOLA VEZ (F0 · T0.16/TX.3, RX.2.c; F8 · FX TX.24).
+// cara_nueva_cableado_test.go — QUE EL :8103 SIRVA LA CARA SOLA, ENVUELTA UNA SOLA VEZ
+// (F0 · T0.16/TX.3, RX.2.c; F10 · T10.9 · FX TX.25).
 //
-// Test nuevo del arranque nuevo (no es copia del viejo). El :8103 sirve
-// apipublica.Componer(cara nueva, publicMux) y el rate-limit y las métricas
-// envuelven ese COMPUESTO una sola vez. Dos maneras de cablearlo mal que la huella
-// no vería:
+// Test nuevo del arranque nuevo (no es copia del viejo). El :8103 sirve la cara que devuelve
+// caraNueva, y el rate-limit y las métricas la envuelven una sola vez. Tres maneras de
+// cablearlo mal que la huella no vería:
 //
-//   - envolver dos veces (la cara nueva con su propio InstrumentHTTP, y el compuesto
-//     con el suyo): cada petición contaría doble en wapp_http_requests_total y el
-//     cubo de rate-limit se gastaría dos veces por petición, sin que cambie ni una
-//     ruta, ni una familia de /metrics en frío;
-//   - envolver solo el mux de detrás y poner la cara nueva POR FUERA: las rutas
-//     saldrían sin métrica ni rate-limit.
-//
-// 🔀 F8 · conmutar(conversacion): hasta F8 el mux de detrás era el del publicapi viejo y
-// este test exigía que publicapi.Register montara sobre él. Con las 73 rutas en la cara
-// nueva la regla se invierte: el mux de detrás es un http.NewServeMux() local y NADIE
-// registra nada en él. Una ruta montada ahí saldría por la cara vieja, fuera del mapa.
+//   - envolver dos veces: cada petición contaría doble en wapp_http_requests_total y el
+//     cubo de rate-limit se gastaría dos veces por petición, sin que cambie ni una ruta,
+//     ni una familia de /metrics en frío;
+//   - envolver otra cosa y poner la cara POR FUERA: las rutas saldrían sin métrica ni
+//     rate-limit;
+//   - volver a poner un mux al lado de la cara (un http.NewServeMux() en http.go, o el
+//     apipublica.Componer que los unía): una ruta montada ahí se serviría sin estar en
+//     Cara.Patrones(), fuera de lo que los candados de rutas miran.
 //
 // Se lee el AST de http.go, como sus hermanos *_cableado_test.go: sin BD, sin red,
 // y NO SE SALTA nunca.
@@ -31,13 +27,11 @@ import (
 	"testing"
 )
 
-// TestCableado_LaCaraNuevaVaDelanteDeLaViejaYSeEnvuelveUnaVez exige, en
-// buildPublicAPIServer: un único apipublica.Componer cuyo segundo argumento es la
-// variable local que nace de http.NewServeMux(); que NADIE monte nada sobre ese mux
-// (ni Handle/HandleFunc como método, ni pasándolo a una función Register…: la cara vieja
-// no sirve ninguna ruta); que el handler que se envuelve nazca del compuesto; y UNA sola
-// llamada a httpapi.PublicRateLimit y a InstrumentHTTP("public", …) en todo el fichero.
-func TestCableado_LaCaraNuevaVaDelanteDeLaViejaYSeEnvuelveUnaVez(t *testing.T) {
+// TestCableado_TheFaceIsServedAloneAndWrappedOnce exige, en http.go: ninguna llamada a
+// apipublica.Componer ni a http.NewServeMux() (la cara va sola, sin mux al lado); que el
+// handler que se envuelve nazca de la variable que recibe caraNueva(…); y UNA sola llamada a
+// httpapi.PublicRateLimit y a InstrumentHTTP("public", …) en todo el fichero.
+func TestCableado_TheFaceIsServedAloneAndWrappedOnce(t *testing.T) {
 	t.Parallel()
 	fset := token.NewFileSet()
 	archivo, err := parser.ParseFile(fset, "http.go", nil, 0)
@@ -50,66 +44,47 @@ func TestCableado_LaCaraNuevaVaDelanteDeLaViejaYSeEnvuelveUnaVez(t *testing.T) {
 }
 
 // newFaceWiringProblems aplica el candado a un http.go ya parseado y devuelve una línea por
-// fallo. Va en dos pasadas porque «nadie monta sobre el mux de detrás» necesita saber antes
-// cuál es ese mux.
+// fallo.
 func newFaceWiringProblems(archivo *ast.File) []string {
-	var visto cableadoDeLaCaraNueva
+	var seen newFaceWiring
 	ast.Inspect(archivo, func(n ast.Node) bool {
-		visto.anota(n)
+		seen.note(n)
 		return true
 	})
-	ast.Inspect(archivo, func(n ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok {
-			visto.newFaceNotesUseOfBackMux(call)
-		}
-		return true
-	})
-	return visto.newFaceProblems()
+	return seen.problems()
 }
 
-// cableadoDeLaCaraNueva acumula lo que el recorrido de http.go ve del montaje del :8103.
-type cableadoDeLaCaraNueva struct {
-	componer       int             // llamadas a apipublica.Componer
-	varCompuesto   string          // variable que recibe el Componer
-	viejoDelCompon string          // segundo argumento del Componer
-	handlerDesde   string          // de qué se inicializa `var handler http.Handler`
-	rateLimit      int             // llamadas a httpapi.PublicRateLimit
-	instrPublic    int             // llamadas a X.InstrumentHTTP("public", …)
-	muxesNuevos    map[string]bool // variables que nacen de http.NewServeMux()
-	usosDelMux     []string        // quién monta algo sobre el mux de detrás
+// newFaceWiring acumula lo que el recorrido de http.go ve del montaje del :8103.
+type newFaceWiring struct {
+	compose     int    // llamadas a apipublica.Componer
+	newMuxes    int    // llamadas a http.NewServeMux()
+	faceVar     string // variable que recibe caraNueva(…)
+	handlerFrom string // de qué se inicializa `var handler http.Handler`
+	rateLimit   int    // llamadas a httpapi.PublicRateLimit
+	instrPublic int    // llamadas a X.InstrumentHTTP("public", …)
 }
 
-func (v *cableadoDeLaCaraNueva) anota(n ast.Node) {
+func (v *newFaceWiring) note(n ast.Node) {
 	switch x := n.(type) {
 	case *ast.AssignStmt:
-		if len(x.Lhs) != 1 || len(x.Rhs) != 1 {
-			return
-		}
-		if esLlamada(x.Rhs[0], "apipublica", "Componer") {
-			v.varCompuesto = nombre(x.Lhs[0])
-		}
-		if esLlamada(x.Rhs[0], "http", "NewServeMux") && nombre(x.Lhs[0]) != "" {
-			if v.muxesNuevos == nil {
-				v.muxesNuevos = map[string]bool{}
-			}
-			v.muxesNuevos[nombre(x.Lhs[0])] = true
+		if len(x.Lhs) == 1 && len(x.Rhs) == 1 && isLocalCall(x.Rhs[0], "caraNueva") {
+			v.faceVar = nombre(x.Lhs[0])
 		}
 	case *ast.ValueSpec:
 		if len(x.Names) == 1 && x.Names[0].Name == "handler" && len(x.Values) == 1 {
-			v.handlerDesde = nombre(x.Values[0])
+			v.handlerFrom = nombre(x.Values[0])
 		}
 	case *ast.CallExpr:
-		v.anotaLlamada(x)
+		v.noteCall(x)
 	}
 }
 
-func (v *cableadoDeLaCaraNueva) anotaLlamada(x *ast.CallExpr) {
+func (v *newFaceWiring) noteCall(x *ast.CallExpr) {
 	switch {
 	case esLlamada(x, "apipublica", "Componer"):
-		v.componer++
-		if len(x.Args) == 2 {
-			v.viejoDelCompon = nombre(x.Args[1])
-		}
+		v.compose++
+	case esLlamada(x, "http", "NewServeMux"):
+		v.newMuxes++
 	case esLlamada(x, "httpapi", "PublicRateLimit"):
 		v.rateLimit++
 	default:
@@ -123,45 +98,30 @@ func (v *cableadoDeLaCaraNueva) anotaLlamada(x *ast.CallExpr) {
 	}
 }
 
-// newFaceNotesUseOfBackMux anota toda llamada que toque el mux de detrás y no sea el Componer:
-// un método sobre él (publicMux.Handle, publicMux.HandleFunc…) o una función que lo reciba como
-// argumento (X.Register(publicMux, …), registrar(publicMux)…). Cualquiera de las dos le da rutas.
-func (v *cableadoDeLaCaraNueva) newFaceNotesUseOfBackMux(x *ast.CallExpr) {
-	mux := v.viejoDelCompon
-	if mux == "" || esLlamada(x, "apipublica", "Componer") {
-		return
-	}
-	if sel, ok := x.Fun.(*ast.SelectorExpr); ok && nombre(sel.X) == mux {
-		v.usosDelMux = append(v.usosDelMux, mux+"."+sel.Sel.Name)
-	}
-	for _, arg := range x.Args {
-		if nombre(arg) == mux {
-			v.usosDelMux = append(v.usosDelMux, textoDe(x.Fun)+"(… "+mux+" …)")
-		}
-	}
-}
-
-func (v *cableadoDeLaCaraNueva) newFaceProblems() []string {
+func (v *newFaceWiring) problems() []string {
 	var p []string
-	if v.componer != 1 {
-		p = append(p, fmt.Sprintf("apipublica.Componer aparece %d veces en http.go; se espera exactamente 1 (una sola cara compuesta en el :8103)", v.componer))
+	if v.compose != 0 {
+		p = append(p, fmt.Sprintf("apipublica.Componer aparece %d veces en http.go; se espera 0: el :8103 sirve la cara sola", v.compose))
 	}
-	if v.viejoDelCompon == "" || !v.muxesNuevos[v.viejoDelCompon] {
-		p = append(p, fmt.Sprintf("el segundo argumento de apipublica.Componer es %q y no una variable local nacida de http.NewServeMux(): desde F8 detrás de la cara nueva va un mux VACÍO", v.viejoDelCompon))
+	if v.newMuxes != 0 {
+		p = append(p, fmt.Sprintf("http.NewServeMux() aparece %d veces en http.go; se espera 0: una ruta montada en un mux al lado de la cara se serviría fuera de Cara.Patrones()", v.newMuxes))
 	}
-	for _, uso := range v.usosDelMux {
-		p = append(p, fmt.Sprintf("http.go monta rutas sobre el mux de detrás con %s: desde F8 la cara vieja no sirve NINGUNA ruta (las 73 son de la cara nueva)", uso))
-	}
-	if v.varCompuesto == "" || v.handlerDesde != v.varCompuesto {
-		p = append(p, fmt.Sprintf("`var handler http.Handler` nace de %q y el compuesto es %q: lo que se envuelve con rate-limit y métricas tiene que ser el COMPUESTO", v.handlerDesde, v.varCompuesto))
+	if v.faceVar == "" || v.handlerFrom != v.faceVar {
+		p = append(p, fmt.Sprintf("`var handler http.Handler` nace de %q y la cara de caraNueva(…) es %q: lo que se envuelve con rate-limit y métricas tiene que ser la CARA", v.handlerFrom, v.faceVar))
 	}
 	if v.rateLimit != 1 {
-		p = append(p, fmt.Sprintf("httpapi.PublicRateLimit aparece %d veces en http.go; se espera 1 (RX.2.c: el compuesto se envuelve una sola vez)", v.rateLimit))
+		p = append(p, fmt.Sprintf("httpapi.PublicRateLimit aparece %d veces en http.go; se espera 1 (RX.2.c: la cara se envuelve una sola vez)", v.rateLimit))
 	}
 	if v.instrPublic != 1 {
 		p = append(p, fmt.Sprintf(`InstrumentHTTP("public", …) aparece %d veces en http.go; se espera 1 (RX.2.c)`, v.instrPublic))
 	}
 	return p
+}
+
+// isLocalCall dice si e es una llamada funcion(…) a una función del propio paquete.
+func isLocalCall(e ast.Expr, funcion string) bool {
+	call, ok := e.(*ast.CallExpr)
+	return ok && nombre(call.Fun) == funcion
 }
 
 // nombre devuelve el nombre de e si es un identificador, o "" si no lo es.

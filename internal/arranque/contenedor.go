@@ -178,13 +178,8 @@ type contenedor struct {
 	enrollLis     net.Listener
 	connectLis    net.Listener
 
-	// publicCompuesto es el estrangulador que sirve publicSrv. F0 · desviación de la copia
-	// (TX.4): se guarda para que el candado de mudanzas resuelva las 73 rutas del :8103 por
-	// Compuesto.Resolver. 🔀 F8 · conmutar(conversacion): detrás de la cara nueva ya no hay
-	// publicapi viejo, sino un mux vacío (http.go); las 73 las sirve la cara.
-	publicCompuesto *apipublica.Compuesto
-	// publicCara es la cara nueva que va dentro de publicCompuesto. F2 · conmutar(acceso):
-	// se guarda para que el candado de mudanzas compare sus Patrones() con el mapa sobre
+	// publicCara es la cara que sirve publicSrv (http.go), con las 73 rutas del :8103. Se
+	// guarda para que los candados comparen sus Patrones() con la dorada de la huella sobre
 	// el arranque REAL, no sobre una cara rearmada en el test.
 	publicCara *apipublica.Cara
 

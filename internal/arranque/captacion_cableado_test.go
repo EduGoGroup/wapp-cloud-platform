@@ -360,8 +360,8 @@ func callsMethod(fn *ast.FuncLit, target string) bool {
 // contenedor: el único servicio de re-análisis, el store de intenciones del que también lee el
 // pool, el único resolver de derechos y el único gateway. Y las dos costuras conservan el nil de
 // verdad: la cara decide «no monto H1» y «no empujo» comparando con nil, y un puntero nil dentro
-// de la interfaz no lo es. La cara VIEJA murió en F8: que las tres rutas las resuelve la nueva en
-// el compuesto real lo afirma TestCableado_TheNewFaceResolvesRequestsAndCapture.
+// de la interfaz no lo es. Que las tres rutas las resuelve la cara del arranque real lo afirma
+// TestCableado_TheNewFaceResolvesRequestsAndCapture.
 func TestIdentidad_TheNewFaceServesCaptureWithTheContainerObjects(t *testing.T) {
 	c := contenedorDeHuella(t, "minimo")
 
