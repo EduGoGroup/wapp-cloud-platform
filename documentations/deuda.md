@@ -484,6 +484,10 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 - **Lo que no se sabe**: en qué orden escribe el entrante el hilo y la cola (**sin verificar**: si la cola va primero, el
   hueco no existe en esta forma) y si ocurre alguna vez. Es estrecho: la ventana tiene que vencer entre las dos escrituras
   de un mismo mensaje.
+- ✎ **2026-10-11 · El orden, verificado en el árbol nuevo**: el hilo va **primero** y la cola **después**
+  (`internal/modulos/conversacion/runtime/incoming_advance.go:367`, `persistTurnMessages`, y `:376`,
+  `observeForAggregation`; las dos *best-effort*, sin transacción). El hueco **existe en la forma descrita**. Sigue sin
+  verse ni reproducirse, y sigue sin medirse el tiempo entre las dos escrituras.
 - **No es D-F7-9** y no lo introdujo su arreglo: el viejo, que cerraba y componía después, tenía el mismo hueco.
 - **Veredicto**: se deja. Lo primero, cuando toque, es confirmar el orden real de las dos escrituras. Arreglarlo pide una
   regla (qué se hace con el mensaje tardío), no un parche. Después del relevo de F10.
