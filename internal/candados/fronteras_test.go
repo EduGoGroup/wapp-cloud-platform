@@ -59,7 +59,7 @@ func TestFronterasMuerde(t *testing.T) {
 			[]string{"regla 4: ", "internal/apipublica/contactos → internal/publicapi"}},
 		{"regla 5: producción vieja → nuevo", "internal/iam/app/usa_nucleo.go",
 			[]string{"regla 5: ", "internal/iam/app → internal/nucleo/contact"}},
-		{"regla 5: test viejo que no es huella_vieja_test.go → huellatest", "internal/bootstrap/arranque/otro_test.go",
+		{"regla 5: test viejo → huellatest", "internal/bootstrap/arranque/otro_test.go",
 			[]string{"regla 5: ", "internal/bootstrap/arranque → internal/arranque/huellatest"}},
 		{"regla 6: puente muerto", "internal/modulos/acceso/muerto",
 			[]string{"regla 6: ", "internal/modulos/acceso/muerto → internal/intentcfg"}},
@@ -79,7 +79,7 @@ func TestFronterasMuerde(t *testing.T) {
 }
 
 // TestFronterasPasa: Capas, platform/nucleo/pendiente, stdlib y terceros, puentes vivos
-// (Desde como prefijo), el arranque sobre módulos no conmutados, huella_vieja_test.go y
+// (Desde como prefijo), el arranque sobre módulos no conmutados y
 // viejo → viejo no son violaciones.
 func TestFronterasPasa(t *testing.T) {
 	fuentes := recorrerCaso(t, "testdata/fronteras/pasa", dirsFronteras, true)

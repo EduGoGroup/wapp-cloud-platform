@@ -52,11 +52,13 @@ var errSalioAntes = errors.New("el servidor terminó antes de quedar listo")
 // IdentityLogin, si es true, pone WAPP_IDENTITY_URL apuntando al doble de identity (su mitad
 // «identity-api», identidad_login_test.go): es lo que enciende el login de operador por el canal de
 // control. En false no se pone, y el servidor contesta «auth no disponible» a todo login.
+// MaxConexionesBD, si es > 0, fija WAPP_DB_MAX_OPEN_CONNS (el techo del pool de Postgres).
 type opcionesServidor struct {
 	Proceso            string
 	SondeoWebhook      time.Duration
 	MaxIntentosWebhook int
 	IdentityLogin      bool
+	MaxConexionesBD    int
 }
 
 // servidor es un servidor de la nube corriendo como subproceso real, con todo lo que necesita
@@ -262,6 +264,9 @@ func (s *servidor) entorno(o opcionesServidor, home string) []string {
 	}
 	if o.IdentityLogin {
 		env = append(env, s.Identidad.loginEnv()...)
+	}
+	if o.MaxConexionesBD > 0 {
+		env = append(env, "WAPP_DB_MAX_OPEN_CONNS="+strconv.Itoa(o.MaxConexionesBD))
 	}
 	if dir := os.Getenv(envCoverDir); dir != "" {
 		env = append(env, "GOCOVERDIR="+dir)

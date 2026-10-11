@@ -80,9 +80,7 @@ type Reglas struct {
 //     tiene un adaptador vivo y que no entra en Conmutados hasta que muera (05 §4.2);
 //  4. un fichero de internal/apipublica importa CUALQUIER paquete viejo, aunque haya un
 //     Puente que lo declare (la cara nueva solo habla con lo nuevo);
-//  5. un fichero VIEJO importa algo del árbol nuevo. Única excepción: el test
-//     internal/bootstrap/arranque/huella_vieja_test.go puede importar
-//     internal/arranque/huellatest;
+//  5. un fichero VIEJO importa algo del árbol nuevo;
 //  6. un Puente declarado que ningún fichero de fuentes usa —ninguno cuyo directorio case
 //     con Desde importa Hacia— (puente muerto: se borra), o
 //     cuyo Muere está en FasesCerradas. Estas violaciones no tienen fichero culpable: su
@@ -140,10 +138,6 @@ const (
 	prefijoPlatform   = "internal/platform"
 	prefijoArranque   = "internal/arranque"
 	prefijoApipublica = "internal/apipublica"
-	// La única arista viejo → nuevo admitida (regla 5): la huella del arranque viejo compara
-	// contra el mismo contenedor que la del nuevo (diseno.md §6).
-	huellaVieja = "internal/bootstrap/arranque/huella_vieja_test.go"
-	huellatest  = "internal/arranque/huellatest"
 )
 
 // bajo dice si ruta es prefijo o cuelga de él en frontera de «/»: "internal/iam" cubre
@@ -187,7 +181,7 @@ func juzgarImport(ruta, dir, rel string, r Reglas) string {
 	arista := dir + " → " + rel
 	if !esNuevo(ruta) {
 		// platform es código viejo a estos efectos: tampoco puede importar el árbol nuevo.
-		if esNuevo(rel) && (ruta != huellaVieja || rel != huellatest) {
+		if esNuevo(rel) {
 			return "regla 5: " + arista + ": código viejo que importa el árbol nuevo"
 		}
 		return ""

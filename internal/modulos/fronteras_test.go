@@ -142,13 +142,13 @@ var reglas = candados.Reglas{
 }
 
 // TestFronteras: el árbol real (nuevo y viejo, producción y tests) cumple la tabla reglas.
-// Además de recorridos > 0, exige haber visto un fichero del árbol nuevo y uno del viejo: una
+// Además de recorridos > 0, exige haber visto un fichero del árbol nuevo y uno de platform: una
 // raíz vacía o equivocada no puede pasar en verde.
 func TestFronteras(t *testing.T) {
 	fuentes := recorrerAlcance(t, dirsFronteras)
 	for _, testigo := range []string{
-		"internal/candados/fronteras.go",             // árbol nuevo
-		"internal/bootstrap/arranque/orquestador.go", // árbol viejo
+		"internal/candados/fronteras.go",     // árbol nuevo
+		"internal/platform/config/config.go", // platform
 	} {
 		if !vio(fuentes, testigo) {
 			t.Fatalf("el recorrido (%d ficheros) no vio %s: raíz o directorios equivocados", len(fuentes), testigo)
