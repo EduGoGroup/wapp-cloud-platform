@@ -92,3 +92,30 @@ func TestMembershipStore_NoResolverKeepsTheGuardClosed(t *testing.T) {
 		t.Fatalf("TenantsOfUser = %v, %v; quiero [%s %s]: Seed salta la guarda, no duplica, y el empate lo desempata el tenant_id", tenants, err, second, first)
 	}
 }
+
+// TestMembershipStore_MembersOf_TiesBreakByUserID: con el reloj parado todos los miembros
+// comparten created_at, y el user_id desempata —el ORDER BY (created_at, user_id) del adaptador—:
+// la lista sale igual en cada lectura pese al recorrido aleatorio del mapa.
+func TestMembershipStore_MembersOf_TiesBreakByUserID(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewMembershipStore().WithClock(func() time.Time { return clockStart })
+	tenant := uuid.NewString()
+	users := []string{"user-h", "user-c", "user-f", "user-a", "user-g", "user-d", "user-b", "user-e"}
+	for _, u := range users {
+		store.Seed(u, tenant)
+	}
+	want := slices.Sorted(slices.Values(users))
+	for range 5 {
+		members, err := store.MembersOf(ctx, tenant)
+		if err != nil {
+			t.Fatalf("MembersOf: %v", err)
+		}
+		got := make([]string, 0, len(members))
+		for _, m := range members {
+			got = append(got, m.UserID)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("MembersOf = %v, quiero %v: a igual created_at ordena el user_id", got, want)
+		}
+	}
+}

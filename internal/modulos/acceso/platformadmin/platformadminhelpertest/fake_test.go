@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -223,5 +224,110 @@ func TestFake_Concurrent(t *testing.T) {
 	wg.Wait()
 	if items := pending(ctx, t, f); len(items) != 16 {
 		t.Fatalf("hay %d solicitudes, quiero 16", len(items))
+	}
+}
+
+// Fail vale para CADA método de los dos puertos, no solo para los dos de TestFake_Fail: el método
+// nombrado devuelve el error con sus demás resultados a cero, y el estado queda como estaba. Los
+// consumidores prueban sus ramas de error sobre esto: una clave mal escrita en un método haría
+// que su test de fallo ejercitara, sin avisar, el camino feliz.
+func TestFake_Fail_EveryPortMethod(t *testing.T) {
+	boom := errors.New("caído")
+	cases := []struct {
+		method string
+		// call devuelve si los demás resultados salieron a cero, y el error.
+		call func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, requestID, user string) (bool, error)
+	}{
+		{"GetTenant", func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+			d, err := f.GetTenant(ctx, m.TenantA)
+			return d.ID == "" && d.Features == nil, err
+		}},
+		{"ExistsTenant", func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+			ok, err := f.ExistsTenant(ctx, m.TenantA)
+			return !ok, err
+		}},
+		{"CreateTenant", func(ctx context.Context, f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+			created, err := f.CreateTenant(ctx, "tenant-c", "Empresa C", nil)
+			return created == platformadmin.CreatedTenant{}, err
+		}},
+		{"ListInstallations", func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+			items, err := f.ListInstallations(ctx, m.TenantA)
+			return items == nil, err
+		}},
+		{"ListAccessRequests", func(ctx context.Context, f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+			items, err := f.ListAccessRequests(ctx, "pending")
+			return items == nil, err
+		}},
+		{"RejectAccessRequest", func(ctx context.Context, f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, requestID, _ string) (bool, error) {
+			return true, f.RejectAccessRequest(ctx, requestID, "motivo", uuid.NewString())
+		}},
+		{"LookupAccessRequestStatus", func(ctx context.Context, f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, requestID, _ string) (bool, error) {
+			userID, status, err := f.LookupAccessRequestStatus(ctx, requestID)
+			return userID == "" && status == "", err
+		}},
+		{"ResolveRoleID", func(ctx context.Context, f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+			id, err := f.ResolveRoleID(ctx, roleOperator.Name)
+			return id == "", err
+		}},
+		{"CheckRetryApproved", func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, user string) (bool, error) {
+			return true, f.CheckRetryApproved(ctx, user, m.TenantB, roleViewer.ID)
+		}},
+		{"ExecuteApprovalTx", func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, requestID, user string) (bool, error) {
+			return true, f.ExecuteApprovalTx(ctx, requestID, m.TenantA, user, roleOperator.ID, uuid.NewString())
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.method, func(t *testing.T) {
+			f, m := newFake(t)
+			ctx := context.Background()
+			// user ya es miembro de B con el rol viewer (sin Fail, CheckRetryApproved daría nil), y
+			// A admite a quien ya está en otra empresa (sin Fail, ExecuteApprovalTx daría nil).
+			user := uuid.NewString()
+			f.SeedMembership(t, user, m.TenantB, roleViewer.ID)
+			f.GrantMultiCompany(m.TenantA)
+			if err := f.CreateAccessRequest(ctx, user, "a@x.com", "bff"); err != nil {
+				t.Fatalf("CreateAccessRequest: %v", err)
+			}
+			requestID := pending(ctx, t, f)[0].ID
+
+			f.Fail(c.method, boom)
+			zero, err := c.call(ctx, f, m, requestID, user)
+			if !errors.Is(err, boom) || !zero {
+				t.Fatalf("%s con Fail = (cero: %v, %v), quiero resultados a cero y boom", c.method, zero, err)
+			}
+			if row := f.Request(t, requestID); row.Status != "pending" || row.DecidedAt != nil {
+				t.Errorf("el fallo tocó la solicitud: %+v", row)
+			}
+			if member, roles := f.Access(t, user, m.TenantA); member || len(roles) != 0 {
+				t.Errorf("el fallo dio acceso: (%v, %v)", member, roles)
+			}
+			f.Fail(c.method, nil)
+			if tenants, lerr := f.ListTenants(ctx, 0, 0); lerr != nil || len(tenants) != 2 {
+				t.Errorf("el fallo creó o perdió empresas: %d, %v", len(tenants), lerr)
+			}
+			if _, err := c.call(ctx, f, m, requestID, user); err != nil {
+				t.Fatalf("tras Fail(nil) %s tiene que volver a funcionar: %v", c.method, err)
+			}
+		})
+	}
+}
+
+// ListTenants acota el límite superior como lo promete el puerto (limit > 500 ⇒ 500). La suite
+// del contrato lo deja fuera a propósito —501 empresas por caso contra Postgres no compensan—;
+// en memoria es barato, y es el Fake quien tiene que contestar igual que el adaptador.
+func TestFake_ListTenants_LimitAbove500IsClampedTo500(t *testing.T) {
+	f, _ := newFake(t)
+	ctx := context.Background()
+	for i := range 499 {
+		mustCreate(t, f, "extra-"+strconv.Itoa(i))
+	}
+	for _, limit := range []int{500, 501, 100000} {
+		items, err := f.ListTenants(ctx, limit, 0)
+		if err != nil || len(items) != 500 {
+			t.Fatalf("ListTenants(limit=%d) con 501 empresas = %d filas, %v; quiero 500", limit, len(items), err)
+		}
+	}
+	if items, err := f.ListTenants(ctx, 100000, 500); err != nil || len(items) != 1 {
+		t.Fatalf("la segunda página tiene %d filas, %v; quiero la 501ª", len(items), err)
 	}
 }

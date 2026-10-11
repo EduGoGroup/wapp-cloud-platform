@@ -95,6 +95,14 @@ func TestM2M_UnreachableIdentityIsUnavailable(t *testing.T) {
 	if _, err := c.Signup(context.Background(), m2mEmail, "una-frase-de-acceso-larga", "Ana", "Pérez"); !errors.Is(err, domain.ErrIdentityUnavailable) {
 		t.Errorf("Signup: err = %v, quería ErrIdentityUnavailable", err)
 	}
+	// La lectura y la escritura de accesos tienen cada una su tabla de códigos, y ninguna de las
+	// dos retraduce un error que no es una respuesta de identity: pasa tal cual.
+	if _, err := c.GetUserSystems(context.Background(), m2mUserID); !errors.Is(err, domain.ErrIdentityUnavailable) || errors.Is(err, domain.ErrMachineCredentialInvalid) {
+		t.Errorf("GetUserSystems: err = %v, quería ErrIdentityUnavailable", err)
+	}
+	if _, err := c.ReplaceUserSystems(context.Background(), m2mUserID, []string{"edugo.kmp"}); !errors.Is(err, domain.ErrIdentityUnavailable) || errors.Is(err, domain.ErrMachineCredentialInvalid) {
+		t.Errorf("ReplaceUserSystems: err = %v, quería ErrIdentityUnavailable", err)
+	}
 }
 
 // m2mCodeCase es un código de identity y el centinela en que debe traducirse (nil: error opaco).
@@ -226,5 +234,121 @@ func TestM2M_BusinessCallsPresentBearerScheme(t *testing.T) {
 		if c.bearer == "" || c.authorization != "Bearer "+c.bearer {
 			t.Errorf("Authorization = %q, quería \"Bearer <service_token>\"", c.authorization)
 		}
+	}
+}
+
+// --- El cable: errores que no son un código de la tabla ---
+
+// TestM2M_OpaqueErrorTextCarriesOnlyStatusAndCode: el error de una respuesta que ninguna tabla
+// traduce dice el código HTTP y el `code` de identity, y NADA más: ni el cuerpo de la respuesta
+// ni lo que viajó en la petición (aquí, el correo, que identity devuelve además en sus details).
+func TestM2M_OpaqueErrorTextCarriesOnlyStatusAndCode(t *testing.T) {
+	t.Parallel()
+	f := newFakeM2M(t)
+	f.respondWith(m2mReply{status: http.StatusTeapot, code: "TEAPOT", details: `{"email":"` + m2mEmail + ` no sirve"}`})
+	err := ensure(f.client(t, newFakeClock()))
+	if err == nil {
+		t.Fatal("un 418 devolvió nil")
+	}
+	if got, want := err.Error(), "identity respondió 418 (TEAPOT)"; got != want {
+		t.Fatalf("texto = %q, quería %q", got, want)
+	}
+	for _, leaked := range []string{m2mEmail, "no sirve", "details", `"error"`} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Errorf("texto = %q: lleva %q, que es del cuerpo o de la petición", err.Error(), leaked)
+		}
+	}
+}
+
+// TestM2M_UnreadableSuccessBodyIsAnError: un 2xx cuyo cuerpo no es JSON es un error con su
+// prefijo, no un resultado vacío — ni en el canje (que además no llega a la ruta de negocio) ni en
+// la respuesta de negocio. Ninguna tabla de códigos lo retraduce.
+func TestM2M_UnreadableSuccessBodyIsAnError(t *testing.T) {
+	t.Parallel()
+	const wantPrefix = "iam: respuesta de identity ilegible: "
+	tests := []struct {
+		name      string
+		arrange   func(f *fakeM2M)
+		wantCalls int
+	}{
+		{name: "exchange", arrange: func(f *fakeM2M) { f.tokenRaw = "esto no es json" }, wantCalls: 0},
+		{name: "business_answer", arrange: func(f *fakeM2M) {
+			f.reply = func(m2mRequest) m2mReply { return m2mReply{status: http.StatusCreated, body: "esto no es json"} }
+		}, wantCalls: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFakeM2M(t)
+			f.set(tt.arrange)
+			err := ensure(f.client(t, newFakeClock()))
+			if err == nil || !strings.HasPrefix(err.Error(), wantPrefix) {
+				t.Fatalf("err = %v, quería «%s…»", err, wantPrefix)
+			}
+			if errors.Is(err, domain.ErrIdentityUnavailable) || errors.Is(err, domain.ErrMachineCredentialInvalid) {
+				t.Errorf("err = %v: un cuerpo ilegible no es identity caído ni la credencial rechazada", err)
+			}
+			if _, calls := f.snapshot(); len(calls) != tt.wantCalls {
+				t.Errorf("llamadas de negocio = %d, quería %d", len(calls), tt.wantCalls)
+			}
+		})
+	}
+}
+
+// TestM2M_UnreadableErrorBodyStillMapsByStatus: un error cuyo cuerpo no es el JSON de identity (el
+// HTML de un proxy) se traduce igual por su código HTTP, con `code` y `details` vacíos. Por eso un
+// 403 ilegible en el PUT es de la credencial: sin `code` no hay SYSTEM_ACCESS_DENIED que leer, por
+// mucho que la palabra aparezca en el cuerpo.
+func TestM2M_UnreadableErrorBodyStillMapsByStatus(t *testing.T) {
+	t.Parallel()
+	t.Run("service_unavailable", func(t *testing.T) {
+		t.Parallel()
+		f := newFakeM2M(t)
+		f.respondWith(m2mReply{status: http.StatusServiceUnavailable, body: "<html>503 Service Unavailable</html>"})
+		if err := ensure(f.client(t, newFakeClock())); !errors.Is(err, domain.ErrIdentityUnavailable) {
+			t.Fatalf("err = %v, quería ErrIdentityUnavailable", err)
+		}
+	})
+	t.Run("forbidden_on_replace_is_credential", func(t *testing.T) {
+		t.Parallel()
+		f := newFakeM2M(t)
+		f.respondWith(m2mReply{status: http.StatusForbidden, body: "<html>SYSTEM_ACCESS_DENIED</html>"})
+		_, err := f.client(t, newFakeClock()).ReplaceUserSystems(context.Background(), m2mUserID, []string{"edugo.kmp"})
+		if !errors.Is(err, domain.ErrMachineCredentialInvalid) || errors.Is(err, domain.ErrSystemNotAllowed) {
+			t.Fatalf("err = %v, quería ErrMachineCredentialInvalid (y no ErrSystemNotAllowed)", err)
+		}
+	})
+	t.Run("bad_request_on_signup_is_not_password_policy", func(t *testing.T) {
+		t.Parallel()
+		f := newFakeM2M(t)
+		f.respondWith(m2mReply{status: http.StatusBadRequest, body: `<html>{"details":{"password":"x"}}</html>`})
+		_, err := f.client(t, newFakeClock()).Signup(context.Background(), m2mEmail, "una-frase-de-acceso-larga", "Ana", "Pérez")
+		if !errors.Is(err, domain.ErrInvalidInput) || errors.Is(err, domain.ErrPasswordPolicy) {
+			t.Fatalf("err = %v, quería ErrInvalidInput (y no ErrPasswordPolicy)", err)
+		}
+	})
+}
+
+// TestM2M_UnmappedExchangeStatusIsOpaque (R-I9): un canje que falla con un código fuera de su
+// tabla es un error opaco, no uno de los tres desenlaces que el canje sabe nombrar; y sin token no
+// se llama a la ruta de negocio.
+func TestM2M_UnmappedExchangeStatusIsOpaque(t *testing.T) {
+	t.Parallel()
+	f := newFakeM2M(t)
+	f.set(func(f *fakeM2M) { f.tokenStatus, f.tokenCode = http.StatusTeapot, "TEAPOT" })
+	err := ensure(f.client(t, newFakeClock()))
+	if err == nil {
+		t.Fatal("un canje con 418 devolvió nil")
+	}
+	for _, mapped := range []error{domain.ErrMachineCredentialInvalid, domain.ErrRateLimited, domain.ErrIdentityUnavailable} {
+		if errors.Is(err, mapped) {
+			t.Errorf("err = %v: un 418 del canje no es %v", err, mapped)
+		}
+	}
+	if got, want := err.Error(), "identity respondió 418 (TEAPOT)"; got != want {
+		t.Errorf("texto = %q, quería %q", got, want)
+	}
+	if exchanges, calls := f.snapshot(); exchanges != 1 || len(calls) != 0 {
+		t.Errorf("canjes = %d, llamadas = %d; quería 1 y ninguna sin Service Token", exchanges, len(calls))
 	}
 }

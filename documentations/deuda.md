@@ -548,6 +548,83 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 
 ---
 
+### D-41 · 🟡 Un 404 del canje de la API key se lee como «la persona no está en el padrón»
+
+> Abierta el 2026-10-11 en F9-05 (hallazgo 65 del README de F9). **Rareza heredada**: el código viejo hace lo mismo.
+
+- **Qué hay hoy**: `mapExchangeError` (`internal/modulos/acceso/iam/infra/identity/m2m_wire.go`) devuelve el error crudo
+  para los estados que no están en su tabla, y el traductor de la operación de negocio lo vuelve a traducir. Con un 404
+  en `/api/v1/auth/token`, `GetUserSystems` devuelve `domain.ErrNotFound` sin haber preguntado por la persona. Por
+  lectura, un 409 del canje se retraduciría igual en las rutas que mapean el 409.
+- **Por qué no se arregló**: cambia conducta visible desde fuera y el viejo (`internal/iam/infra/identity/m2m.go`) es
+  idéntico; identity no devuelve hoy un 404 en esa ruta.
+- **Qué pediría**: que el canje con estado sin mapear sea opaco **y terminal** (un error que los traductores de negocio
+  no reinterpreten), con su test.
+- **Veredicto**: pendiente, para después del relevo. No bloquea F10.
+
+---
+
+### D-42 · 🟡 Los 135 ficheros entre 90 y 99 % de cobertura combinada no están clasificados
+
+> Abierta el 2026-10-11 en F9-05 (T9.36; hallazgo 63 del README de F9).
+
+- **Qué hay hoy**: T9.36 clasificó los 19 ficheros entre 80 y 89 % (145 bloques: 16 promesas sin test, 4 alcanzables
+  con un flujo, 6 guardas ya decididas y 119 defensivas). Los 135 que quedan entre 90 y 99 % no se han leído.
+- **Qué cabe esperar**: en la muestra, uno de cada siete bloques era una promesa sin test o un flujo que faltaba; el
+  resto, defensa. No hay umbral que perseguir (`05` E-9).
+- **Sin medir**: cuántos bloques son, y por qué el reparto por franjas cambia de una corrida a otra (261 · 134 · 23 en
+  F8-08, 266 · 133 · 19 en F9-05, con el mismo código).
+- **Veredicto**: pendiente; no bloquea el relevo.
+- ✎ **2026-10-11 · Cerrada el mismo día** (F9-05, a petición de Jhoan; hallazgos 71 y 72 del README de F9): los 135
+  ficheros leídos, 319 bloques → 85 promesas con su test, 1 caso en su suite, 8 guardas ya decididas y 225 defensivas.
+  Y el reparto por franjas **no** cambia de una corrida a otra: tres mediciones seguidas dieron lo mismo.
+
+---
+
+### D-43 · 🟡 El arnés de procesos no arranca un servidor con otro entorno sobre una base existente
+
+> Abierta el 2026-10-11 en F9-05 (hallazgos 57, 42 y 70 del README de F9). Decisión de Jhoan: **no** se amplía ahora;
+> se anota para hacerlo **si se le saca provecho más allá de un caso**.
+
+- **Qué hay hoy**: `opcionesServidor` no admite variables de entorno extra y `arrancar` clona siempre una base nueva.
+  Por eso la rotación de KEK se prueba sin servidor (`test/procesos/rekey_contrato_test.go`).
+- **Qué dejaría probar**: la rotación por la puerta (`POST /admin/crypto/rekey` con `processed > 0` y su fila de
+  auditoría); que el arranque lee de verdad `WAPP_KEK_KEYRING` / `WAPP_KEK_CURRENT`; la lectura por las puertas reales
+  tras retirar la KEK vieja; «el colector no recuenta el histórico» (pide filas antes del arranque); y, en general,
+  cualquier proceso de «reinicio con otra configuración» (la familia del hallazgo 42).
+- **Sin medir**: cuánto cuesta, ni cuántos procesos lo aprovecharían.
+- **Veredicto**: pendiente, para después del relevo. No bloquea F10.
+
+---
+
+### D-44 · 🟡 La bitácora del canje calla dos de sus fallos
+
+> Abierta el 2026-10-11 en F9-05 (hallazgo 73 del README de F9). **Rareza heredada**: el código viejo calla igual.
+
+- **Qué hay hoy**: el comentario de `Exchange` (`internal/modulos/acceso/iam/usecase/exchange.go`) dice que su rastro es
+  una línea «ok» o «error». Los fallos de `resolveGrants` y de firma devuelven sin `record(…, "error")`, a diferencia de
+  los cuatro fallos vecinos.
+- **Comparado con el viejo** (`internal/iam/usecase/exchange.go`): las mismas dos salidas devuelven sin registrar. No
+  es una divergencia.
+- **Qué pediría**: que los dos fallos dejen su línea «error», con su test.
+- **Veredicto**: pendiente, tras el relevo. Cambia lo que se ve en auditoría: va con D-36.
+
+---
+
+### D-45 · Limpieza: comentarios que no dicen la verdad y ramas que no pueden ejecutarse
+
+> Abierta el 2026-10-11 en F9-05 (hallazgo 73 del README de F9). Ninguna cambia conducta.
+
+- **Comentarios**: `solicitudes/intakes/memory_write.go` (el store no rechaza el texto vacío: lo hace el servicio);
+  `conversacion/content/json.go` («si el unmarshal a map falla…»); `platform/crypto/rekey.go` («siete sobres en seis
+  tablas»: son ocho en siete).
+- **Ramas muertas**: `conversacion/engine/engine.go` (error de `tryPrime`); `cart/buyer.go` y `cart/cart_notes.go` (el
+  «otro error» de `SanitizeNote`); `acceso/iam/infra/identity/m2m_wire.go` (`out == nil`);
+  `acceso/platformadmin/access_requests.go` (`operatorFrom` sin identidad).
+- **Veredicto**: pendiente, tras el relevo; un commit por paquete.
+
+---
+
 ## 5 · Deudas con nombre heredadas de los planes
 
 | Marca | Dónde | Qué significa |

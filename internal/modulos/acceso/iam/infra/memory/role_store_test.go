@@ -3,6 +3,7 @@ package memory_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -81,5 +82,53 @@ func TestRoleStore_SeedAssignmentAndAssignmentsOf(t *testing.T) {
 	roles, err := store.RolesOfUser(ctx, user, uuid.NewString())
 	if err != nil || len(roles) != 1 || roles[0].ID != role.ID {
 		t.Fatalf("RolesOfUser en otra empresa = %+v, %v; quiero el rol por su asignación global sembrada", roles, err)
+	}
+}
+
+// TestRoleStore_Create_GlobalNameIsUniqueAmongGlobals: el segundo índice parcial de iam_roles. Dos
+// plantillas globales no comparten nombre (ErrConflict, sin escribir la segunda), y ese mismo
+// nombre en una empresa NO choca con la global.
+func TestRoleStore_Create_GlobalNameIsUniqueAmongGlobals(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewRoleStore().WithClock(tickingClock())
+	tenant := uuid.NewString()
+	if _, err := store.Create(ctx, domain.Role{Name: "viewer"}); err != nil {
+		t.Fatalf("primera plantilla global: %v", err)
+	}
+	if got, err := store.Create(ctx, domain.Role{Name: "viewer"}); !errors.Is(err, domain.ErrConflict) || got != (domain.Role{}) {
+		t.Fatalf("segunda global con el mismo nombre = (%+v, %v), quiero el rol cero y ErrConflict", got, err)
+	}
+	if _, err := store.Create(ctx, domain.Role{TenantID: &tenant, Name: "viewer"}); err != nil {
+		t.Fatalf("el mismo nombre en una empresa no choca con la global: %v", err)
+	}
+	roles, err := store.List(ctx, tenant)
+	if err != nil || len(roles) != 2 {
+		t.Fatalf("List = %+v, %v; quiero la global y la de la empresa, sin la rechazada", roles, err)
+	}
+}
+
+// TestRoleStore_List_TiesBreakByID: con el reloj parado todos los roles comparten created_at, y
+// el id desempata: la lista sale igual en cada lectura pese al recorrido aleatorio del mapa.
+func TestRoleStore_List_TiesBreakByID(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewRoleStore().WithClock(func() time.Time { return clockStart })
+	tenant := uuid.NewString()
+	ids := []string{"role-h", "role-c", "role-f", "role-a", "role-g", "role-d", "role-b", "role-e"}
+	for _, id := range ids {
+		store.Seed(domain.Role{ID: id, TenantID: &tenant, Name: "name-" + id}, nil)
+	}
+	want := slices.Sorted(slices.Values(ids))
+	for range 5 {
+		roles, err := store.List(ctx, tenant)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		got := make([]string, 0, len(roles))
+		for _, r := range roles {
+			got = append(got, r.ID)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("List = %v, quiero %v: a igual created_at ordena el id", got, want)
+		}
 	}
 }

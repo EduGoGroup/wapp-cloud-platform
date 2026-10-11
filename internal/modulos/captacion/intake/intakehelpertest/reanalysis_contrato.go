@@ -211,9 +211,22 @@ func caseOpenReanalysisInheritsTS(t *testing.T, m ReanalysisMontaje) {
 
 // caseOpenReanalysisWithoutHistory: la solicitud que no nació de un job (la del carrito) no
 // tiene de quién heredar: `message_ts` es el reloj de la implementación. Y un From 0 —no había
-// revisión anterior— se guarda como «sin valor», no como la revisión cero.
+// revisión anterior— se guarda como «sin valor», no como la revisión cero; un From negativo,
+// igual: tampoco nombra una revisión.
 func caseOpenReanalysisWithoutHistory(t *testing.T, m ReanalysisMontaje) {
 	k := newKey(m.TenantA)
+	negative := ownerRequest(newKey(m.TenantA))
+	negative.Context.From = -1
+	negativeID, err := m.Store.OpenReanalysis(context.Background(), negative)
+	if err != nil {
+		t.Fatalf("OpenReanalysis con From -1: error inesperado %v", err)
+	}
+	wantNoFrom := negative.Context
+	wantNoFrom.From = 0
+	if got := m.Row(t, negativeID).Reanalysis; got != wantNoFrom {
+		t.Errorf("contexto guardado con From -1 = %+v, quería %+v (sin valor)", got, wantNoFrom)
+	}
+
 	req := ownerRequest(k)
 	req.Context.From = 0
 	earliest := m.Now(t)

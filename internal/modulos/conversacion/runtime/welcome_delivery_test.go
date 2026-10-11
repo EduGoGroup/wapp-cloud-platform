@@ -225,3 +225,30 @@ func TestWelcome_TheSealCarriesTheMarkThisTurnRead(t *testing.T) {
 	incomingWantLog(t, h, "info", "runtime: bienvenida entregada al contacto", 2)
 	incomingWantLog(t, h, "warn", "runtime: otro turno marcó la bienvenida primero; este envío fue un duplicado", 0)
 }
+
+// TestWelcome_UnresolvableDestinationIsNotMarkedAndTheNextMessageRetries: WL-13. Si el destino
+// del contacto no se puede resolver, la bienvenida no se intenta enviar, NO se marca y el
+// fallo se avisa sin tumbar el turno; el siguiente mensaje del contacto la reintenta.
+func TestWelcome_UnresolvableDestinationIsNotMarkedAndTheNextMessageRetries(t *testing.T) {
+	h, spy := welcomeHarness(t)
+	lost := startRuntimeWith(h, startContacts{Resolver: h.contacts, destinoErr: errors.New("contacts-down-qzx")})
+
+	if err := incomingHandleOn(h, lost, h.incoming("wa-1", "hola-qzx")); err != nil {
+		t.Fatalf("HandleIncoming = %v, una bienvenida sin destino no tumba el turno", err)
+	}
+
+	incomingWantLog(t, h, "warn", "runtime: destino no resoluble; no se manda bienvenida", 1)
+	if attempts := h.sender.Attempts(); len(attempts) != 0 {
+		t.Fatalf("intentos de envío = %+v, sin destino no se llama al Sender", attempts)
+	}
+	if _, marks := spy.calls(); len(marks) != 0 {
+		t.Fatalf("sellos sin destino = %d, quería 0", len(marks))
+	}
+
+	h.say("wa-2", "sigo aquí-qzx")
+
+	incomingWantTexts(t, h, store.DefaultWelcomeText)
+	if mark := h.repo.Welcome(h.key()); mark.WelcomedAt.IsZero() {
+		t.Errorf("marca = %+v, quería sellada tras el reintento", mark)
+	}
+}

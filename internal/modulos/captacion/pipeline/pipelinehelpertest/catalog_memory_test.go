@@ -3,10 +3,12 @@ package pipelinehelpertest_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/pipeline/pipelinehelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/indice"
 )
 
 // TestNewCatalogMemory_OneArticlePerLabel: un artículo por etiqueta, con su código, su SKU
@@ -142,5 +144,30 @@ func TestCatalogMemory_ConcurrentUse(t *testing.T) {
 	wg.Wait()
 	if got := cat.Reads(); got != readers {
 		t.Fatalf("Reads() = %d tras %d lecturas concurrentes", got, readers)
+	}
+}
+
+// TestNewCatalogMemory_IndexThatCannotBeBuilt: si el índice no se puede construir —aquí, una
+// etiqueta más de las que el índice admite— devuelve el error del índice envuelto con el
+// prefijo del doble, y doble nil. En el tope justo sí se construye.
+func TestNewCatalogMemory_IndexThatCannotBeBuilt(t *testing.T) {
+	labels := make([]string, indice.MaxArticulos+1)
+	for i := range labels {
+		labels[i] = "Artículo"
+	}
+
+	cat, err := pipelinehelpertest.NewCatalogMemory(labels...)
+	if !errors.Is(err, indice.ErrCatalogoDemasiadoGrande) {
+		t.Fatalf("NewCatalogMemory con %d etiquetas = %v; se esperaba un error que envuelva ErrCatalogoDemasiadoGrande", len(labels), err)
+	}
+	if want := "pipeline: catálogo en memoria: "; !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("el error %q no empieza por %q", err, want)
+	}
+	if cat != nil {
+		t.Errorf("con error devolvió el doble %+v; se esperaba nil", cat)
+	}
+
+	if _, err := pipelinehelpertest.NewCatalogMemory(labels[:indice.MaxArticulos]...); err != nil {
+		t.Errorf("NewCatalogMemory con el tope justo (%d) = %v; se esperaba nil", indice.MaxArticulos, err)
 	}
 }

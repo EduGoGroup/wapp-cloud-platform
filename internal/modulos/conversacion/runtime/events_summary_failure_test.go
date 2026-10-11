@@ -8,11 +8,14 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime/runtimehelpertest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/trigger"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
 )
 
 // errEventsLinesDown es el fallo de la fuente de líneas del pedido.
@@ -94,5 +97,107 @@ func TestEvents_ComingBackWithoutSourcesSendsNoReminder(t *testing.T) {
 
 	if texts := h.texts(); len(texts) != 3 || texts[2] != texts[0] {
 		t.Errorf("textos = %q, quería tres pantallas y la última igual a la primera", texts)
+	}
+}
+
+// TestEvents_ComingBackGoesOnWhenTheReminderCannotBeSent (EV-3, camino 2): si el recordatorio
+// se arma pero su ENVÍO falla, el cliente vuelve a su evento igual: sale la pantalla del
+// flujo, el fallo se avisa y el hilo no cuenta un recordatorio que el cliente no tiene delante.
+func TestEvents_ComingBackGoesOnWhenTheReminderCannotBeSent(t *testing.T) {
+	h := eventsSwitchHarness(t, eventsWithCartLines(), threadWithoutWelcome(), threadWithFeature())
+	h.say("wa-1", eventsCartWord)
+	h.say("wa-2", eventsSurveyWord)
+	// Falla SOLO el primer envío del turno, que es el recordatorio; el siguiente ya pasa.
+	h.sender.FailText(errEventsInjected)
+	h.sender.OnSend(func(runtimehelpertest.Send) { h.sender.FailText(nil) })
+
+	err := h.handle(h.incoming("wa-3", eventsCartWord))
+
+	if err != nil {
+		t.Fatalf("HandleIncoming = %v, un recordatorio que no sale no tumba el rescate\nlog:\n%s", err, h.log.dump())
+	}
+	attempts := h.sender.Attempts()
+	if len(attempts) != 4 || !errors.Is(attempts[2].Err, errEventsInjected) || !strings.Contains(attempts[2].Text, eventsLineLabel) {
+		t.Fatalf("intentos = %+v, quería cuatro y el tercero —el recordatorio— fallido", attempts)
+	}
+	texts := h.texts()
+	if len(texts) != 3 || texts[2] != texts[0] {
+		t.Errorf("textos = %q, quería tres pantallas y la última la del flujo del pedido", texts)
+	}
+	for _, text := range texts {
+		if strings.Contains(text, eventsLineLabel) {
+			t.Errorf("se despachó %q, el recordatorio no debía llegar a salir", text)
+		}
+	}
+	cart := eventsAliveOfKind(t, h, trigger.EventKindCart)
+	if st, _ := h.state(); st.EventID != cart.ID || st.FlowID != eventsCartFlow {
+		t.Errorf("estado = %+v, el cliente debía quedar de vuelta en su pedido", st)
+	}
+	const notSent = "runtime: no se pudo enviar el resumen del rescate; se retoma igual"
+	if !eventsLogged(h, "warn", notSent) {
+		t.Errorf("no se avisó a WARN de que el recordatorio no salió\nlog:\n%s", h.log.dump())
+	}
+	for _, row := range threadRows(t, h, cart.ID) {
+		if row.Kind == events.KindMessageOutOfTurn {
+			t.Errorf("hilo: fila %d fuera de turno %q; un resumen que no llegó no es antecedente de nada", row.Seq, row.Text)
+		}
+	}
+}
+
+// eventsFlakyContacts es el resolver de contactos del guion con un número de consultas de
+// destino que fallan antes de volver a contestar: sirve para tumbar SOLO la primera del turno.
+type eventsFlakyContacts struct {
+	contact.Resolver
+	mu       sync.Mutex
+	failures int
+}
+
+// Destino implementa contact.Resolver.
+func (c *eventsFlakyContacts) Destino(ctx context.Context, tenantID, contactID string) (contact.Ref, error) {
+	c.mu.Lock()
+	failing := c.failures > 0
+	if failing {
+		c.failures--
+	}
+	c.mu.Unlock()
+	if failing {
+		return contact.Ref{}, errEventsInjected
+	}
+	return c.Resolver.Destino(ctx, tenantID, contactID)
+}
+
+// TestEvents_ComingBackGoesOnWhenTheReminderHasNoDestination (EV-3, camino 2): si el
+// recordatorio se arma pero su destino no se puede resolver, no se intenta enviar, el fallo se
+// avisa y el cliente vuelve a su evento igual: sale la pantalla del flujo.
+func TestEvents_ComingBackGoesOnWhenTheReminderHasNoDestination(t *testing.T) {
+	h := eventsSwitchHarness(t, eventsWithCartLines())
+	h.say("wa-1", eventsCartWord)
+	h.say("wa-2", eventsSurveyWord)
+	// Falla SOLO la primera consulta de destino del turno, que es la del recordatorio.
+	rt := startRuntimeWith(h, &eventsFlakyContacts{Resolver: h.contacts, failures: 1})
+
+	err := incomingHandleOn(h, rt, h.incoming("wa-3", eventsCartWord))
+
+	if err != nil {
+		t.Fatalf("HandleIncoming = %v, un recordatorio sin destino no tumba el rescate\nlog:\n%s", err, h.log.dump())
+	}
+	if !eventsLogged(h, "warn", "runtime: sin destino para el resumen del rescate") {
+		t.Errorf("no se avisó a WARN de que el recordatorio no tenía destino\nlog:\n%s", h.log.dump())
+	}
+	attempts := h.sender.Attempts()
+	if len(attempts) != 3 {
+		t.Fatalf("intentos = %+v, quería tres: sin destino el recordatorio ni se intenta", attempts)
+	}
+	for _, a := range attempts {
+		if strings.Contains(a.Text, eventsLineLabel) {
+			t.Errorf("se intentó enviar %q, el recordatorio no debía llegar al Sender", a.Text)
+		}
+	}
+	if texts := h.texts(); len(texts) != 3 || texts[2] != texts[0] {
+		t.Errorf("textos = %q, quería tres pantallas y la última la del flujo del pedido", texts)
+	}
+	cart := eventsAliveOfKind(t, h, trigger.EventKindCart)
+	if st, _ := h.state(); st.EventID != cart.ID || st.FlowID != eventsCartFlow {
+		t.Errorf("estado = %+v, el cliente debía quedar de vuelta en su pedido", st)
 	}
 }

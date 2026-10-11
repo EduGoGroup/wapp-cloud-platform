@@ -363,3 +363,39 @@ func TestMemberAdd_SixOutcomes(t *testing.T) {
 		})
 	}
 }
+
+// R-H7 es común a TODOS los handlers: también en las bajas y en el listado de miembros el error
+// del puerto sale por el mapeo de diseño §5, con su texto y sin el 204 (o el 200) del éxito.
+// UnassignRole promete además el 404 «en los mismos casos que AssignRole».
+func TestRemovalsAndMemberList_DomainErrorsMapping(t *testing.T) {
+	const notFound, internal = "recurso no encontrado", "error interno"
+	cases := []struct {
+		name    string
+		method  string
+		target  string
+		roleErr error
+		membErr error
+		status  int
+		msg     string
+		port    string
+	}{
+		{"unassign_from_non_member_404", http.MethodDelete, "/api/v1/members/u-1/roles/r-1", domain.ErrNotFound, nil, http.StatusNotFound, notFound, "UnassignRole"},
+		{"remove_user_grant_invalid_400", http.MethodDelete, "/api/v1/members/u-1/grants?pattern=&effect=allow", domain.ErrInvalidInput, nil, http.StatusBadRequest, "entrada inválida", "RevokeFromUser"},
+		{"list_members_without_tenant_403", http.MethodGet, "/api/v1/members", nil, domain.ErrNoTenant, http.StatusForbidden, "el token no trae empresa: no puede administrar roles ni miembros", "ListMembers"},
+		{"list_members_infra_500", http.MethodGet, "/api/v1/members", nil, errors.New("caído"), http.StatusInternalServerError, internal, "ListMembers"},
+		{"remove_member_without_tenant_403", http.MethodDelete, "/api/v1/members/u-1", nil, domain.ErrNoTenant, http.StatusForbidden, "el token no trae empresa: no puede administrar roles ni miembros", "RemoveMember"},
+		{"remove_member_infra_500", http.MethodDelete, "/api/v1/members/u-1", nil, errors.New("caído"), http.StatusInternalServerError, internal, "RemoveMember"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			roles, members := &fakeRoleAdmin{err: c.roleErr}, &fakeMembershipAdmin{err: c.membErr}
+			rec := serve(t, rolesMux(roles, members), c.method, c.target, "")
+			if rec.Code != c.status || rec.Body.String() != errorBody(c.msg) {
+				t.Errorf("respuesta = %d %s; se esperaba %d %s", rec.Code, rec.Body.String(), c.status, errorBody(c.msg))
+			}
+			if called := roles.method + members.method; roles.calls+members.calls != 1 || called != c.port {
+				t.Errorf("puerto: %d llamadas a %q; se esperaba 1 a %s", roles.calls+members.calls, called, c.port)
+			}
+		})
+	}
+}

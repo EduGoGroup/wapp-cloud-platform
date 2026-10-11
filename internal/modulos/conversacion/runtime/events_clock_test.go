@@ -276,3 +276,34 @@ func TestEvents_UnreadableTTLRisesInsteadOfExpiring(t *testing.T) {
 		t.Errorf("el evento quedó %q, quería open", row.Status)
 	}
 }
+
+// TestEvents_WithoutEventStore_AnActivePointerHasNoClock (EV-6, INV-6): sin plano de eventos
+// cableado, un puntero a evento que quedó en el estado no tiene reloj que lo gobierne: ni
+// vence ni se consulta, por mucho silencio que haya pasado, y la conversación avanza.
+func TestEvents_WithoutEventStore_AnActivePointerHasNoClock(t *testing.T) {
+	h := eventsCartHarness(t, withOptions(func(*harness) []runtime.Option {
+		return []runtime.Option{runtime.WithEventStore(nil)}
+	}))
+	h.say("wa-1", eventsCartWord)
+	st, found := h.state()
+	if !found || st.FlowID != eventsCartFlow || st.EventID != "" {
+		t.Fatalf("estado = (%+v, %v), quería el flujo vivo y, sin plano, ningún evento", st, found)
+	}
+	const pointer = "ev-orphan-zzq"
+	st.EventID = pointer
+	if err := h.repo.Save(t.Context(), st); err != nil {
+		t.Fatalf("sembrar el puntero a un evento: %v", err)
+	}
+	// Más que la ventana del evento y mucho más que el TTL del limbo: ninguno de los dos manda.
+	h.clock.Advance(eventsWindow + time.Minute)
+
+	h.say("wa-2", "esto no es una opción")
+
+	if texts := h.texts(); len(texts) != 2 {
+		t.Errorf("textos = %q, la conversación debía avanzar y contestar", texts)
+	}
+	if st, found := h.state(); !found || st.EventID != pointer || st.FlowID != eventsCartFlow {
+		t.Errorf("estado = (%+v, %v), sin plano nadie suelta la conversación ni toca su puntero", st, found)
+	}
+	eventsRequireLifecycle(t, h, runtime.EffectEventInactivityExpired, 0)
+}

@@ -209,3 +209,84 @@ func TestMultiCompanyGranted(t *testing.T) {
 		}
 	})
 }
+
+// grantInScriptedTx corre GrantTenantAccess dentro de una transacción del guion s y devuelve los
+// pasos dados HASTA ahí (el ROLLBACK de limpieza va después y no cuenta) junto con su error.
+func grantInScriptedTx(t *testing.T, s *scriptedSQL, roleID *string) ([]string, error) {
+	t.Helper()
+	tx, err := s.pool(t).BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("abrir la transacción guionizada: %v", err)
+	}
+	t.Cleanup(func() {
+		if rerr := tx.Rollback(); rerr != nil {
+			t.Errorf("deshacer la transacción guionizada: %v", rerr)
+		}
+	})
+	err = GrantTenantAccess(t.Context(), tx, &recordingResolver{has: true}, testUserID, testTenantID, roleID)
+	return s.Steps(), err
+}
+
+// wantScriptedFailure exige que err envuelva errScripted, empiece por prefix y no sea el rechazo de
+// negocio: un INSERT caído no se lee como «ya es miembro de otra empresa».
+func wantScriptedFailure(t *testing.T, err error, prefix string) {
+	t.Helper()
+	if !errors.Is(err, errScripted) {
+		t.Fatalf("GrantTenantAccess = %v; quiere un error que envuelva la causa", err)
+	}
+	if !strings.HasPrefix(err.Error(), prefix) {
+		t.Errorf("texto %q; quiere el prefijo %q", err.Error(), prefix)
+	}
+	if errors.Is(err, domain.ErrConflict) {
+		t.Errorf("GrantTenantAccess = %v; un fallo de escritura no es un conflicto", err)
+	}
+}
+
+// TestGrantTenantAccess_MembershipInsertFailureStopsBeforeRole: si el alta de la membresía falla,
+// corta con SU texto y NO llega a asignar el rol que se pedía — un rol sin membresía detrás sería
+// un permiso sobre una empresa a la que la persona no pertenece.
+func TestGrantTenantAccess_MembershipInsertFailureStopsBeforeRole(t *testing.T) {
+	role := companyRoleID
+	s := &scriptedSQL{fail: map[string]error{stepInsertMember: errScripted}}
+	steps, err := grantInScriptedTx(t, s, &role)
+	wantScriptedFailure(t, err, "iam: alta de membresía: ")
+	if want := []string{stepBegin, stepLock, stepCount, stepInsertMember}; !slices.Equal(steps, want) {
+		t.Errorf("pasos = %v;\nquiere  %v (sin %s)", steps, want, stepInsertRole)
+	}
+}
+
+// TestGrantTenantAccess_RoleInsertFailureHasItsOwnText: con la membresía ya escrita, el fallo al
+// asignar el rol lleva un texto DISTINTO del de la membresía: quien lea el error sabe cuál de las
+// dos escrituras cayó. Deshacer la membresía es cosa de la transacción del llamante.
+func TestGrantTenantAccess_RoleInsertFailureHasItsOwnText(t *testing.T) {
+	role := companyRoleID
+	s := &scriptedSQL{fail: map[string]error{stepInsertRole: errScripted}}
+	steps, err := grantInScriptedTx(t, s, &role)
+	wantScriptedFailure(t, err, "iam: asignar rol en el alta de acceso: ")
+	if want := []string{stepBegin, stepLock, stepCount, stepInsertMember, stepInsertRole}; !slices.Equal(steps, want) {
+		t.Errorf("pasos = %v;\nquiere  %v (la membresía, antes que el rol)", steps, want)
+	}
+}
+
+// TestMembershipRepo_Add_CommitFailureIsReported: un alta cuyas sentencias pasaron pero cuyo
+// COMMIT falla NO quedó escrita, y Add lo dice con su texto: ni nil (daría por hecha una membresía
+// que no existe) ni conflicto. La conexión vuelve al pool.
+func TestMembershipRepo_Add_CommitFailureIsReported(t *testing.T) {
+	s := &scriptedSQL{commitErr: errScripted}
+	db := s.pool(t)
+	err := NewMembershipRepo(db, nil).Add(t.Context(), testUserID, testTenantID)
+	if err == nil {
+		t.Fatal("Add con el COMMIT fallido = nil; quiere el error de la confirmación")
+	}
+	if !errors.Is(err, errScripted) || !strings.HasPrefix(err.Error(), "iam: confirmar alta de membresía: ") {
+		t.Errorf("Add = %v; quiere «iam: confirmar alta de membresía: …» envolviendo la causa", err)
+	}
+	if errors.Is(err, domain.ErrConflict) {
+		t.Errorf("Add = %v; un COMMIT fallido no es un conflicto", err)
+	}
+	// Llegó hasta confirmar: el fallo no es de ninguna sentencia anterior, y no hubo rol.
+	wantSteps(t, s, stepBegin, stepLock, stepCount, stepInsertMember)
+	if inUse := db.Stats().InUse; inUse != 0 {
+		t.Errorf("tras Add quedan %d conexiones en uso; quiere 0", inUse)
+	}
+}
