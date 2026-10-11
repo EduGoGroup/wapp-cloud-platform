@@ -9,7 +9,7 @@
 > Sin umbral de cobertura (P2): `make cobertura-ficheros` es un informe, no bloquea.
 > Adaptadores (E-11, `05` §4.2): F10 no crea ni retira ningún `bridge_<x>.go`; exige que no quede ninguno.
 
-## Bloque A · preparación y dorada · sesión F10-02 · T10.1–T10.3
+## Bloque A · preparación y dorada · sesión F10-02 · T10.1–T10.3 y T10.24
 
 Entrada: F9 `CERRADO`; F10-01 hecha. Para cuando: la dorada commiteada y verificada contra el viejo en ejecución.
 
@@ -30,6 +30,12 @@ Entrada: F9 `CERRADO`; F10-01 hecha. Para cuando: la dorada commiteada y verific
 - [ ] **T10.3 · Preparación de la prueba en UAT** · dep. T10.2
   - **Ficheros**: `traspasos/TRASPASO-F10-relevo.md` (§4: los comandos de `diseno.md` §2, literales)
   - **Hecho cuando**: T10.1–T10.2 empujados a `dev` (`git push origin dev`, rc sin pipe); el SHA que se desplegará está escrito en el acta
+- [ ] **T10.24 · Inventario de las divergencias visibles desde fuera (primera mitad de la deuda D-36)** · dep. F9 cerrada · añadida el 2026-10-11 por decisión de Jhoan · solo lectura
+  - **Por qué antes del relevo**: saber qué respondía el viejo es directo mientras existe (se corren los dos binarios); después hay que deducirlo de los comentarios
+  - **Ficheros**: `divergencias-visibles.md` (nuevo, en esta carpeta); `documentations/deuda.md` (D-36)
+  - **Hecho cuando**: cada comentario «Divergencia deliberada del viejo» de producción (26 en 14 ficheros el 2026-10-10: se re-mide, con el comando) y cada decisión de `plan/DECISIONES.md` que cambie conducta está clasificada **interna** / **visible desde fuera**; cada visible lleva ruta o trama, qué respondía el viejo y qué responde el nuevo (código, cuerpo, texto), y qué consumidor la recibe. **No** se abre ni se toca ningún consumidor: eso es la segunda mitad, tras el relevo
+  - **Corte limpio**: si F10-02 no cabe en ~90 min, esta tarea se hace en una sesión propia; lo que no puede es quedar para después de T10.7
+  - **Commit**: `docs(reorganizacion-modular): F10, inventario de las divergencias visibles desde fuera`
 
 ## Bloque B · la prueba en UAT en sustitución · sesión F10-03 · T10.4–T10.6 · necesita UAT (SSH)
 
@@ -49,7 +55,7 @@ espera, no sesión: se abre con T10.4 y la sesión se relanza al final para T10.
 
 ## Bloque C · el relevo en el repo · sesión F10-04 · T10.7–T10.14 y T10.23
 
-Entrada: T10.6 con «sigue». Para cuando: la definición de hecho del bloque C (`reglas.md` §4). Un commit por
+Entrada: T10.6 con «sigue»; ✎ 2026-10-11: T10.24 `[x]` (el inventario de divergencias se hace con el viejo aún presente). Para cuando: la definición de hecho del bloque C (`reglas.md` §4). Un commit por
 tarea, directo en `dev`, en este orden (`arquitectura.md` §3). No necesita Docker ni UAT.
 
 - [ ] **T10.7 · relevo: `cmd/server` usa el arranque nuevo** · dep. T10.6 · cumple R10.2.a–b, R10.3.c

@@ -128,7 +128,7 @@ La columna «Nivel» es el **provisional** de la spec (`05` E-12); el que vale e
 | 53 | [`F8-07-cli-cierre`](F8-07-cli-cierre.md) | 💻 | F8 | cierre | T8.38 | — | **hecha** (2026-10-11; rama `reorg/f8-07-cierre` desde `dev` @ `77c4805f`, `5fde368d` y el commit que anota su SHA, solo documentación, PR #72 a `dev`, **integrado**, sin squash; **F8 cerrada**: los 10 puntos de `reglas.md` §4 en `ESTADO.md`; `GATE_RC=0`, procesos contra el nuevo `RC=0 · PASS=1291 · SKIP=0`; 31 mutantes de cableado, 31 muertos; deudas D-39 y D-40) |
 | 54 | [`F9-05-cli-cierre`](F9-05-cli-cierre.md) | 💻 | F9 | D | T9.30–T9.33 — condición del relevo | — | pendiente |
 | 55 | [`F10-01-jhoan-decisiones`](F10-01-jhoan-decisiones.md) | 🧑 | F10 | — | — | — | pendiente |
-| 56 | [`F10-02-cli-dorada`](F10-02-cli-dorada.md) | 💻 | F10 | A | T10.1–T10.3 | — | pendiente |
+| 56 | [`F10-02-cli-dorada`](F10-02-cli-dorada.md) | 💻 | F10 | A | T10.1–T10.3, T10.24 (✎ 2026-10-11: inventario de divergencias visibles, D-36) | — | pendiente |
 | ∥ | [`FW-01-cli-inventario-y-adr`](FW-01-cli-inventario-y-adr.md) | 💻 | FW | A · inventario y ADR (✎ 2026-10-11: fase nueva; en paralelo a los pasos 54–56) | TW.1–TW.3 (Edge en solo lectura) | — | pendiente |
 | ∥ | [`FW-02-cli-adaptador-falso`](FW-02-cli-adaptador-falso.md) | 💻 | FW | B · el adaptador falso (en `edge/wapp-edge-agent`) | TW.4–TW.6 | — | pendiente |
 | ∥ | [`FW-03-cli-conversacion-edge-real`](FW-03-cli-conversacion-edge-real.md) | 💻 | FW | C · la conversación con Edge real (Docker) | TW.7–TW.8, TW.11 (cierra D-38 y D-39) | — | pendiente |

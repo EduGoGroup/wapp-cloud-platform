@@ -6,7 +6,7 @@
 | Entorno | 💻 solo local; no necesita Docker ni UAT |
 | Nivel (E-12) | No aplica: F10 no reconstruye un módulo y no lleva inventario E-12 |
 | Duración objetivo | 45–90 min |
-| Tareas | T10.1–T10.3 |
+| Tareas | T10.1–T10.3 y T10.24 |
 | Depende de | F9-05 y F10-01 |
 | Decisiones | D-F10-1 (fecha de la ventana, para escribir el SHA a desplegar) |
 | Se para cuando | la dorada de la huella está commiteada y verificada contra el viejo en ejecución, y el acta dice el SHA que se desplegará en UAT. |
@@ -30,7 +30,7 @@ En F10 todo es local: no hay sesión web que cerrar, ni rama que integrar, ni tr
 Tu encargo (y solo este):
 - Fase: F10 · relevo → documentations/reorganizacion-modular/plan/F10-relevo/
 - Bloque(s): A · preparación y dorada
-- Tareas: T10.1–T10.3 de plan/F10-relevo/tareas.md
+- Tareas: T10.1–T10.3 y T10.24 de plan/F10-relevo/tareas.md
 - Entrada: F9 `CERRADO`; las condiciones de «Entradas» del README de la fase
 - Te paras cuando: la dorada de la huella está commiteada y verificada contra el viejo en ejecución, y el acta dice el SHA que se desplegará en UAT.
 - Decisiones: D-F10-1 debe estar rellena en plan/DECISIONES.md. Si falta, PARA y dilo.
@@ -44,7 +44,7 @@ No empieces la sesión siguiente.
 
 ## Al terminar debe existir
 
-- En [`../F10-relevo/tareas.md`](../F10-relevo/tareas.md): T10.1–T10.3 `[x]` con SHA (o `[~]` con lo que falta).
+- En [`../F10-relevo/tareas.md`](../F10-relevo/tareas.md): T10.1–T10.3 y T10.24 `[x]` con SHA (o `[~]` con lo que falta).
 - Un bloque de la sesión en `ESTADO.md` de la reorganización.
 - Los hallazgos nuevos en el [README de la fase](../F10-relevo/README.md).
 - `internal/arranque/testdata/huella-vieja.golden` commiteada; el acta (`traspasos/TRASPASO-F10-relevo.md`) con la verdad de campo y el SHA a desplegar.

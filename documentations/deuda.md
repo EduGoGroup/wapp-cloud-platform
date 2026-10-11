@@ -463,6 +463,11 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   texto de error, trama gRPC); (2) por cada una, mirar en el consumidor cómo trata la respuesta nueva; (3) adaptar el
   consumidor o, si no compensa, anotar por qué se deja.
 - **Veredicto**: después del relevo de F10, en una sesión propia que abarca varios repos.
+- ✎ **2026-10-11 · Partida en dos por decisión de Jhoan.** (1) El **inventario** —el paso (1) de arriba, más qué
+  respondía el viejo en cada caso— se hace **antes** del relevo, con el viejo aún presente: tarea **T10.24** de
+  [`reorganizacion-modular/plan/F10-relevo/tareas.md`](reorganizacion-modular/plan/F10-relevo/tareas.md) (sesión F10-02).
+  (2) Mirar y adaptar los consumidores —los pasos (2) y (3)— sigue siendo una sesión propia, de varios repos, **después**
+  del relevo.
 
 ### D-37 · 🟡 El hilo y la cola no se escriben en un solo acto: un mensaje puede entrar en dos ventanas
 
