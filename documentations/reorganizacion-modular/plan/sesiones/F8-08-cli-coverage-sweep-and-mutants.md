@@ -8,7 +8,7 @@
 | Fase · bloque | [F8 · conversacion](../F8-conversacion/README.md) · 8 · barrida tras el cierre |
 | Entorno | 💻 local; Docker (procesos) |
 | Tareas | T8.44–T8.46 |
-| Rama · PR | `reorg/f8-08-coverage-sweep-and-mutants` · PR #73 |
+| Rama · PR | `reorg/f8-08-coverage-sweep-and-mutants` · PR #73 (integrado en `dev`, merge `abbfb926`) |
 | Depende de | F8-07 (PR #72) |
 
 ## Qué cubrió

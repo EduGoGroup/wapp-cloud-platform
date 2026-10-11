@@ -298,9 +298,9 @@ Para cuando: `make ci-docker` rc=0; las suites `Contrato` de los puertos con BD 
 
 ## Bloque 8 · barrida tras el cierre · sesión F8-08 · T8.44–T8.46 · añadido el 2026-10-11 (Jhoan, al repasar los pendientes del cierre)
 
-- [x] **T8.44 · Repetir los mutantes de `admin` y de la cara HTTP de F8-06** — sin commit propio: `admin` 24 de 24 muertos; `apipublica` 39 de 40 (muestra); tabla en el hallazgo 72 (PR #73, en revisión) · 💻 · dep. T8.38
+- [x] **T8.44 · Repetir los mutantes de `admin` y de la cara HTTP de F8-06** — sin commit propio: `admin` 24 de 24 muertos; `apipublica` 39 de 40 (muestra); tabla en el hallazgo 72 (PR #73, integrado) · 💻 · dep. T8.38
   - **Qué**: lo que el hallazgo 51 (h) dejó al cierre y el cierre hizo solo para el cableado. Por quien no escribió el código, `go test -overlay`, en serie, con lista
-- [x] **T8.45 · Las guardas de «identidad sin tenant» de la cara HTTP** — `40644508` (PR #73, en revisión) · 💻 · dep. T8.44
+- [x] **T8.45 · Las guardas de «identidad sin tenant» de la cara HTTP** — `40644508` (PR #73, integrado) · 💻 · dep. T8.44
   - **Hecho cuando**: mutadas las 43, sobreviven solo las inalcanzables por la cadena, nombradas (14; hallazgo 73)
-- [x] **T8.46 · Cobertura combinada y las promesas de `events_summary.go`** — `a3fcbe3a` (`make cobertura-combinada`) y `dc84fae9` (tres tests) (PR #73, en revisión) · 💻 · dep. T8.38
+- [x] **T8.46 · Cobertura combinada y las promesas de `events_summary.go`** — `a3fcbe3a` (`make cobertura-combinada`) y `dc84fae9` (tres tests) (PR #73, integrado) · 💻 · dep. T8.38
   - **Hecho cuando**: `POR_DEBAJO` medido sumando flujos y suites (0 de 418; hallazgo 74); las dos promesas «best-effort» con test (hallazgo 75). La clasificación de lo que sigue sin cubrir es T9.36
