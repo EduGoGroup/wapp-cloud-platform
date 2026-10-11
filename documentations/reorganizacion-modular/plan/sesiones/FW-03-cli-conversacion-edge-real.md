@@ -6,7 +6,7 @@
 | Entorno | 💻 local; necesita **Docker** y el repo del Edge al lado |
 | Nivel (E-12) | No aplica: FW no reconstruye un módulo de este repo; el código vive en `edge/wapp-edge-agent` |
 | Duración objetivo | 45–90 min |
-| Tareas | TW.7–TW.8 |
+| Tareas | TW.7–TW.8 y TW.11 |
 | Depende de | FW-02 integrada en el `dev` del Edge |
 | Decisiones | D-FW-1 … D-FW-6 ([`../DECISIONES.md`](../DECISIONES.md) §8) |
 | Se para cuando | el comando del carrito con Edge real da `RC=0`, 0 SKIP, 0 FAIL y `make test-procesos` conserva su `PASS`. |
@@ -30,7 +30,7 @@ Fuera de este repo, lee el ADR-0041 (documentations/adrs/ de la raíz de wApp) c
 
 Tu encargo (y solo este):
 - Bloque: C · la conversación con Edge real
-- Tareas: TW.7–TW.8 de plan/FW-whatsapp-enchufable/tareas.md
+- Tareas: TW.7–TW.8 y TW.11 de plan/FW-whatsapp-enchufable/tareas.md
 - Te paras cuando: el comando del carrito con Edge real da `RC=0`, 0 SKIP, 0 FAIL y `make test-procesos` conserva su `PASS`.
 - Decisiones: si falta una de las que tu bloque necesita, PARA y dilo.
 - Skills: procesos-testcontainers, validar-antes-de-cerrar. El Edge falso del arnés NO se retira. El caso afirma qué binario del Edge corre antes de afirmar nada más.
@@ -42,7 +42,7 @@ No empieces la sesión siguiente.
 
 ## Al terminar debe existir
 
-- En [`../FW-whatsapp-enchufable/tareas.md`](../FW-whatsapp-enchufable/tareas.md): TW.7–TW.8 `[x]` con SHA (o `[~]` con lo que falta).
+- En [`../FW-whatsapp-enchufable/tareas.md`](../FW-whatsapp-enchufable/tareas.md): TW.7–TW.8 y TW.11 `[x]` con SHA (o `[~]` con lo que falta).
 - Un bloque de la sesión en `ESTADO.md` de la reorganización.
 - Los hallazgos nuevos en el [README de la fase](../FW-whatsapp-enchufable/README.md).
 
