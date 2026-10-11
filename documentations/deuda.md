@@ -468,6 +468,15 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   [`reorganizacion-modular/plan/F10-relevo/tareas.md`](reorganizacion-modular/plan/F10-relevo/tareas.md) (sesión F10-02).
   (2) Mirar y adaptar los consumidores —los pasos (2) y (3)— sigue siendo una sesión propia, de varios repos, **después**
   del relevo.
+- ✎ **2026-10-11 · Primera mitad hecha (F10-02, T10.24).** El inventario está en
+  [`reorganizacion-modular/plan/F10-relevo/divergencias-visibles.md`](reorganizacion-modular/plan/F10-relevo/divergencias-visibles.md):
+  **33 divergencias, 11 visibles desde fuera y 22 internas**, cada visible con lo que respondía el viejo, lo que responde
+  el nuevo y su `fichero:línea` en los dos árboles. Se hizo **leyendo el código, sin ejecutar los binarios**. Dos cosas
+  que cambian el punto de partida de arriba: la frase «Divergencia deliberada» (27 líneas en 14 ficheros con el `grep`
+  sin «del viejo»; 26 con él) solo cubre **una** de las once visibles, porque `acceso`, `edge`, `solicitudes` y
+  `apipublica` las escriben con otras fórmulas; y el consumidor solo está confirmado para el CRM y el Edge. **Sigue
+  abierta la segunda mitad**: mirar y adaptar los consumidores, tras el relevo. Las seis internas que cambian datos
+  guardados (§6 del inventario) se miran también entonces, por si una pantalla los lee.
 
 ### D-37 · 🟡 El hilo y la cola no se escriben en un solo acto: un mensaje puede entrar en dos ventanas
 
