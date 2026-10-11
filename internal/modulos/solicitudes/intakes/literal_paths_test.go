@@ -127,13 +127,24 @@ func TestMemoryStore_Revisions_LiteralThatDoesNotFitIsLoggedAndTheReadGoesOn(t *
 	if len(logged) != 1 {
 		t.Fatalf("se registraron %d entradas, quería 1: %+v", len(logged), logged)
 	}
-	entry := logged[0]
+	wantLiteralRetentionEntry(t, logged[0], written.RevisionNo, phrase)
+	// Lo guardado no se toca: la siguiente lectura vuelve a intentarlo (y vuelve a avisar).
+	if persisted := store.PersistedRevisions(pgIntakeID); len(persisted) != 1 || string(persisted[0].Payload) != string(written.Payload) {
+		t.Errorf("lo persistido cambió con la lectura: %+v", persisted)
+	}
+}
+
+// wantLiteralRetentionEntry exige la entrada que promete el contrato cuando el literal no vuelve a
+// su revisión: nivel Error, el mensaje, la solicitud, el número y la causa, y ni rastro del texto
+// del cliente.
+func wantLiteralRetentionEntry(t *testing.T, entry pgLogEntry, revisionNo int, phrase string) {
+	t.Helper()
 	if entry.level != "error" || entry.msg != "retención: no se pudo devolver el literal a la revisión" {
 		t.Errorf("entrada = %s %q, quería un error con el mensaje del contrato", entry.level, entry.msg)
 	}
 	const cause = `intakes: la evidencia "7" no corresponde a ninguna de las 1 líneas de la revisión`
 	if len(entry.args) != 6 || entry.args[0] != "intake_id" || entry.args[1] != pgIntakeID ||
-		entry.args[2] != "revision_no" || entry.args[3] != written.RevisionNo || entry.args[4] != "error" {
+		entry.args[2] != "revision_no" || entry.args[3] != revisionNo || entry.args[4] != "error" {
 		t.Fatalf("campos = %v, quería intake_id, revision_no y error", entry.args)
 	}
 	if got, ok := entry.args[5].(error); !ok || got.Error() != cause {
@@ -143,9 +154,5 @@ func TestMemoryStore_Revisions_LiteralThatDoesNotFitIsLoggedAndTheReadGoesOn(t *
 		if s, ok := arg.(string); ok && strings.Contains(s, phrase) {
 			t.Errorf("el log lleva texto del cliente: %q", s)
 		}
-	}
-	// Lo guardado no se toca: la siguiente lectura vuelve a intentarlo (y vuelve a avisar).
-	if persisted := store.PersistedRevisions(pgIntakeID); len(persisted) != 1 || string(persisted[0].Payload) != string(written.Payload) {
-		t.Errorf("lo persistido cambió con la lectura: %+v", persisted)
 	}
 }

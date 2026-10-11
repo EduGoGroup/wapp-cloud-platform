@@ -232,54 +232,54 @@ func TestFake_Concurrent(t *testing.T) {
 // consumidores prueban sus ramas de error sobre esto: una clave mal escrita en un método haría
 // que su test de fallo ejercitara, sin avisar, el camino feliz.
 func TestFake_Fail_EveryPortMethod(t *testing.T) {
-	ctx := context.Background()
 	boom := errors.New("caído")
 	cases := []struct {
 		method string
 		// call devuelve si los demás resultados salieron a cero, y el error.
-		call func(f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, requestID, user string) (bool, error)
+		call func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, requestID, user string) (bool, error)
 	}{
-		{"GetTenant", func(f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+		{"GetTenant", func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, _ string) (bool, error) {
 			d, err := f.GetTenant(ctx, m.TenantA)
 			return d.ID == "" && d.Features == nil, err
 		}},
-		{"ExistsTenant", func(f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+		{"ExistsTenant", func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, _ string) (bool, error) {
 			ok, err := f.ExistsTenant(ctx, m.TenantA)
 			return !ok, err
 		}},
-		{"CreateTenant", func(f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+		{"CreateTenant", func(ctx context.Context, f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, _, _ string) (bool, error) {
 			created, err := f.CreateTenant(ctx, "tenant-c", "Empresa C", nil)
 			return created == platformadmin.CreatedTenant{}, err
 		}},
-		{"ListInstallations", func(f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+		{"ListInstallations", func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, _ string) (bool, error) {
 			items, err := f.ListInstallations(ctx, m.TenantA)
 			return items == nil, err
 		}},
-		{"ListAccessRequests", func(f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+		{"ListAccessRequests", func(ctx context.Context, f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, _, _ string) (bool, error) {
 			items, err := f.ListAccessRequests(ctx, "pending")
 			return items == nil, err
 		}},
-		{"RejectAccessRequest", func(f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, requestID, _ string) (bool, error) {
+		{"RejectAccessRequest", func(ctx context.Context, f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, requestID, _ string) (bool, error) {
 			return true, f.RejectAccessRequest(ctx, requestID, "motivo", uuid.NewString())
 		}},
-		{"LookupAccessRequestStatus", func(f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, requestID, _ string) (bool, error) {
+		{"LookupAccessRequestStatus", func(ctx context.Context, f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, requestID, _ string) (bool, error) {
 			userID, status, err := f.LookupAccessRequestStatus(ctx, requestID)
 			return userID == "" && status == "", err
 		}},
-		{"ResolveRoleID", func(f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, _, _ string) (bool, error) {
+		{"ResolveRoleID", func(ctx context.Context, f *platformadminhelpertest.Fake, _ platformadminhelpertest.Montaje, _, _ string) (bool, error) {
 			id, err := f.ResolveRoleID(ctx, roleOperator.Name)
 			return id == "", err
 		}},
-		{"CheckRetryApproved", func(f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, user string) (bool, error) {
+		{"CheckRetryApproved", func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, _, user string) (bool, error) {
 			return true, f.CheckRetryApproved(ctx, user, m.TenantB, roleViewer.ID)
 		}},
-		{"ExecuteApprovalTx", func(f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, requestID, user string) (bool, error) {
+		{"ExecuteApprovalTx", func(ctx context.Context, f *platformadminhelpertest.Fake, m platformadminhelpertest.Montaje, requestID, user string) (bool, error) {
 			return true, f.ExecuteApprovalTx(ctx, requestID, m.TenantA, user, roleOperator.ID, uuid.NewString())
 		}},
 	}
 	for _, c := range cases {
 		t.Run(c.method, func(t *testing.T) {
 			f, m := newFake(t)
+			ctx := context.Background()
 			// user ya es miembro de B con el rol viewer (sin Fail, CheckRetryApproved daría nil), y
 			// A admite a quien ya está en otra empresa (sin Fail, ExecuteApprovalTx daría nil).
 			user := uuid.NewString()
@@ -291,7 +291,7 @@ func TestFake_Fail_EveryPortMethod(t *testing.T) {
 			requestID := pending(ctx, t, f)[0].ID
 
 			f.Fail(c.method, boom)
-			zero, err := c.call(f, m, requestID, user)
+			zero, err := c.call(ctx, f, m, requestID, user)
 			if !errors.Is(err, boom) || !zero {
 				t.Fatalf("%s con Fail = (cero: %v, %v), quiero resultados a cero y boom", c.method, zero, err)
 			}
@@ -305,7 +305,7 @@ func TestFake_Fail_EveryPortMethod(t *testing.T) {
 			if tenants, lerr := f.ListTenants(ctx, 0, 0); lerr != nil || len(tenants) != 2 {
 				t.Errorf("el fallo creó o perdió empresas: %d, %v", len(tenants), lerr)
 			}
-			if _, err := c.call(f, m, requestID, user); err != nil {
+			if _, err := c.call(ctx, f, m, requestID, user); err != nil {
 				t.Fatalf("tras Fail(nil) %s tiene que volver a funcionar: %v", c.method, err)
 			}
 		})
