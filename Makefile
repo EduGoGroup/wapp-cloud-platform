@@ -300,9 +300,9 @@ cobertura-ficheros: ## INFORME de cobertura por fichero en verde del árbol nuev
 # ── Cobertura combinada: unitarios + suites contra Postgres + flujos de proceso ─
 # El informe de arriba solo ve lo que ejecutan los tests unitarios. Este suma lo que recorren
 # los procesos de F9: compila el servidor NUEVO con `go build -cover` (GOFLAGS llega al
-# `go build` del arnés; -coverpkg abarca el módulo ENTERO porque, si deja fuera el paquete
-# main, el binario no vuelca nada: medido el 2026-10-11) y sigue: (GOFLAGS llega al
 # `go build` del arnés), le pasa GOCOVERDIR por WAPP_PROCESOS_COVERDIR, corre los procesos y
+# ⚠️ -coverpkg abarca el módulo ENTERO: si deja fuera el paquete main, el binario no vuelca
+# nada (medido el 2026-10-11: con `internal/...` el directorio quedó vacío).
 # añade al perfil unitario (PERFIL_EXTRA) el del binario y el de las suites `Contrato` que
 # corren en el propio proceso de test. cmd/cobertura-ficheros se queda, por bloque, con la
 # cuenta máxima: un bloque cuenta como cubierto si lo ejecutó CUALQUIERA de los tres.
@@ -310,7 +310,8 @@ cobertura-ficheros: ## INFORME de cobertura por fichero en verde del árbol nuev
 # sus contadores al salir limpio (SIGTERM): un proceso matado con SIGKILL no aporta los suyos.
 # COBERTURA_COMBINADA_DIR conserva los perfiles para leer qué bloques quedan sin cubrir.
 COBERTURA_COMBINADA_DIR ?= $(PROCESOS_LOG_DIR)/cobertura-combinada
-MODULO := $(shell GOWORK=off go list -m)
+# Con `=` y no `:=`: el `go list` solo corre al expandir el target, no en cada `make`.
+MODULO = $(shell GOWORK=off go list -m)
 
 cobertura-combinada: ## INFORME de cobertura sumando unitarios, suites contra Postgres y flujos de proceso (binario nuevo); necesita Docker
 	@d="$(COBERTURA_COMBINADA_DIR)"; rm -rf "$$d"; mkdir -p "$$d/bin" || exit 2; \
