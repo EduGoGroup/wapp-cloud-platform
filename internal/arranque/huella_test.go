@@ -3,13 +3,17 @@ package arranque
 // huella_test.go es el candado de huella del arranque nuevo (F0 · T0.15, 05 §5): dice si
 // este arranque expone EXACTAMENTE lo mismo que el viejo.
 //
-//   - Ejecución (TestHuella): el mismo contenedor que huella_vieja_test.go, sobre ESTE
-//     paquete, comparado con la dorada que escribió el viejo (testdata/huella.json): rutas
-//     por listener, rpc, familias wapp_* de /metrics, en los dos perfiles. Este fichero NO
-//     tiene camino de escritura: solo TestHuellaVieja -args -actualizar la escribe (R0.5.g).
-//   - Estática (TestHuellaEstatica): las sentencias `go` y los hooks de *metrics.Metrics del
-//     arranque viejo y de este, comparados entre sí, y la lectura de entorno del árbol nuevo,
-//     que debe ser vacía fuera de internal/platform/config.
+//   - TestHuella: el mismo contenedor que huella_vieja_test.go, sobre ESTE paquete, comparado
+//     con la dorada que escribió el viejo (testdata/huella-vieja.golden): rutas por listener,
+//     rpc y familias wapp_* de /metrics en los dos perfiles, y —desde F10 · T10.2— la parte
+//     estática (las sentencias `go` y los hooks de *metrics.Metrics), más la lectura de
+//     entorno del árbol nuevo, que debe ser vacía fuera de internal/platform/config. Este
+//     fichero NO tiene camino de escritura: solo TestHuellaVieja -args -actualizar escribe la
+//     dorada (R0.5.g).
+//   - TestHuellaEstatica: MIENTRAS EXISTA el arranque viejo, la misma parte estática comparada
+//     además con su fuente viva. Muere con él en el relevo (T10.10); la dorada se queda.
+//   - TestHuellaBites: el candado muerde. Quitar una ruta, añadir otra o perder una goroutine
+//     da una diferencia contra la dorada.
 //
 // Lo que la huella NO compara, y quién lo cubre: diseno.md §6.5.
 
@@ -18,12 +22,14 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -40,7 +46,9 @@ const (
 	// raizDelRepo es la raíz del módulo vista desde este paquete.
 	raizDelRepo = "../.."
 	// doradaDeHuella es la dorada que escribe TestHuellaVieja (diseno.md §6.4).
-	doradaDeHuella = "testdata/huella.json"
+	doradaDeHuella = "testdata/huella-vieja.golden"
+	// staticProfile es el perfil de la dorada que guarda la parte estática.
+	staticProfile = "estatica"
 	// arranqueViejo es el directorio del oráculo, para la parte estática.
 	arranqueViejo = "../bootstrap/arranque"
 )
@@ -49,26 +57,97 @@ const (
 // que aún no existen se saltan.
 var arbolNuevo = []string{"cmd/server-modular", "internal/arranque", "internal/apipublica", "internal/modulos", "internal/nucleo"}
 
-// TestHuella compara la huella de ejecución de este arranque con la dorada del viejo.
+// TestHuella compara la huella de este arranque (ejecución y estática) con la dorada del viejo.
 func TestHuella(t *testing.T) {
-	compararConLaDorada(t, huellasDeEjecucion(t))
+	compararConLaDorada(t, append(huellasDeEjecucion(t), staticFootprint(t)))
 }
 
 // TestHuellaEstatica compara, sobre la fuente de los dos arranques, las goroutines que
-// lanzan y los hooks de métricas que cablean; y exige entorno ∅ en el árbol nuevo.
+// lanzan y los hooks de métricas que cablean. Solo tiene qué comparar mientras el arranque
+// viejo existe: el relevo (T10.10) borra este test con él, y TestHuella sigue comparando lo
+// mismo contra la dorada.
 func TestHuellaEstatica(t *testing.T) {
-	metodos := metodosDeMetrics()
-	viejo, nuevo := estaticaDe(t, arranqueViejo, metodos), estaticaDe(t, ".", metodos)
+	if _, err := os.Stat(arranqueViejo); errors.Is(err, fs.ErrNotExist) {
+		t.Logf("huella estática: %s ya no existe; la comparación viva la sustituye la dorada (TestHuella)", arranqueViejo)
+		return
+	}
+	viejo, nuevo := estaticaDe(t, arranqueViejo, metodosDeMetrics()), staticFootprint(t)
+	viejo.Perfil = staticProfile
+	for _, linea := range huellatest.Diferencia(viejo, nuevo) {
+		t.Errorf("huella estática: %s", linea)
+	}
+	t.Logf("huella estática: goroutines=%d hooks=%d entorno=%d", len(nuevo.Goroutines), len(nuevo.Hooks), len(nuevo.Entorno))
+}
+
+// TestHuellaBites prueba que el candado muerde: la huella medida casa con la dorada, y cada
+// alteración —una ruta de menos, una de más, una goroutine de menos, un hook de más, una
+// lectura de entorno— da exactamente la línea que la nombra.
+func TestHuellaBites(t *testing.T) {
+	measure := func() map[string]huellatest.Huella {
+		byProfile := map[string]huellatest.Huella{}
+		for _, h := range append(huellasDeEjecucion(t), staticFootprint(t)) {
+			byProfile[h.Perfil] = h
+		}
+		return byProfile
+	}
+	base := measure()
+	route := base["minimo"].Rutas[":8103"][0]
+	goroutine := base[staticProfile].Goroutines[0]
+	cases := []struct {
+		name   string
+		mutate func(hs map[string]huellatest.Huella)
+		want   string
+	}{
+		{"sin tocar: casa", func(map[string]huellatest.Huella) {}, ""},
+		{"una ruta de menos", func(hs map[string]huellatest.Huella) {
+			hs["minimo"].Rutas[":8103"] = hs["minimo"].Rutas[":8103"][1:]
+		}, "[minimo] :8103 falta " + route},
+		{"una ruta de más", func(hs map[string]huellatest.Huella) {
+			hs["con-m2m"].Rutas[":8100"] = append(hs["con-m2m"].Rutas[":8100"], "GET /admin/no-existe")
+		}, "[con-m2m] :8100 sobra GET /admin/no-existe"},
+		{"una goroutine de menos", func(hs map[string]huellatest.Huella) {
+			h := hs[staticProfile]
+			h.Goroutines = h.Goroutines[1:]
+			hs[staticProfile] = h
+		}, "[" + staticProfile + "] goroutines falta " + goroutine},
+		{"un hook de más", func(hs map[string]huellatest.Huella) {
+			h := hs[staticProfile]
+			h.Hooks = append(h.Hooks, "HookQueNoExiste")
+			hs[staticProfile] = h
+		}, "[" + staticProfile + "] hooks sobra HookQueNoExiste"},
+		{"una lectura de entorno", func(hs map[string]huellatest.Huella) {
+			h := hs[staticProfile]
+			h.Entorno = append(h.Entorno, "internal/modulos/x/x.go:1 os.Getenv")
+			hs[staticProfile] = h
+		}, "[" + staticProfile + "] entorno sobra internal/modulos/x/x.go:1 os.Getenv"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			hs := measure() // medida propia: cada caso altera sus listas
+			c.mutate(hs)
+			got := differencesFromGolden(t, []huellatest.Huella{hs["minimo"], hs["con-m2m"], hs[staticProfile]})
+			want := []string{}
+			if c.want != "" {
+				want = append(want, c.want)
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("diferencias = %q, quiere %q", got, want)
+			}
+		})
+	}
+}
+
+// staticFootprint es la parte estática de ESTE arranque, con el perfil con el que la guarda
+// la dorada: goroutines, hooks y la lectura de entorno del árbol nuevo (que debe ser ∅).
+func staticFootprint(t *testing.T) huellatest.Huella {
+	t.Helper()
+	h := estaticaDe(t, ".", metodosDeMetrics())
 	entorno, err := huellatest.Entorno(raizDelRepo, arbolNuevo...)
 	if err != nil {
 		t.Fatalf("huella: Entorno: %v", err)
 	}
-	nuevo.Entorno = entorno
-	for _, linea := range huellatest.Diferencia(viejo, nuevo) {
-		t.Errorf("huella estática: %s", linea)
-	}
-	t.Logf("huella estática: goroutines=%d hooks=%d (de %d métodos) entorno=%d",
-		len(nuevo.Goroutines), len(nuevo.Hooks), len(metodos), len(nuevo.Entorno))
+	h.Perfil, h.Entorno = staticProfile, entorno
+	return h
 }
 
 // estaticaDe calcula la parte estática (goroutines y hooks) del arranque en dir.
@@ -260,7 +339,7 @@ func candidatosDeHuella(t *testing.T) []string {
 	for _, c := range cand {
 		vistos[c] = true
 	}
-	dorada, err := huellatest.Leer(doradaDeHuella)
+	dorada, err := huellatest.ReadGolden(doradaDeHuella)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("huella: leyendo la dorada: %v", err)
 	}
@@ -318,7 +397,22 @@ func huellasDeEjecucion(t *testing.T) []huellatest.Huella {
 // compararConLaDorada falla con una línea por diferencia, nombrando el perfil.
 func compararConLaDorada(t *testing.T, tiene []huellatest.Huella) {
 	t.Helper()
-	quiere, err := huellatest.Leer(doradaDeHuella)
+	for _, linea := range differencesFromGolden(t, tiene) {
+		t.Errorf("huella %s", linea)
+	}
+	for _, h := range tiene {
+		t.Logf("huella [%s]: :8100=%d :8103=%d rpc=%d metricas=%d goroutines=%d hooks=%d", h.Perfil,
+			len(h.Rutas[":8100"]), len(h.Rutas[":8103"]), len(h.RPC[":8101"])+len(h.RPC[":8102"]), len(h.Metricas),
+			len(h.Goroutines), len(h.Hooks))
+	}
+}
+
+// differencesFromGolden devuelve una línea por diferencia entre la dorada y tiene, cada una
+// con su perfil delante («[minimo] :8103 falta GET /x»); vacía si casan. Un perfil de la
+// dorada que tiene no trae, o al revés, también es una diferencia.
+func differencesFromGolden(t *testing.T, tiene []huellatest.Huella) []string {
+	t.Helper()
+	quiere, err := huellatest.ReadGolden(doradaDeHuella)
 	if err != nil {
 		t.Fatalf("huella: leyendo la dorada %s: %v (solo TestHuellaVieja -args -actualizar la escribe)", doradaDeHuella, err)
 	}
@@ -326,19 +420,19 @@ func compararConLaDorada(t *testing.T, tiene []huellatest.Huella) {
 	for _, h := range quiere {
 		porPerfil[h.Perfil] = h
 	}
+	lineas := []string{}
 	if len(quiere) != len(tiene) {
-		t.Errorf("huella: la dorada tiene %d perfiles y este arranque %d", len(quiere), len(tiene))
+		lineas = append(lineas, fmt.Sprintf("la dorada tiene %d perfiles y este arranque %d", len(quiere), len(tiene)))
 	}
 	for _, h := range tiene {
 		q, ok := porPerfil[h.Perfil]
 		if !ok {
-			t.Errorf("huella: el perfil %q no está en la dorada", h.Perfil)
+			lineas = append(lineas, fmt.Sprintf("[%s] el perfil no está en la dorada", h.Perfil))
 			continue
 		}
 		for _, linea := range huellatest.Diferencia(q, h) {
-			t.Errorf("huella [%s]: %s", h.Perfil, linea)
+			lineas = append(lineas, fmt.Sprintf("[%s] %s", h.Perfil, linea))
 		}
-		t.Logf("huella [%s]: :8100=%d :8103=%d rpc=%d metricas=%d", h.Perfil,
-			len(h.Rutas[":8100"]), len(h.Rutas[":8103"]), len(h.RPC[":8101"])+len(h.RPC[":8102"]), len(h.Metricas))
 	}
+	return lineas
 }

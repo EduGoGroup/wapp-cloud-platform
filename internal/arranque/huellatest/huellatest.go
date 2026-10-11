@@ -6,8 +6,8 @@
 //
 // Lo usan dos tests, y solo ellos (regla 5 de internal/candados/fronteras.go): el del
 // arranque VIEJO, internal/bootstrap/arranque/huella_vieja_test.go, que escribe la dorada
-// internal/arranque/testdata/huella.json; y el del arranque NUEVO,
-// internal/arranque/huella_test.go, que la compara. Si las dos huellas no son iguales, el
+// internal/arranque/testdata/huella-vieja.golden (golden.go: WriteGolden y ReadGolden); y el
+// del arranque NUEVO, internal/arranque/huella_test.go, que la compara. Si las dos huellas no son iguales, el
 // arranque nuevo ha dejado de ser una copia fiel del viejo, y Diferencia dice en qué.
 //
 // Todo lo que devuelve es determinista: listas ordenadas (sort.Strings), sin fechas ni SHA,
@@ -16,7 +16,6 @@ package huellatest
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -48,19 +47,16 @@ import (
 //   - RPC: listener (":8101", ":8102") → "servicio/método", como los devuelve RPC.
 //   - Metricas: familias `wapp_*` visibles en /metrics, como las devuelve Metricas.
 //   - Goroutines, Hooks, Entorno: la parte ESTÁTICA (Goroutines, Hooks, Entorno), que se
-//     calcula sobre el código fuente y se compara entre los dos árboles, no contra la
-//     dorada. Llevan `omitempty`: la dorada solo guarda la parte de ejecución.
-//
-// Las etiquetas JSON son los nombres en minúscula: perfil, rutas, rpc, metricas,
-// goroutines, hooks, entorno.
+//     calcula sobre el código fuente. Desde F10 · T10.2 la dorada la guarda también, en un
+//     perfil propio (el arranque viejo, con el que se comparaba, se borra en el relevo).
 type Huella struct {
-	Perfil     string              `json:"perfil"`
-	Rutas      map[string][]string `json:"rutas"`
-	RPC        map[string][]string `json:"rpc"`
-	Metricas   []string            `json:"metricas"`
-	Goroutines []string            `json:"goroutines,omitempty"`
-	Hooks      []string            `json:"hooks,omitempty"`
-	Entorno    []string            `json:"entorno,omitempty"`
+	Perfil     string
+	Rutas      map[string][]string
+	RPC        map[string][]string
+	Metricas   []string
+	Goroutines []string
+	Hooks      []string
+	Entorno    []string
 }
 
 // Candidatos devuelve los patrones de ruta candidatos: el primer argumento de toda llamada
@@ -287,43 +283,6 @@ func Entorno(raiz string, dirs ...string) ([]string, error) {
 		return nil, err
 	}
 	return ordenados(lecturas), nil
-}
-
-// Leer lee el fichero JSON ruta (el formato de Escribir: un array de Huella) y devuelve sus
-// huellas en el orden del fichero. Un fichero que no existe o que no es JSON válido de ese
-// formato es un error que nombra ruta.
-func Leer(ruta string) ([]Huella, error) {
-	b, err := os.ReadFile(ruta) //nolint:gosec // G304: la ruta la da el test (la dorada), no un usuario
-	if err != nil {
-		return nil, fmt.Errorf("huellatest: leer %s: %w", ruta, err)
-	}
-	var hs []Huella
-	if err := json.Unmarshal(b, &hs); err != nil {
-		return nil, fmt.Errorf("huellatest: %s no es un array de Huella: %w", ruta, err)
-	}
-	return hs, nil
-}
-
-// Escribir escribe hs en ruta (lo crea o lo trunca) como un array JSON indentado con dos
-// espacios, las huellas en el orden dado y las listas tal como vienen (no reordena: la
-// dorada refleja lo calculado), terminado en un salto de línea. Las claves de los mapas van
-// ordenadas (encoding/json). Determinista: escribir dos veces lo mismo da los mismos bytes,
-// y Leer(ruta) devuelve hs (con las listas `omitempty` vacías leídas como nil). Un
-// directorio padre que no existe es un error; Escribir no crea directorios.
-func Escribir(ruta string, hs []Huella) error {
-	// Un Encoder y no MarshalIndent: sin escapar <, > y & la dorada se lee como se escribe,
-	// y Encode ya termina en salto de línea.
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(hs); err != nil {
-		return fmt.Errorf("huellatest: codificar huellas: %w", err)
-	}
-	if err := os.WriteFile(ruta, buf.Bytes(), 0o600); err != nil {
-		return fmt.Errorf("huellatest: escribir %s: %w", ruta, err)
-	}
-	return nil
 }
 
 // Diferencia compara la huella esperada (quiere: la dorada, o el arranque viejo) con la

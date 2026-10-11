@@ -1,7 +1,6 @@
 package huellatest
 
 import (
-	"bytes"
 	"io"
 	"net/http"
 	"os"
@@ -369,33 +368,9 @@ func TestEntornoNoParsea(t *testing.T) {
 	}
 }
 
-// ── Leer y Escribir ──────────────────────────────────────────────────────────
+// ── Huellas de ejemplo ───────────────────────────────────────────────────────
 
-// jsonMinimo son los bytes exactos de Escribir para huellaMinima: dos espacios, claves de
-// mapa ordenadas, omitempty en la parte estática, salto de línea final.
-const jsonMinimo = `[
-  {
-    "perfil": "minimo",
-    "rutas": {
-      ":8100": [
-        "/healthz"
-      ],
-      ":8103": [
-        "GET /api/v1/x"
-      ]
-    },
-    "rpc": {
-      ":8101": [
-        "s/M"
-      ]
-    },
-    "metricas": [
-      "wapp_x"
-    ]
-  }
-]
-`
-
+// huellaMinima es la huella más pequeña con parte de ejecución.
 func huellaMinima() Huella {
 	return Huella{
 		Perfil:   "minimo",
@@ -405,25 +380,7 @@ func huellaMinima() Huella {
 	}
 }
 
-// TestEscribir: bytes exactos, deterministas (dos escrituras iguales).
-func TestEscribir(t *testing.T) {
-	dir := t.TempDir()
-	a, b := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json")
-	for _, ruta := range []string{a, b} {
-		if err := Escribir(ruta, []Huella{huellaMinima()}); err != nil {
-			t.Fatalf("Escribir(%s): %v", ruta, err)
-		}
-	}
-	ba, bb := leerFichero(t, a), leerFichero(t, b)
-	if string(ba) != jsonMinimo {
-		t.Errorf("Escribir escribió\n%s\nquiere\n%s", ba, jsonMinimo)
-	}
-	if !bytes.Equal(ba, bb) {
-		t.Error("dos escrituras de lo mismo dan bytes distintos")
-	}
-}
-
-// huellaCompleta tiene todos los campos, con listas SIN ordenar: Escribir no las reordena.
+// huellaCompleta tiene todos los campos, con listas SIN ordenar y una entrada repetida.
 func huellaCompleta() Huella {
 	return Huella{
 		Perfil:     "m2m",
@@ -433,46 +390,6 @@ func huellaCompleta() Huella {
 		Goroutines: []string{"p.T.Run", "p.T.Run"},
 		Hooks:      []string{"InstrumentHTTP"},
 		Entorno:    []string{"a.go:1 os.Getenv"},
-	}
-}
-
-// TestEscribirLeer: ida y vuelta con los dos perfiles, las huellas en orden y las listas sin
-// reordenar; una lista omitempty vacía vuelve como nil. Escribir trunca.
-func TestEscribirLeer(t *testing.T) {
-	ruta := filepath.Join(t.TempDir(), "huella.json")
-	if err := Escribir(ruta, []Huella{huellaMinima(), huellaMinima(), huellaMinima()}); err != nil {
-		t.Fatalf("Escribir (primera): %v", err)
-	}
-	conVacia := huellaMinima()
-	conVacia.Goroutines = []string{}
-	if err := Escribir(ruta, []Huella{huellaCompleta(), conVacia}); err != nil {
-		t.Fatalf("Escribir: %v", err)
-	}
-	got, err := Leer(ruta)
-	if err != nil {
-		t.Fatalf("Leer: %v", err)
-	}
-	want := []Huella{huellaCompleta(), huellaMinima()} // Goroutines []string{} → nil
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Leer(Escribir(hs)) = %#v\nquiere %#v", got, want)
-	}
-}
-
-// TestLeerEscribirErrores: un fichero que no existe o no es JSON, y un directorio padre que
-// no existe, son errores; los de Leer nombran la ruta.
-func TestLeerEscribirErrores(t *testing.T) {
-	dir := t.TempDir()
-	noExiste := filepath.Join(dir, "noexiste.json")
-	if got, err := Leer(noExiste); err == nil || !strings.Contains(err.Error(), "noexiste.json") {
-		t.Errorf("Leer(no existe) = %v, %v; quiere un error que nombre la ruta", got, err)
-	}
-	basura := filepath.Join(dir, "basura.json")
-	escribirFichero(t, basura, "{no es json")
-	if got, err := Leer(basura); err == nil || !strings.Contains(err.Error(), "basura.json") {
-		t.Errorf("Leer(no JSON) = %v, %v; quiere un error que nombre la ruta", got, err)
-	}
-	if err := Escribir(filepath.Join(dir, "sin", "padre.json"), nil); err == nil {
-		t.Error("Escribir(padre inexistente) = nil; quiere error (no crea directorios)")
 	}
 }
 
@@ -657,13 +574,4 @@ func escribirFichero(t *testing.T, ruta, contenido string) {
 	if err := os.WriteFile(ruta, []byte(contenido), 0o600); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func leerFichero(t *testing.T, ruta string) []byte {
-	t.Helper()
-	b, err := os.ReadFile(ruta) //nolint:gosec // ruta de t.TempDir
-	if err != nil {
-		t.Fatal(err)
-	}
-	return b
 }
