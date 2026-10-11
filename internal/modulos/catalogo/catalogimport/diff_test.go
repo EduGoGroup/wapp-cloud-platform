@@ -223,6 +223,24 @@ func TestDiffCatalog_EveryDetailCounts(t *testing.T) {
 			`"changed_details":["A-TAGS","B-VARS","C-ATTR","D-CODE","E-SUB","F-COMP","G-LABEL","I-DESC"],"unchanged":1}`)
 }
 
+// TestDiffCatalog_AttributeCountCounts: ganar o perder un atributo es un cambio de detalle
+// aunque los que quedan valgan lo mismo. MAS gana uno, MENOS pierde uno, y VACIO pasa de no
+// traer atributos a traerlos vacíos, que no es un cambio (el JSON produce nil y vacío
+// indistintamente).
+func TestDiffCatalog_AttributeCountCounts(t *testing.T) {
+	current := parseCurrent(t, `{"categories":[{"code":"1","label":"C","items":[
+    {"code":"1","sku":"MAS","label":"a","price":1,"attributes":{"k":"v"}},
+    {"code":"2","sku":"MENOS","label":"b","price":1,"attributes":{"k":"v","porciones":"2"}},
+    {"code":"3","sku":"VACIO","label":"c","price":1}]}]}`)
+	next := mustBody(t, `{"categories":[{"code":"1","label":"C","items":[
+    {"code":"1","sku":"MAS","label":"a","price":1,"attributes":{"k":"v","porciones":"2"}},
+    {"code":"2","sku":"MENOS","label":"b","price":1,"attributes":{"k":"v"}},
+    {"code":"3","sku":"VACIO","label":"c","price":1,"attributes":{}}]}]}`)
+
+	assertDiff(t, catalogimport.DiffCatalog(current, next),
+		`{"price_changes":[],"added":[],"removed":[],"changed_details":["MAS","MENOS"],"unchanged":1}`)
+}
+
 // TestDiffCatalog_ImplicitQtyIsNotAChange protege una trampa de la normalización:
 // el runtime materializa la qty ausente de un componente como 1, y si el lado nuevo
 // no hiciera lo mismo, un combo idéntico se reportaría como cambiado por escribir

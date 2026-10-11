@@ -457,3 +457,26 @@ func TestParsear_Rejects(t *testing.T) {
 		})
 	}
 }
+
+// TestCargar_UnreadableFile: un `.tmpl` que está en el directorio y no se puede leer —aquí, un
+// enlace que no apunta a nada— no arranca: el error nombra la ruta, envuelve el del sistema
+// junto al centinela y no se degrada al compilado.
+func TestCargar_UnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p2-roto"+prompts.Extension)
+	if err := os.Symlink(filepath.Join(dir, "no-existe"), path); err != nil {
+		t.Fatalf("no se pudo crear el enlace roto: %v", err)
+	}
+
+	loaded, err := prompts.Cargar(dir)
+	if !errors.Is(err, prompts.ErrPromptsDir) {
+		t.Fatalf("Cargar con un fichero ilegible = %v; se esperaba un error que envuelva ErrPromptsDir", err)
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("el error %q no envuelve el del sistema (fs.ErrNotExist)", err)
+	}
+	if want := "no se puede leer " + path; !strings.Contains(err.Error(), want) {
+		t.Errorf("el error %q no contiene %q", err, want)
+	}
+	assertNoFallback(t, loaded)
+}

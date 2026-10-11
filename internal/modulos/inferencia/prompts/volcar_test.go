@@ -2,10 +2,12 @@ package prompts_test
 
 import (
 	"errors"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-shared/llm"
@@ -233,5 +235,56 @@ func TestVolcar_EmptyDirectory(t *testing.T) {
 		if paths != nil {
 			t.Errorf("con error, Volcar(%q) devolvió las rutas %v; se esperaba ninguna", dir, paths)
 		}
+	}
+}
+
+// TestVolcar_DirectoryThatCannotBeCreated: si `dir` no se puede crear —aquí, cuelga de un
+// fichero— no vuelca nada: el error nombra el directorio, envuelve el del sistema junto al
+// centinela y llega sin rutas.
+func TestVolcar_DirectoryThatCannotBeCreated(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, base, "estorbo", "soy un fichero, no un directorio")
+	dir := filepath.Join(base, "estorbo", "prompts")
+
+	paths, err := prompts.Volcar(dir)
+	if !errors.Is(err, prompts.ErrPromptsDir) {
+		t.Fatalf("Volcar(%q) = %v; se esperaba un error que envuelva ErrPromptsDir", dir, err)
+	}
+	if !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("el error %q no envuelve el del sistema (ENOTDIR)", err)
+	}
+	if want := "no se puede crear " + dir; !strings.Contains(err.Error(), want) {
+		t.Errorf("el error %q no contiene %q", err, want)
+	}
+	if paths != nil {
+		t.Errorf("con error, Volcar devolvió las rutas %v; se esperaba ninguna", paths)
+	}
+}
+
+// TestVolcar_FileThatCannotBeWritten: si un fichero no se puede escribir —aquí, el de P3 es un
+// enlace a un directorio que no existe— el error nombra SU ruta, envuelve el del sistema junto
+// al centinela y llega sin rutas, aunque el de P2 ya quedó escrito (no promete atomicidad).
+func TestVolcar_FileThatCannotBeWritten(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, prompts.NombreDeFichero[llm.EtapaP3])
+	if err := os.Symlink(filepath.Join(dir, "no-existe", "destino"), path); err != nil {
+		t.Fatalf("no se pudo crear el enlace roto: %v", err)
+	}
+
+	paths, err := prompts.Volcar(dir)
+	if !errors.Is(err, prompts.ErrPromptsDir) {
+		t.Fatalf("Volcar con un fichero que no se puede escribir = %v; se esperaba un error que envuelva ErrPromptsDir", err)
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("el error %q no envuelve el del sistema (fs.ErrNotExist)", err)
+	}
+	if want := "no se puede escribir " + path; !strings.Contains(err.Error(), want) {
+		t.Errorf("el error %q no contiene %q", err, want)
+	}
+	if paths != nil {
+		t.Errorf("con error, Volcar devolvió las rutas %v; se esperaba ninguna", paths)
+	}
+	if _, err := os.Stat(filepath.Join(dir, prompts.NombreDeFichero[llm.EtapaP2])); err != nil {
+		t.Errorf("el fichero de P2, anterior al que falla, no quedó escrito: %v", err)
 	}
 }
