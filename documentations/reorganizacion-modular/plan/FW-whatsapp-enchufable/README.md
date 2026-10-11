@@ -1,6 +1,6 @@
 # FW · WhatsApp enchufable — el Edge real conversa sin WhatsApp
 
-> **Estado**: 🟡 **bloque A (FW-01) escrito el 2026-10-11, PR abierto, en revisión; el diseño y el ADR-0049 esperan la
+> **Estado**: 🟡 **bloque A (FW-01) escrito el 2026-10-11, PR #76 abierto, en revisión; el diseño y el ADR-0049 esperan la
 > aprobación de Jhoan antes de FW-02** (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
 > [`deuda.md`](../../../deuda.md)). Medida sobre `edge/wapp-edge-agent` @ `38e5f91` (rama `main`; su rama por defecto es `dev`).
 > **Forma**: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Spec **corta a propósito**; lo que faltaba por
