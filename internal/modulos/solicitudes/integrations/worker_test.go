@@ -281,3 +281,23 @@ func TestNewWorker_NilCallback_IsSafe(t *testing.T) {
 		t.Errorf("la segunda quedó (status=%q, last_error=%q), quería pending con el 500", got.Status, got.LastError)
 	}
 }
+
+// TestRun_ZeroPollIntervalTakesTheDefault: «nunca un poll a 0». Con PollInterval a cero o
+// negativo el worker no revienta al armar su reloj (un ticker de periodo no positivo es un pánico)
+// ni se queda girando: hace su primer poll y espera el default de 5 s. La ventana de 30 ms es el
+// único sueño de este fichero y solo puede fallar hacia el lado que importa: un default de 5 s no
+// da un segundo poll en ella, y un poll sin freno da decenas.
+func TestRun_ZeroPollIntervalTakesTheDefault(t *testing.T) {
+	for _, interval := range []time.Duration{0, -time.Second} {
+		rig := newWorkerRig()
+		rig.cfg = integrations.WorkerConfig{PollInterval: interval, ClaimLease: time.Hour}
+		stop := rig.start(t)
+		rig.store.waitCalls(t, opClaim, 1)
+		time.Sleep(30 * time.Millisecond)
+		stop()
+
+		if n := rig.store.count(opClaim); n != 1 {
+			t.Errorf("PollInterval=%v ⇒ %d polls en 30 ms, quería solo el del arranque (default de 5 s)", interval, n)
+		}
+	}
+}
