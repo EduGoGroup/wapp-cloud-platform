@@ -135,5 +135,5 @@ La columna «Nivel» es el **provisional** de la spec (`05` E-12); el que vale e
 | ∥ | [`FW-04-cli-cierre-y-receta-uat`](FW-04-cli-cierre-y-receta-uat.md) | 💻 | FW | D · cierre y receta de UAT | TW.9–TW.10 | — | pendiente |
 | 57 | [`F10-03-cli-prueba-uat`](F10-03-cli-prueba-uat.md) | 💻 | F10 | B | T10.4–T10.6 (UAT por SSH, ventana ≥ 24 h) · ✎ 2026-10-11: **depende de FW cerrada** (D-FW-3) | — | pendiente |
 | 58 | [`F10-04-cli-relevo`](F10-04-cli-relevo.md) | 💻 | F10 | C | T10.7–T10.14, T10.23 (TX.25) | — | pendiente |
-| 59 | [`F10-05-cli-cierre-y-fuera-del-repo`](F10-05-cli-cierre-y-fuera-del-repo.md) | 💻 | F10 | D/E | T10.15–T10.21 | — | pendiente |
+| 59 | [`F10-05-cli-cierre-y-fuera-del-repo`](F10-05-cli-cierre-y-fuera-del-repo.md) | 💻 | F10 | D/E | T10.15–T10.21, T10.25 (✎ 2026-10-11: archivar `reorganizacion-modular/` en la raíz) | — | pendiente |
 | 60 | [`F10-06-cli-main`](F10-06-cli-main.md) | 💻 | F10 | F | T10.22 — solo a petición de Jhoan | — | pendiente |
