@@ -68,7 +68,7 @@ Para cuando: definición de hecho 6–8. Tras este bloque, F10-03 puede arrancar
   - **Ficheros**: [`../F10-relevo/diseno.md`](../F10-relevo/diseno.md) §2.4 (las filas 1 y 6, con los comandos), el runbook del ecosistema que corresponda
   - **Hecho cuando**: la receta —echar la palanca, conducir la conversación, leer lo capturado, **bajar la palanca**—
     ejecutada en local de principio a fin, con sus salidas
-- [x] **TW.10 · Cerrar FW** · dep. TW.9 · `TW10SHA` (este repo, mismo PR #79, **en revisión**) y `7e8ec71` (`edge/wapp-edge-agent`, rama `docs/fw-04-operacion-whatsapp-falso`, PR #13 de ese repo, **en revisión**: `operacion.md` §3.3 y dos líneas caducadas de su constitución). Los 8 puntos de [`reglas.md`](reglas.md) §4, con su evidencia, en el bloque FW-04 de [`ESTADO.md`](../../ESTADO.md)
+- [x] **TW.10 · Cerrar FW** · dep. TW.9 · `de2c8083` (este repo, mismo PR #79, **en revisión**) y `7e8ec71` (`edge/wapp-edge-agent`, rama `docs/fw-04-operacion-whatsapp-falso`, PR #13 de ese repo, **en revisión**: `operacion.md` §3.3 y dos líneas caducadas de su constitución). Los 8 puntos de [`reglas.md`](reglas.md) §4, con su evidencia, en el bloque FW-04 de [`ESTADO.md`](../../ESTADO.md)
   - **Ficheros**: [`deuda.md`](../../../deuda.md) (D-38 y D-39 cerradas), `ESTADO.md`, este README, `documentations/` del Edge (contratos y operación: la palanca y las rutas nuevas)
   - **Hecho cuando**: los 8 puntos de [`reglas.md`](reglas.md) §4, cada uno con su evidencia
   - **Commit**: `docs(reorganizacion-modular): FW cerrada`

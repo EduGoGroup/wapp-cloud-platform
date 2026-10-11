@@ -495,7 +495,7 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
   local de principio a fin (Cloud nuevo + Edge real @ `0675d55` en contenedor, carrito de siete mensajes, nueve
   capturados, palanca baja al final), con sus salidas. Las filas 1 y 6 de F10 §2.4 dicen cómo se miran con ella. El
   runbook del ecosistema está escrito en la raíz de wApp, **sin commitear**.
-- **TW.10** `TW10SHA` (este repo) y `7e8ec71` (`wapp-edge-agent`): D-38 y D-39 cerradas en [`../deuda.md`](../deuda.md);
+- **TW.10** `de2c8083` (este repo) y `7e8ec71` (`wapp-edge-agent`): D-38 y D-39 cerradas en [`../deuda.md`](../deuda.md);
   `operacion.md` §3.3 del Edge y dos líneas caducadas de su constitución.
 - **Los 8 puntos de [`plan/FW-whatsapp-enchufable/reglas.md`](plan/FW-whatsapp-enchufable/reglas.md) §4, con su evidencia**:
   1. *Palanca baja, gate del Edge y guardarraíl* — `make ci-docker` del Edge sobre `7e8ec71`: `GATE_RC=0`, 43 paquetes
@@ -2133,7 +2133,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
-- **FW-04 (cierre de FW y receta de UAT)**: rama `reorg/fw-04-cierre-y-receta-uat`, partida de `origin/dev` @ `5dd0111c`; solo documentación (`55c87823`, `TW10SHA` y el que anota su SHA); PR #79 a `dev`, **abierto, en revisión**. En `wapp-edge-agent`: rama `docs/fw-04-operacion-whatsapp-falso`, `7e8ec71`, PR #13 a su `dev`, **abierto, en revisión**. En la raíz de wApp: un runbook nuevo y su fila en el índice, **sin commitear**. Sin *worktrees*. `origin/main` sin tocar.
+- **FW-04 (cierre de FW y receta de UAT)**: rama `reorg/fw-04-cierre-y-receta-uat`, partida de `origin/dev` @ `5dd0111c`; solo documentación (`55c87823`, `de2c8083` y el que anota su SHA); PR #79 a `dev`, **abierto, en revisión**. En `wapp-edge-agent`: rama `docs/fw-04-operacion-whatsapp-falso`, `7e8ec71`, PR #13 a su `dev`, **abierto, en revisión**. En la raíz de wApp: un runbook nuevo y su fila en el índice, **sin commitear**. Sin *worktrees*. `origin/main` sin tocar.
 - **F8-07 (cierre de F8)**: rama `reorg/f8-07-cierre`, partida de `origin/dev` @ `77c4805f`; dos commits, solo de documentación (`5fde368d`, `docs(reorganizacion-modular): F8 cerrada`, y el que anota su SHA, el PR y la deuda D-40); PR #72 a `dev`, **integrado**, sin squash. Un *worktree* desechable fuera del repo para los mutantes, ya borrado. `origin/main` sin tocar.
 - **F8-07b (Docker y arranque real)**: rama `reorg/f8-07b-docker-y-arranque-real`, partida de `origin/dev` @ `fd3a3fde`; 3 commits, solo de `test/procesos/` (`866e47a6`, `02ad985a`, `ffba56e7`), y el de cierre; PR #71 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-11), sin squash, sin squash. Sin *worktrees*: los sub-agentes trabajaron en el checkout, en serie, y no commitearon. `origin/main` sin tocar.
 - **F8-06b (D-F7-9: cierre y sobre en un solo acto)**: rama `reorg/f8-06b-d-f7-9-cierre-y-sobre`, partida de `origin/dev` @ `1b6bb209`; 10 commits de código (`a0144628`, `cae02e23`, `fc466f66`, `ef480998`, `8e02d07b`, `83254490`, `7c5feccb`, `b623498f`, `1aad38cd`, `42a06574`) y los de cierre; PR #69 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-10), merge `2902ec40`, sin squash. Después, **directamente en `dev` por orden expresa de Jhoan** (2026-10-10): el commit de documentación que anota la integración y parte F8-07 en tres. Sin *worktrees*: los sub-agentes trabajaron en el checkout, en serie, y no commitearon. `origin/main` sin tocar.
