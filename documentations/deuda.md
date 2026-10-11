@@ -418,7 +418,7 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 - **Veredicto**: se porta tal cual. El arreglo es pequeño (no escribir sobre una cerrada), pero **qué hacer con el hecho
   tardío** (descartarlo, avisar, abrir otra solicitud) es una regla de negocio. Después del relevo de F10.
 
-### D-35 · 🟡 `PutSourceText` y `ComposeAtFlush` sin llamante de producción en el árbol nuevo
+### D-35 · ✅ CERRADA · `PutSourceText` y `ComposeAtFlush` sin llamante de producción en el árbol nuevo
 
 > Abierta el 2026-10-10 por decisión de Jhoan al planificar F8-06b (hallazgo 55 de
 > `reorganizacion-modular/plan/F8-conversacion/README.md`): **se dejan y se anota; no se borran de paso**.
@@ -436,6 +436,12 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   `composer.jobs`, sus casos de suite y las aserciones de cableado, en su propio commit) o **conservar** con un motivo.
   ✎ **Decidido por Jhoan (2026-10-10, tras F8-06b): se borra en F8-07**, en su propio commit. No es código viejo que
   espere a F10: es código nuevo que quedó huérfano, y dejarlo invita a reabrir la carrera de D-F7-9.
+  ✅ **Cerrada el 2026-10-10 en F8-07a (T8.41), commit `d01e23a0`**: borradas las dos operaciones, `SourceTextWriter`,
+  `SourceTextComposer.jobs` y su argumento, los seis casos de `PutSourceText` de la suite y lo que solo ellas usaban
+  (`putSourceTextSQL`, `Counters.PutSourceText`, `FailPutWith`, `lastPendingLocked`). `intake.JobStore` vuelve a cuatro
+  operaciones. La identidad de `composer.jobs` solo la afirmaba **un** test de cableado (`captacion_cableado_test.go`),
+  no dos como decía el «Por qué» de arriba; esa fila desapareció con el campo y las demás no se tocaron. El código viejo
+  conserva las suyas hasta F10.
 
 ### D-36 · 🟡 Los cambios de conducta visibles del binario nuevo, sin revisar contra los consumidores
 
