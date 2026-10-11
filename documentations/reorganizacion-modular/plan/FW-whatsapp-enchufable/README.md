@@ -1,7 +1,7 @@
 # FW · WhatsApp enchufable — el Edge real conversa sin WhatsApp
 
 > **Estado**: 🟡 **bloque C (FW-03) hecho el 2026-10-11: el carrito conversa con Cloud y Edge reales; PR #78 de este repo
-> abierto, en revisión.** Bloque B (FW-02): el transporte falso, en el Edge (PR #12 de `wapp-edge-agent` y PR #77 de este repo, integrados). Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
+> integrado. Siguiente sesión: FW-04.** Bloque B (FW-02): el transporte falso, en el Edge (PR #12 de `wapp-edge-agent` y PR #77 de este repo, integrados). Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
 > decididas y **ADR-0049 aprobado** (vigente; sin commitear en la raíz de wApp). D-FW-5 decidida al arrancar FW-03 (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
 > [`deuda.md`](../../../deuda.md)). Medida sobre `edge/wapp-edge-agent` @ `38e5f91` (rama `main`; su rama por defecto es `dev`).
 > **Forma**: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Spec **corta a propósito**; lo que faltaba por

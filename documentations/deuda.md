@@ -526,7 +526,7 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   `409`): es que el Edge arranque con un **WhatsApp falso**, con entrada y salida capturada. Spec:
   [`reorganizacion-modular/plan/FW-whatsapp-enchufable/`](reorganizacion-modular/plan/FW-whatsapp-enchufable/README.md).
   La cierra TW.8 (el golden con Edge real). La línea «hoy temporal» de arriba queda corregida por esta nota.
-- ✎ **2026-10-11 · FW-03**: el caso existe, `TestEdgeReal_CartConversation` (`make test-procesos-edge-real`): Cloud y Edge reales, con el WhatsApp falso del ADR-0049. PR #78 abierto, en revisión; la cierra TW.10.
+- ✎ **2026-10-11 · FW-03**: el caso existe, `TestEdgeReal_CartConversation` (`make test-procesos-edge-real`): Cloud y Edge reales, con el WhatsApp falso del ADR-0049. PR #78 integrado; la cierra TW.10.
 
 ---
 
@@ -546,7 +546,7 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 - ✎ **2026-10-11 · Decidida por Jhoan: se hace dentro de la fase FW**, como segunda conversación con Edge real: tarea
   **TW.11** de [`reorganizacion-modular/plan/FW-whatsapp-enchufable/tareas.md`](reorganizacion-modular/plan/FW-whatsapp-enchufable/tareas.md). Deja de ser «para después del relevo».
 
-- ✎ **2026-10-11 · FW-03**: el caso existe, `TestEdgeReal_CartResumePolicy` (`make test-procesos-edge-real`), con su mutante corrido. PR #78 abierto, en revisión; la cierra TW.10.
+- ✎ **2026-10-11 · FW-03**: el caso existe, `TestEdgeReal_CartResumePolicy` (`make test-procesos-edge-real`), con su mutante corrido. PR #78 integrado; la cierra TW.10.
 
 ---
 

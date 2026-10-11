@@ -43,7 +43,7 @@ Entrada: TW.3 aprobado; D-FW-1 y D-FW-2 decididas. Para cuando: definición de h
 
 Entrada: bloque B integrado en el `dev` del Edge. Para cuando: definición de hecho 5.
 ✎ D-FW-7 (2026-10-11): el Edge real corre en un **contenedor Linux**; TW.7 monta eso ([`diseno.md`](diseno.md) §2.5, puntos 7 y 8, y §6).
-✎ FW-03 (2026-10-11): D-FW-5 decidida al arrancar (el arnés conduce). Los tres casos viven tras las etiquetas `integracion` y `edgereal`; se corren con `make test-procesos-edge-real`. Todo en este repo, rama `reorg/fw-03-conversacion-edge-real`, **PR #78 abierto, en revisión**. En el Edge, ni un commit.
+✎ FW-03 (2026-10-11): D-FW-5 decidida al arrancar (el arnés conduce). Los tres casos viven tras las etiquetas `integracion` y `edgereal`; se corren con `make test-procesos-edge-real`. Todo en este repo, rama `reorg/fw-03-conversacion-edge-real`, PR #78 **integrado**. En el Edge, ni un commit.
 
 - [x] **TW.7 · El arnés lanza el Edge real** · Cloud (`test/procesos`, `Makefile`) · dep. TW.6 · cumple RW.4.a, RW.4.c · `8f558749` y `b89bbbec` (este repo; ✎ el segundo añade la comprobación de la custodia y quita un `os.Environ` que el candado `TestSinBDViva` rechazaba). Trae su propio caso, `TestEdgeReal_BootsTheRealBinary`
   - **Hecho cuando**: un objetivo de `make` construye y lanza `wapp-edge-agent` con WhatsApp falso contra el Cloud del
