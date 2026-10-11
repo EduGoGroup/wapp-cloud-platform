@@ -708,7 +708,7 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 
 ---
 
-### D-49 · 🟡 Un test de `iam/infra/postgres` falla de forma intermitente y pone rojo `make ci-local`
+### D-49 · ✅ CERRADA · Un test de `iam/infra/postgres` fallaba de forma intermitente y ponía rojo `make ci-local`
 
 > Abierta el 2026-10-11 en FW-04 (hallazgo 51 del README de FW). **Deuda de test**; no es de la fase FW.
 
@@ -724,8 +724,8 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   limpieza. Es test, no producción.
 - **Veredicto**: pendiente. No se arregló en FW-04: esa sesión no toca `internal/`. Mientras tanto, un `GATE_RC≠0` con
   **solo** este fallo se repite antes de darlo por rojo, y se dice.
-- ✎ **2026-10-11 · Arreglo escrito, por decisión de Jhoan (antes de F10-03)**: commit `56e699b1`, rama
-  `fix/d-49-test-intermitente-memberships`, **PR #80 abierto, en revisión**. La transacción se abre con
+- ✅ **Cerrada el 2026-10-11, por decisión de Jhoan (antes de F10-03)**: commit `56e699b1`, rama
+  `fix/d-49-test-intermitente-memberships`, **PR #80 integrado**. La transacción se abre con
   `context.WithoutCancel(t.Context())`. La hipótesis queda **confirmada por la medida**: los tests
   `TestGrantTenantAccess_*` con `-race -count=3000`, 0 fallos (antes, 5 de 300). Solo cambia el fichero de test.
 
