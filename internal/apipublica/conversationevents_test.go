@@ -186,7 +186,7 @@ func TestMountConversationEvents_NilMWPanicsAtMount(t *testing.T) {
 	v := recuperar(func() {
 		conversationEventsCara(apipublica.Common{}, conversationEventsNewSpy(), conversationEventsAllFeatures())
 	})
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountConversationEvents") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountConversationEvents") {
 		t.Errorf("MountConversationEvents con MW nil: panic = %v; quiero un panic de cableado que nombre MountConversationEvents", v)
 	}
 }

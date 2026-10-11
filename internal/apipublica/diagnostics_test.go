@@ -251,7 +251,7 @@ func TestMountDiagnostics_NilMWPanicsAtMount(t *testing.T) {
 		"without_dependencies": {},
 	} {
 		v := recuperar(func() { apipublica.MountDiagnostics(apipublica.Nueva(), apipublica.Common{}, d) })
-		if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountDiagnostics") {
+		if v == nil || !strings.Contains(fmt.Sprint(v), "MountDiagnostics") {
 			t.Errorf("%s: MountDiagnostics con MW nil: panic = %v; quiero un panic de cableado que nombre MountDiagnostics", name, v)
 		}
 	}

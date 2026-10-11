@@ -57,7 +57,7 @@ const (
 func TestOrder_QueryIsRaisedBeforeAnyMutation(t *testing.T) {
 	fset := token.NewFileSet()
 	files := parsePackageSources(t, fset)
-	file, body, problem := findStep(fset, files)
+	file, body, problem := findStep(files)
 	if problem != "" {
 		t.Fatalf("%s. Sin el cuerpo de Step el candado no está mirando nada.", problem)
 	}
@@ -105,8 +105,6 @@ func TestOrderLock_SeesStepAndJudgesItsOrder(t *testing.T) {
 			want: []string{"2 apariciones de la asignación st.Started = true"}},
 		{name: "no advance", sources: map[string]string{"cart.go": header + open + ask + start + "\tvar outs []string\n\tvar effs []modules.Effect\n" + tail},
 			want: []string{"0 apariciones de la llamada a advance("}},
-		{name: "step still in contract", problem: "sigue en contrato", sources: map[string]string{
-			"cart.go": header + open + "\tpanic(pendiente.Implementar(\"cart.Module.Step\"))\n}\n"}},
 		{name: "no step anywhere", problem: "no se encontró", sources: map[string]string{"cart.go": header + "type Module struct{}\n"}},
 		{name: "step of another type does not count", problem: "no se encontró", sources: map[string]string{
 			"cart.go": header + strings.Replace(open, "(m Module)", "(p *Projector)", 1) + ask + start + move + tail}},
@@ -126,7 +124,7 @@ func TestOrderLock_SeesStepAndJudgesItsOrder(t *testing.T) {
 				}
 				files[name] = f
 			}
-			_, body, problem := findStep(fset, files)
+			_, body, problem := findStep(files)
 			if tc.problem != "" {
 				if !strings.Contains(problem, tc.problem) {
 					t.Fatalf("motivo = %q, quiero uno que diga %q", problem, tc.problem)
@@ -177,9 +175,8 @@ func parsePackageSources(t *testing.T, fset *token.FileSet) map[string]*ast.File
 
 // findStep localiza el método Step de Module entre los ficheros dados y devuelve el
 // fichero donde vive y su cuerpo. `problem` no vacío ⇒ no hay UN cuerpo que vigilar, y
-// dice por qué: no existe, hay más de uno, o sigue en contrato (su cuerpo es solo el
-// panic de pendiente.Implementar).
-func findStep(fset *token.FileSet, files map[string]*ast.File) (file string, body *ast.BlockStmt, problem string) {
+// dice por qué: no existe o hay más de uno.
+func findStep(files map[string]*ast.File) (file string, body *ast.BlockStmt, problem string) {
 	found := 0
 	for name, f := range files {
 		for _, d := range f.Decls {
@@ -196,9 +193,6 @@ func findStep(fset *token.FileSet, files map[string]*ast.File) (file string, bod
 		return "", nil, "no se encontró el método Step de " + stepReceiver + " con cuerpo en ningún fichero del paquete"
 	case found > 1:
 		return "", nil, "hay más de un método Step de " + stepReceiver + " en el paquete"
-	case isContractBody(body):
-		pos := fset.Position(body.Pos())
-		return "", nil, stepReceiver + ".Step sigue en contrato (" + pos.Filename + ": su cuerpo es el panic de pendiente.Implementar)"
 	}
 	return file, body, ""
 }
@@ -214,35 +208,6 @@ func isMethodOf(fn *ast.FuncDecl, typeName string) bool {
 	}
 	id, ok := expr.(*ast.Ident)
 	return ok && id.Name == typeName
-}
-
-// isContractBody reconoce el cuerpo de un contrato sin lógica: una sola sentencia,
-// `panic(pendiente.Implementar(…))`.
-func isContractBody(body *ast.BlockStmt) bool {
-	if len(body.List) != 1 {
-		return false
-	}
-	stmt, ok := body.List[0].(*ast.ExprStmt)
-	if !ok {
-		return false
-	}
-	call, ok := stmt.X.(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 {
-		return false
-	}
-	if fn, ok := call.Fun.(*ast.Ident); !ok || fn.Name != "panic" {
-		return false
-	}
-	inner, ok := call.Args[0].(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-	sel, ok := inner.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "Implementar" {
-		return false
-	}
-	pkg, ok := sel.X.(*ast.Ident)
-	return ok && pkg.Name == "pendiente"
 }
 
 // pieces guarda el OFFSET en el fichero de cada una de las cuatro cosas que este

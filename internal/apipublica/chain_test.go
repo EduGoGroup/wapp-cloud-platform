@@ -329,7 +329,7 @@ func TestCommon_NilMWPanicsAtMount(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			v := recuperar(func() { tc.mount(apipublica.Nueva(), apipublica.Common{}) })
-			if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), tc.name) {
+			if v == nil || !strings.Contains(fmt.Sprint(v), tc.name) {
 				t.Errorf("%s con MW nil: panic = %v; quiero un panic de cableado al montar que nombre %s", tc.name, v, tc.name)
 			}
 		})

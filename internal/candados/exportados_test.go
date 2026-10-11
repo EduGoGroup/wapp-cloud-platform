@@ -47,7 +47,7 @@ func TestExportadosCubiertosMuerde(t *testing.T) {
 	exigeOrdenadas(t, vs)
 }
 
-// TestExportadosCubiertosPasa: un test en rojo (etiqueta pendiente) del paquete externo que
+// TestExportadosCubiertosPasa: un test tras una etiqueta de compilación (otraetiqueta) del paquete externo que
 // nombra todo por selector cuenta; campos y no exportados no se exigen; un x.go sin test no
 // es asunto de este candado; un paquete …helpertest queda fuera (D-F1-3 = sí; el sufijo,
 // D-F1-10).

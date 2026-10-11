@@ -5,7 +5,7 @@
 # corridas manuales y de base para releases futuros. La red real es este
 # Makefile: valida en LOCAL antes de mergear y pushear.
 #   - ci-local        espeja los jobs "test" + "lint" del ci.yml, más los gates de la
-#                     reconstrucción modular (vet-pendiente, vet-integracion) y el INFORME
+#                     reconstrucción modular (vet-integracion) y el INFORME
 #                     cobertura-ficheros, que no bloquea por un fichero bajo (P2, 05 E-9).
 #   - test-integration espeja el job "integration" (Postgres efímero).
 #   - test-procesos   procesos de negocio (F9) contra los dos binarios, con testcontainers.
@@ -114,7 +114,7 @@ INTEGRATION_PG_PASSWORD  := wapp
 INTEGRATION_PG_DB        := wapp_test
 INTEGRATION_DSN          := postgres://$(INTEGRATION_PG_USER):$(INTEGRATION_PG_PASSWORD)@localhost:$(INTEGRATION_PG_PORT)/$(INTEGRATION_PG_DB)?sslmode=disable
 
-.PHONY: tools toolchain fmt-check vet vet-pendiente vet-integracion test-pendiente test-procesos test-procesos-edge-real cobertura-ficheros cobertura-combinada lint build test test-integration ci-local ci-docker migrate migrate-status
+.PHONY: tools toolchain fmt-check vet vet-integracion test-procesos test-procesos-edge-real cobertura-ficheros cobertura-combinada lint build test test-integration ci-local ci-docker migrate migrate-status
 
 # Idempotente: si $(LINT_LOCAL) ya es la versión fijada, no descarga nada. Si no, baja el
 # tarball de la release para ESTA máquina (GOHOSTOS/GOHOSTARCH: el binario tiene que ejecutar
@@ -208,38 +208,6 @@ fmt-check: ## gofmt -l vacío (sin archivos sin formatear) — con el gofmt de g
 vet: ## go vet ./...
 	$(GO) vet ./...
 
-# ── Etiqueta `pendiente` (reconstrucción modular, 05 E-2/E-5 · F0 T0.4) ───────
-# Un contrato sin lógica tiene cuerpo `panic(pendiente.Implementar("paq.Símbolo"))`
-# y su test nace con `//go:build pendiente`: fuera de `vet`, `lint` y `test`.
-# vet-pendiente los compila (un rojo que no compila rompe ci-local); test-pendiente
-# cuenta lo que falta. Alcance del rojo que se ejecuta: los directorios que aún no
-# existen se omiten (el target no falla por un módulo que todavía no nació).
-# Los dos contadores ignoran `testdata/`, como la toolchain de Go: los árboles de
-# prueba de internal/candados imitan rojos a propósito (F0 T0.5).
-PENDIENTE_DIRS := internal/modulos internal/nucleo internal/arranque internal/apipublica
-
-vet-pendiente: ## go vet -tags pendiente ./... — los rojos también compilan
-	$(GO) vet -tags pendiente ./...
-
-test-pendiente: ## Informa, no juzga: PENDIENTES, ROJOS, corre los rojos y vet-pendiente (rc = el de vet-pendiente)
-	@pendientes=$$(grep -rn --include='*.go' --exclude='*_test.go' --exclude-dir=.git --exclude-dir=testdata 'pendiente\.Implementar(' . \
-		| grep -v '^\./internal/pendiente/' \
-		| sed -E 's/^[^:]+:[0-9]+://' \
-		| grep -vE '^[[:space:]]*//' \
-		| grep -o 'pendiente\.Implementar(' | wc -l); \
-	echo "PENDIENTES=$$pendientes"
-	@rojos=$$(find . \( -path ./.git -o -name testdata \) -prune -o -name '*_test.go' -type f -print \
-		| xargs -r awk 'FNR==1 { if ($$0 == "//go:build pendiente") n++; nextfile } END { print n+0 }'); \
-	echo "ROJOS=$$rojos"
-	@pats=""; for d in $(PENDIENTE_DIRS); do [ -d "$$d" ] && pats="$$pats ./$$d/..."; done; \
-	paqs=$$( [ -n "$$pats" ] && $(GO) list $$pats 2>/dev/null ); \
-	if [ -z "$$paqs" ]; then \
-		echo "test-pendiente: aún no existe ningún paquete en $(PENDIENTE_DIRS)"; \
-	else \
-		$(GO) test -tags pendiente $$paqs || echo "test-pendiente: hay rojos que fallan (esperado; manda la cifra estática)"; \
-	fi
-	@$(MAKE) --no-print-directory vet-pendiente
-
 # ── Etiqueta `integracion` (procesos de negocio, F9 · T9.4) ───────────────────
 # Los tests de test/procesos/ nacen con `//go:build integracion`: fuera de `vet`, `lint`
 # y `test` salvo que se pida la etiqueta. vet-integracion los compila (un proceso que no
@@ -253,14 +221,14 @@ vet-integracion: ## go vet -tags integracion (y integracion,edgereal) ./test/pro
 
 # ── Cobertura por fichero (reconstrucción modular, 05 §5 · E-9 · F0 T0.9) ─────
 # Es un INFORME, no un gate (P2, Jhoan, 2026-10-03; 05 E-9, que deroga el ≥ 80 % de D-12):
-# imprime el % de sentencias cubiertas de cada fichero de producción EN VERDE del alcance y
+# imprime el % de sentencias cubiertas de cada fichero de producción del alcance y
 # cuenta en POR_DEBAJO los que no llegan a la línea de referencia (-umbral 80), pero un fichero
 # bajo NO hace fallar el target: sale con rc=0. Lo que SÍ rompe es un error real: `go list` que
 # falla, un test del alcance que no compila o falla (sin perfil no hay informe), o un perfil o
 # una fuente ilegibles (rc=2 del comando).
 # Ya no hay exentos por umbral: los adaptadores Postgres marcados en su cabecera se MIDEN y
 # salen en la tabla (la marca es hoy un comentario inerte). Quedan fuera solo los que no son
-# medibles: los contratos en rojo (con pendiente.Implementar) y los FICHEROS de suite de
+# medibles: los FICHEROS de suite de
 # contrato —`contrato.go` y `*_contrato.go`— de un paquete que termina en el sufijo compuesto
 # `helpertest` (D-F1-13, que estrecha D-F1-6 y D-F1-10: p. ej. contacthelpertest/contrato.go);
 # los dobles con lógica de ese paquete se miden (contacthelpertest/estado.go), y `huellatest`
@@ -274,10 +242,10 @@ vet-integracion: ## go vet -tags integracion (y integracion,edgereal) ./test/pro
 # Estas dos listas son las ÚNICAS: el comando las recibe por -dirs y -bridges y no tiene otras.
 # Los directorios que aún no existen se filtran con `[ -d ]` ANTES de `go list`: con un solo
 # patrón inexistente `go list` falla y no lista ninguno (contradicción 13 del README de F0).
-COBERTURA_DIRS := internal/modulos internal/nucleo internal/apipublica internal/pendiente internal/candados internal/arranque/huellatest
+COBERTURA_DIRS := internal/modulos internal/nucleo internal/apipublica internal/candados internal/arranque/huellatest
 COBERTURA_BRIDGE_DIRS := internal/arranque
 
-cobertura-ficheros: ## INFORME de cobertura por fichero en verde del árbol nuevo (P2, 05 E-9): FICHEROS_EVALUADOS y POR_DEBAJO de 80 % — no bloquea por un fichero bajo
+cobertura-ficheros: ## INFORME de cobertura por fichero del árbol nuevo (P2, 05 E-9): FICHEROS_EVALUADOS y POR_DEBAJO de 80 % — no bloquea por un fichero bajo
 	@dirs=""; pats=""; bridges=""; \
 	for d in $(COBERTURA_DIRS); do \
 		if [ -d "$$d" ]; then dirs="$${dirs:+$$dirs,}$$d"; pats="$$pats ./$$d/..."; fi; \
@@ -422,7 +390,7 @@ test-procesos-edge-real: ## Procesos con Edge REAL y WhatsApp falso (fase FW); n
 		fi; \
 	exit $$fallo
 
-ci-local: fmt-check vet vet-pendiente vet-integracion lint test cobertura-ficheros build ## Pre-push: fmt + vet + vet-pendiente + vet-integracion + lint + test + cobertura-ficheros (informe: no bloquea por un fichero bajo) + build (sin integración: correr test-integration y test-procesos aparte)
+ci-local: fmt-check vet vet-integracion lint test cobertura-ficheros build ## Pre-push: fmt + vet + vet-integracion + lint + test + cobertura-ficheros (informe: no bloquea por un fichero bajo) + build (sin integración: correr test-integration y test-procesos aparte)
 
 # ── Esquema ───────────────────────────────────────────────────────────────────
 # cmd/migrate aplica el DDL y SALE: sin listeners HTTP/gRPC ni plano de control

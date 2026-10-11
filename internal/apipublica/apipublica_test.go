@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
@@ -57,12 +56,6 @@ func recuperar(f func()) (valor any) {
 	defer func() { valor = recover() }()
 	f()
 	return nil
-}
-
-// esPendiente dice si un valor de panic es el de un contrato sin lógica: un panic así NO cuenta
-// como la promesa cumplida (si no, el rojo pasaría por accidente).
-func esPendiente(v any) bool {
-	return strings.HasPrefix(fmt.Sprint(v), "pendiente: ")
 }
 
 // TestNueva_SinPatrones: una cara recién hecha no tiene patrones.

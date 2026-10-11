@@ -95,7 +95,7 @@ func TestMountIntakeReports_NilMWPanicsAtMount(t *testing.T) {
 	v := recuperar(func() {
 		apipublica.MountIntakeReports(apipublica.Nueva(), apipublica.Common{}, reportDeps(&reportServiceSpy{}))
 	})
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountIntakeReports") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountIntakeReports") {
 		t.Errorf("MountIntakeReports con MW nil: panic = %v; quiero un panic de cableado que nombre MountIntakeReports", v)
 	}
 }
@@ -110,7 +110,7 @@ func TestMountIntakeReports_QuoteWithoutWriteDeadlinePanicsAtMount(t *testing.T)
 			d.QuoteWriteDeadline = deadline
 			v := recuperar(func() { apipublica.MountIntakeReports(apipublica.Nueva(), h.Common(), d) })
 			msg := fmt.Sprint(v)
-			if v == nil || esPendiente(v) || !strings.Contains(msg, "MountIntakeReports") || !strings.Contains(msg, "QuoteWriteDeadline") {
+			if v == nil || !strings.Contains(msg, "MountIntakeReports") || !strings.Contains(msg, "QuoteWriteDeadline") {
 				t.Errorf("plazo %s: panic = %v; quiero un panic de cableado que nombre MountIntakeReports y QuoteWriteDeadline", deadline, v)
 			}
 		})

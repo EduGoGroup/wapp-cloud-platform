@@ -334,7 +334,7 @@ func TestMountFlows_OtherMethodIs405(t *testing.T) {
 func TestMountFlows_NilMWPanicsAtMount(t *testing.T) {
 	for name, d := range map[string]apipublica.FlowsDeps{"empty_deps": {}, "full_deps": flowsFullDeps()} {
 		v := recuperar(func() { apipublica.MountFlows(apipublica.Nueva(), apipublica.Common{}, d) })
-		if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountFlows") {
+		if v == nil || !strings.Contains(fmt.Sprint(v), "MountFlows") {
 			t.Errorf("%s: MountFlows con MW nil: panic = %v; quiero un panic de cableado que nombre MountFlows", name, v)
 		}
 	}

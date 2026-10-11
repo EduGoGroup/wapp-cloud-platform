@@ -28,8 +28,8 @@ type Puente struct {
 // Reglas es la tabla de fronteras. Vive en Go, en internal/modulos/fronteras_test.go
 // (diseno.md §4.1): tipada y diffable, sin parser propio.
 //
-//   - Capas: módulo nuevo → módulos nuevos que PUEDE importar, además de platform, nucleo y
-//     pendiente, que todo el árbol nuevo puede importar. Un módulo sin entrada no puede
+//   - Capas: módulo nuevo → módulos nuevos que PUEDE importar, además de platform y nucleo,
+//     que todo el árbol nuevo puede importar. Un módulo sin entrada no puede
 //     importar ningún otro.
 //   - Mapa: prefijo viejo ("internal/iam") → módulo ("acceso"), según 04 §4. Gana el prefijo
 //     más largo que case en frontera de «/».
@@ -59,10 +59,10 @@ type Reglas struct {
 //
 // Clasificación (por prefijo en frontera de «/»):
 //   - árbol NUEVO: internal/modulos, internal/nucleo, internal/apipublica,
-//     internal/pendiente, internal/candados, internal/arranque, cmd/server, cmd/casebank, cmd/prompts y
+//     internal/candados, internal/arranque, cmd/server, cmd/casebank, cmd/prompts y
 //     cmd/cobertura-ficheros;
 //   - platform: internal/platform. Es código viejo, pero todo el árbol nuevo puede
-//     importarlo, igual que nucleo y pendiente;
+//     importarlo, igual que nucleo;
 //   - VIEJO: cualquier otra ruta del módulo.
 //
 // El módulo de una ruta internal/modulos/<m>/… es <m>. La arista de una violación se
@@ -87,7 +87,7 @@ type Reglas struct {
 //     Fichero es el Desde del puente y su Motivo nombra "Desde → Hacia".
 //
 // Un mismo import da como mucho UNA violación: la regla 4 manda sobre la 2 (apipublica sin
-// puente no da dos). Importar platform, nucleo, pendiente, el propio módulo o un módulo de
+// puente no da dos). Importar platform, nucleo, el propio módulo o un módulo de
 // Capas[m] nunca es violación.
 func Fronteras(modulo string, fuentes []Fuente, r Reglas) []Violacion {
 	vs := make([]Violacion, 0)
@@ -124,7 +124,6 @@ var arbolNuevo = []string{
 	"internal/modulos",
 	"internal/nucleo",
 	"internal/apipublica",
-	"internal/pendiente",
 	"internal/candados",
 	"internal/arranque",
 	"cmd/server",

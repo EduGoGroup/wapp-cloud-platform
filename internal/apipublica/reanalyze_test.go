@@ -132,7 +132,7 @@ func TestMountReanalyze_NilMWPanicsAtMount(t *testing.T) {
 	v := recuperar(func() {
 		apipublica.MountReanalyze(apipublica.Nueva(), apipublica.Common{}, apipublica.ReanalyzeDeps{Reanalysis: &reanalyzeServiceSpy{}})
 	})
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountReanalyze") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountReanalyze") {
 		t.Errorf("MountReanalyze con MW nil: panic = %v; quiero un panic de cableado que nombre MountReanalyze", v)
 	}
 }

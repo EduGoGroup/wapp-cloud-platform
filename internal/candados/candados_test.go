@@ -265,7 +265,7 @@ func TestRecorrerRutasYOrden(t *testing.T) {
 	}{
 		{"sin tests se omiten los _test.go y se salta testdata", []string{"internal"}, false,
 			[]string{"internal/a/a.go", "internal/a/b/b.go"}},
-		{"con tests se incluyen los _test.go, también los de etiqueta pendiente", []string{"internal"}, true,
+		{"con tests se incluyen los _test.go, también los que llevan una etiqueta de compilación", []string{"internal"}, true,
 			[]string{"internal/a/a.go", "internal/a/a_test.go", "internal/a/b/b.go"}},
 		{"dirs solapados no repiten ficheros", []string{"internal", "internal/a"}, false,
 			[]string{"internal/a/a.go", "internal/a/b/b.go"}},

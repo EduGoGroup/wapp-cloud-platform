@@ -118,16 +118,17 @@ func casoCobertura(t *testing.T, raiz string) (map[string]Fichero, []Fuente) {
 	if err != nil {
 		t.Fatalf("Agregar(%s/perfil.out): %v", raiz, err)
 	}
-	if _, ok := perfil[prefijoPerfil+"internal/modulos/m/rojo/rojo.go"]; !ok {
-		t.Fatalf("el perfil de %s no está en forma de import: %v", raiz, perfil)
+	for ruta := range perfil {
+		if !strings.HasPrefix(ruta, prefijoPerfil+"internal/") {
+			t.Fatalf("el perfil de %s no está en forma de import (%s): %v", raiz, ruta, perfil)
+		}
 	}
 	return perfil, recorrerCaso(t, raiz, []string{"internal"}, false)
 }
 
 // TestCoberturaMuerde: quedan por debajo un fichero al 50 %, uno al 0 % y el adaptador
 // Postgres marcado al 0 %, que desde P2 se mide como los demás. El fichero con la marca vieja
-// sin import de Postgres está al 90 %: ni está por debajo ni hay ya «violación de marca». El
-// fichero en rojo no se evalúa.
+// sin import de Postgres está al 90 %: ni está por debajo ni hay ya «violación de marca».
 func TestCoberturaMuerde(t *testing.T) {
 	perfil, fuentes := casoCobertura(t, "testdata/cobertura/muerde")
 	vs := Cobertura(perfil, fuentes, 80)
@@ -138,7 +139,7 @@ func TestCoberturaMuerde(t *testing.T) {
 		fichero string
 		trozos  []string
 	}{
-		{"fichero en verde al 50 % (bloque repetido contado una vez)", m + "medio/medio.go", []string{"50.0 %", "80"}},
+		{"fichero al 50 % (bloque repetido contado una vez)", m + "medio/medio.go", []string{"50.0 %", "80"}},
 		{"adaptador postgres marcado en la cabecera: ya no está exento", m + "pg/pg.go", []string{"0.0 %", "80", "0 de 10"}},
 		{"marca fuera de la cabecera: igual de inerte", m + "tarde/tarde.go", []string{"0.0 %", "80"}},
 	}
@@ -150,7 +151,6 @@ func TestCoberturaMuerde(t *testing.T) {
 	if len(vs) != len(casos) {
 		t.Errorf("se esperaban %d ficheros por debajo; hay %d: %v", len(casos), len(vs), vs)
 	}
-	exigeNingunaEn(t, vs, m+"rojo/rojo.go")
 	exigeNingunaEn(t, vs, m+"falso/falso.go")
 	exigeSinMotivoDeMarca(t, vs)
 	exigeOrdenadas(t, vs)
@@ -168,8 +168,8 @@ func exigeSinMotivoDeMarca(t *testing.T, vs []Violacion) {
 }
 
 // TestCoberturaPasa: 80.0 % con referencia 80 no está por debajo; tampoco el adaptador Postgres
-// marcado (medido, al 100 %), el rojo, el fichero sin sentencias ni las entradas del perfil
-// fuera de fuentes.
+// marcado (medido, al 100 %), el fichero sin sentencias ni las entradas del perfil fuera de
+// fuentes.
 func TestCoberturaPasa(t *testing.T) {
 	perfil, fuentes := casoCobertura(t, "testdata/cobertura/pasa")
 	exigeCero(t, Cobertura(perfil, fuentes, 80))
@@ -186,7 +186,7 @@ func TestCoberturaUmbral(t *testing.T) {
 	}
 }
 
-// TestEvaluables: en verde y con sentencias en el perfil, ordenados por Ruta. El adaptador
+// TestEvaluables: de producción y con sentencias en el perfil, ordenados por Ruta. El adaptador
 // Postgres marcado (pg/pg.go) ESTÁ en los dos árboles: ya no hay exentos por umbral (P2).
 func TestEvaluables(t *testing.T) {
 	casos := []struct {
@@ -233,37 +233,33 @@ func TestAgregarLectorRoto(t *testing.T) {
 }
 
 // TestCoberturaBordes: cruce exacto y por sufijo con la Ruta más larga ganando; un adaptador
-// marcado que importa pgx por subpaquete se mide (antes quedaba exento); una mención de
-// pendiente.Implementar en un comentario no pone el fichero en rojo; los tests no se evalúan,
-// lleven o no la marca; el porcentaje se trunca al decimal.
+// marcado que importa pgx por subpaquete se mide (antes quedaba exento); los tests no se
+// evalúan, lleven o no la marca; el porcentaje se trunca al decimal.
 func TestCoberturaBordes(t *testing.T) {
 	fuentes := []Fuente{
 		fuenteEnMemoria(t, "x/a.go", "package a\n\nfunc A() {}\n"),
 		fuenteEnMemoria(t, "a.go", "package a\n\nfunc A() {}\n"),
 		fuenteEnMemoria(t, "p/pool.go", oldPostgresMark+"\n\n"+
 			"package p\n\nimport \"github.com/jackc/pgx/v5/pgxpool\"\n\nvar _ *pgxpool.Pool\n"),
-		fuenteEnMemoria(t, "c/c.go", "package c\n\n// No es rojo: pendiente.Implementar solo se cita aquí.\nfunc C() {}\n"),
 		fuenteEnMemoria(t, "t/t_test.go", oldPostgresMark+"\n\npackage t\n"),
 	}
-	fuentes[4].EsTest = true
+	fuentes[3].EsTest = true
 	perfil := map[string]Fichero{
 		"mod/x/a.go":      {Ruta: "mod/x/a.go", Sentencias: 10000, Cubiertas: 7996},
 		"a.go":            {Ruta: "a.go", Sentencias: 4, Cubiertas: 4},
 		"mod/p/pool.go":   {Ruta: "mod/p/pool.go", Sentencias: 5, Cubiertas: 0},
-		"mod/c/c.go":      {Ruta: "mod/c/c.go", Sentencias: 2, Cubiertas: 0},
 		"mod/t/t_test.go": {Ruta: "mod/t/t_test.go", Sentencias: 2, Cubiertas: 0},
 	}
-	if got, quiero := Evaluables(perfil, fuentes), []string{"a.go", "c/c.go", "p/pool.go", "x/a.go"}; !reflect.DeepEqual(got, quiero) {
+	if got, quiero := Evaluables(perfil, fuentes), []string{"a.go", "p/pool.go", "x/a.go"}; !reflect.DeepEqual(got, quiero) {
 		t.Errorf("Evaluables = %v; quiero %v", got, quiero)
 	}
 	vs := Cobertura(perfil, fuentes, 80)
 	exigeViolacion(t, vs, "x/a.go", "79.9 %", "80")
-	exigeViolacion(t, vs, "c/c.go", "0.0 %", "80")
 	exigeViolacion(t, vs, "p/pool.go", "0.0 %", "80", "0 de 5")
 	exigeNingunaEn(t, vs, "a.go")
 	exigeNingunaEn(t, vs, "t/t_test.go")
-	if len(vs) != 3 {
-		t.Errorf("se esperaban 3 ficheros por debajo; hay %d: %v", len(vs), vs)
+	if len(vs) != 2 {
+		t.Errorf("se esperaban 2 ficheros por debajo; hay %d: %v", len(vs), vs)
 	}
 	exigeSinMotivoDeMarca(t, vs)
 	exigeOrdenadas(t, vs)
@@ -320,9 +316,9 @@ func exigeSinCubrirEn(t *testing.T, perfil map[string]Fichero, fuentes []Fuente,
 // Evaluables deja fuera SOLO los ficheros de suite (contrato.go y *_contrato.go), aunque el
 // perfil les dé sentencias y ninguna cubierta; su doble con lógica se mide (D-F1-13). Fuera
 // de un paquete …helpertest, llamarse contrato.go o merge_contrato.go no exime: se miden en
-// cosa, y en cosatest, el nombre viejo de las suites. Siguen midiéndose el paquete de
-// producción que termina en «test» por casualidad (latest, D-F1-10), sigue fuera el contrato
-// en rojo, y el adaptador Postgres marcado ahora SE MIDE (P2).
+// cosa, y en cosatest, el nombre viejo de las suites. Sigue midiéndose el paquete de
+// producción que termina en «test» por casualidad (latest, D-F1-10), y el adaptador Postgres
+// marcado ahora SE MIDE (P2).
 func TestCoberturaPaquetesTestEvaluables(t *testing.T) {
 	casos := []struct {
 		nombre    string
@@ -334,7 +330,6 @@ func TestCoberturaPaquetesTestEvaluables(t *testing.T) {
 			map[string]string{
 				dirPaquetesTest + "cosahelpertest/contrato.go":       "cosahelpertest",
 				dirPaquetesTest + "cosahelpertest/merge_contrato.go": "cosahelpertest",
-				dirPaquetesTest + "rojo/rojo.go":                     "rojo",
 			},
 			[]string{
 				dirPaquetesTest + "cosa/cosa.go",
@@ -352,7 +347,6 @@ func TestCoberturaPaquetesTestEvaluables(t *testing.T) {
 				dirPaquetesTest + "cosatest/contrato.go":             "cosatest",
 				dirPaquetesTest + "cosatest/doble.go":                "cosatest",
 				dirPaquetesTest + "latest/latest.go":                 "latest",
-				dirPaquetesTest + "rojo/rojo.go":                     "rojo",
 			},
 			[]string{
 				dirPaquetesTest + "cosa/contrato.go",
@@ -378,9 +372,9 @@ func TestCoberturaPaquetesTestEvaluables(t *testing.T) {
 }
 
 // TestCoberturaPaquetesTestViolaciones: un árbol con los dos ficheros de suite de un paquete
-// …helpertest al 0 %, su doble con lógica POR ENCIMA del umbral (medido, y pasa), un contrato
-// en rojo y un adaptador Postgres marcado y cubierto no deja ningún fichero por debajo; el
-// adaptador no pasa por exento sino por medido: está en Evaluables.
+// …helpertest al 0 %, su doble con lógica POR ENCIMA del umbral (medido, y pasa) y un
+// adaptador Postgres marcado y cubierto no deja ningún fichero por debajo; el adaptador no pasa
+// por exento sino por medido: está en Evaluables.
 func TestCoberturaPaquetesTestViolaciones(t *testing.T) {
 	perfil, fuentes := casoCobertura(t, arbolPaquetesTestPasa)
 	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosahelpertest/contrato.go", "cosahelpertest")
@@ -422,7 +416,6 @@ func TestCoberturaPaquetesTestContraste(t *testing.T) {
 	for _, f := range exempt {
 		exigeNingunaEn(t, vs, dirPaquetesTest+f)
 	}
-	exigeNingunaEn(t, vs, dirPaquetesTest+"rojo/rojo.go")
 	if len(vs) != len(biting) {
 		t.Errorf("se esperaban %d violaciones; hay %d: %v", len(biting), len(vs), vs)
 	}
@@ -433,11 +426,10 @@ func TestCoberturaPaquetesTestContraste(t *testing.T) {
 // …helpertest (D-F1-13), y el paquete se reconoce por su nombre (la cláusula `package`, el
 // sufijo «helpertest» de D-F1-10), no por el directorio. No es por nota: un fichero de suite
 // al 100 % tampoco se mide, y un doble se mide esté al 0 % (muerde), al 79,9 % (muerde) o al
-// 80 % justo (pasa). Un doble en rojo sigue fuera de Evaluables. La marca vieja de Postgres es
+// 80 % justo (pasa). La marca vieja de Postgres es
 // inerte (P2): con import de Postgres o sin él, el fichero se mide como cualquier otro —y un
 // fichero de suite que la lleve sigue fuera por ser de suite—, y nunca da motivo de «marca».
 func TestCoberturaPaquetesTestBordes(t *testing.T) {
-	const fuenteRoja = "package cosahelpertest\n\nimport \"mod/pendiente\"\n\nfunc R() { panic(pendiente.Implementar(\"R\")) }\n"
 	casos := []struct {
 		nombre     string
 		ruta       string
@@ -458,7 +450,6 @@ func TestCoberturaPaquetesTestBordes(t *testing.T) {
 		{"contrato.go en un directorio …helpertest con package que no lo es: se mide", "y/cosahelpertest/contrato.go", "package cosa\n\nfunc D() {}\n", 2, 0, true, true},
 		{"contrato.go de un package …helpertest en un directorio que no lo es: no se mide", "z/otro/contrato.go", "package otrohelpertest\n\nfunc E() {}\n", 2, 0, false, false},
 		{"doble de un package …helpertest en un directorio que no lo es: se mide", "z/otro/otro.go", "package otrohelpertest\n\nfunc E() {}\n", 2, 0, true, true},
-		{"doble de un …helpertest en rojo: fuera, como antes", "x/cosahelpertest/rojo.go", fuenteRoja, 2, 0, false, false},
 		{"adaptador Postgres marcado en un …helpertest: la marca ya no lo saca, se mide", "x/cosahelpertest/pg.go",
 			oldPostgresMark + "\n\npackage cosahelpertest\n\nimport \"database/sql\"\n\nvar _ *sql.DB\n", 2, 0, true, true},
 		{"doble de un …helpertest con la marca y sin import de Postgres: se mide igual", "x/cosahelpertest/falsa.go",

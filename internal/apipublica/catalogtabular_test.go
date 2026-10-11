@@ -186,7 +186,7 @@ func TestMountCatalogTabular_MissingDependencyIs404(t *testing.T) {
 func TestMountCatalogTabular_NilMWPanicsAtMount(t *testing.T) {
 	d := catalogImportDeps(&catalogImportStoreSpy{repo: store.NewMemoryRepository()})
 	v := recuperar(func() { apipublica.MountCatalogTabular(apipublica.Nueva(), apipublica.Common{}, d) })
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountCatalogTabular") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountCatalogTabular") {
 		t.Errorf("MountCatalogTabular con MW nil: panic = %v; quiero un panic de cableado que nombre MountCatalogTabular", v)
 	}
 }

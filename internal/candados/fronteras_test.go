@@ -78,7 +78,7 @@ func TestFronterasMuerde(t *testing.T) {
 	exigeOrdenadas(t, vs)
 }
 
-// TestFronterasPasa: Capas, platform/nucleo/pendiente, stdlib y terceros, puentes vivos
+// TestFronterasPasa: Capas, platform/nucleo, stdlib y terceros, puentes vivos
 // (Desde como prefijo), el arranque sobre módulos no conmutados y
 // viejo → viejo no son violaciones.
 func TestFronterasPasa(t *testing.T) {
@@ -122,8 +122,8 @@ import (
 var _ = []any{a.X, b.X, fleet.X}
 `),
 		fuenteEnMemoria(t, "internal/platform/config/config.go", `package config
-import "`+moduloWapp+`/internal/pendiente"
-var _ = pendiente.Implementar
+import "`+moduloWapp+`/internal/nucleo/contact"
+var _ = contact.X
 `),
 		fuenteEnMemoria(t, "internal/modulos/accesox/x/x.go", `package x
 import "`+moduloWapp+`/internal/platformx"
@@ -142,7 +142,7 @@ var _ = platformx.X
 	exigeViolacion(t, vs, "internal/modulos/acceso/doble/doble.go",
 		"regla 2: ", "internal/modulos/acceso/doble → internal/gateway/fleet")
 	exigeViolacion(t, vs, "internal/platform/config/config.go",
-		"regla 5: ", "internal/platform/config → internal/pendiente")
+		"regla 5: ", "internal/platform/config → internal/nucleo/contact")
 	exigeViolacion(t, vs, "internal/modulos/accesox/x/x.go",
 		"regla 2: ", "internal/modulos/accesox/x → internal/platformx")
 	exigeViolacion(t, vs, "internal/modulos/acceso/otro",

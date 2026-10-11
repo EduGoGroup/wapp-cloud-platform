@@ -25,7 +25,6 @@ var alcance = []string{
 	"internal/modulos",
 	"internal/nucleo",
 	"internal/apipublica",
-	"internal/pendiente",
 	"internal/candados",
 	"internal/arranque/huellatest",
 }
@@ -77,7 +76,7 @@ func vio(fuentes []candados.Fuente, ruta string) bool {
 // adaptadores bridge_<x>.go de bridgeDirs (D-F1-16), y ningún otro fichero de internal/arranque.
 func TestUnFicheroUnTest(t *testing.T) {
 	fuentes := recorrerAlcance(t, alcance)
-	const testigo = "internal/pendiente/pendiente.go"
+	const testigo = "internal/candados/candados.go"
 	if !vio(fuentes, testigo) {
 		t.Fatalf("el recorrido (%d ficheros) no vio %s: raíz o alcance equivocados", len(fuentes), testigo)
 	}

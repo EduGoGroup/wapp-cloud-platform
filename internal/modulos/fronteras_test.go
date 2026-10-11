@@ -1,6 +1,8 @@
 package modulos
 
 import (
+	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,7 +19,7 @@ var dirsFronteras = []string{"internal", "cmd"}
 
 // reglas es la tabla de fronteras (plan/F0-andamiaje/diseno.md §4.1).
 var reglas = candados.Reglas{
-	// Módulo nuevo → módulos nuevos que PUEDE importar (además de platform, nucleo y pendiente,
+	// Módulo nuevo → módulos nuevos que PUEDE importar (además de platform y nucleo,
 	// que todo el árbol nuevo puede importar). Lista blanca de HOY congelada (04 §3): las 13
 	// aristas módulo→módulo medidas con el script de 02 §5 y el MAP de D-5 (platformadmin y
 	// entitlements → acceso) sobre dev @ c55e9e3, el 2026-09-30, SOLO imports de producción
@@ -122,6 +124,102 @@ func TestFronteras(t *testing.T) {
 		t.Errorf("fronteras: %s", v)
 	}
 	t.Logf("recorridos=%d", len(fuentes))
+}
+
+// allModules son los ocho módulos del árbol nuevo. Tras el relevo (F10) los ocho están
+// conmutados: es la lista que Conmutados debe tener, ni uno más ni uno menos.
+var allModules = []string{"acceso", "edge", "catalogo", "nucleo", "inferencia", "captacion", "solicitudes", "conversacion"}
+
+// checkRelayTable comprueba lo que el relevo dejó FIJO en una tabla de fronteras y devuelve un
+// motivo por cada cosa que no se cumple (ninguno = bien):
+//   - Puentes está vacía. Un puente era un import declarado de un paquete nuevo a uno VIEJO; el
+//     árbol viejo se borró, así que no hay a qué tender uno. Lo que haga falta de otro módulo es
+//     una arista de Capas o un puerto, no un puente;
+//   - Conmutados tiene exactamente allModules, sin repetir (el orden no importa).
+func checkRelayTable(r candados.Reglas) []string {
+	var problems []string
+	if n := len(r.Puentes); n != 0 {
+		problems = append(problems, fmt.Sprintf("Puentes tiene %d entradas (la primera, %s → %s) y debe estar vacía: "+
+			"tras el relevo no hay árbol viejo al que tender un puente; una dependencia entre módulos es una arista de Capas",
+			n, r.Puentes[0].Desde, r.Puentes[0].Hacia))
+	}
+	seen := make(map[string]int, len(r.Conmutados))
+	for _, m := range r.Conmutados {
+		seen[m]++
+		switch {
+		case !slices.Contains(allModules, m):
+			problems = append(problems, fmt.Sprintf("Conmutados nombra %q, que no es un módulo", m))
+		case seen[m] == 2:
+			problems = append(problems, fmt.Sprintf("Conmutados repite %q", m))
+		}
+	}
+	for _, m := range allModules {
+		if seen[m] == 0 {
+			problems = append(problems, fmt.Sprintf("Conmutados no tiene %q: tras el relevo los ocho módulos están conmutados", m))
+		}
+	}
+	return problems
+}
+
+// TestRelayTable: la tabla real no tiene puentes y tiene los ocho módulos conmutados (F10 ·
+// T10.12). Es un tope: Puentes no puede volver a crecer ni Conmutados encoger.
+func TestRelayTable(t *testing.T) {
+	for _, p := range checkRelayTable(reglas) {
+		t.Errorf("tabla de fronteras: %s", p)
+	}
+}
+
+// TestRelayTableBites prueba la comprobación contra copias de la tabla real con UNA cosa rota:
+// la real pasa, y cada mutación da exactamente el motivo que le toca.
+func TestRelayTableBites(t *testing.T) {
+	mutate := func(f func(r *candados.Reglas)) candados.Reglas {
+		r := reglas
+		r.Puentes = slices.Clone(reglas.Puentes)
+		r.Conmutados = slices.Clone(reglas.Conmutados)
+		f(&r)
+		return r
+	}
+	cases := []struct {
+		name  string
+		table candados.Reglas
+		want  []string // un fragmento por motivo esperado, en orden
+	}{
+		{"the real table", reglas, nil},
+		{"same modules in another order", mutate(func(r *candados.Reglas) { slices.Reverse(r.Conmutados) }), nil},
+		{"a bridge is added", mutate(func(r *candados.Reglas) {
+			r.Puentes = append(r.Puentes, candados.Puente{Desde: "internal/modulos/edge", Hacia: "internal/viejo", Motivo: "x", Nace: "F10", Muere: "F11"})
+		}), []string{"Puentes tiene 1 entradas (la primera, internal/modulos/edge → internal/viejo)"}},
+		{"a module is removed", mutate(func(r *candados.Reglas) {
+			r.Conmutados = slices.DeleteFunc(r.Conmutados, func(m string) bool { return m == "captacion" })
+		}), []string{`Conmutados no tiene "captacion"`}},
+		{"no module at all", mutate(func(r *candados.Reglas) { r.Conmutados = nil }), []string{
+			`no tiene "acceso"`, `no tiene "edge"`, `no tiene "catalogo"`, `no tiene "nucleo"`,
+			`no tiene "inferencia"`, `no tiene "captacion"`, `no tiene "solicitudes"`, `no tiene "conversacion"`}},
+		{"an unknown module is added", mutate(func(r *candados.Reglas) { r.Conmutados = append(r.Conmutados, "platform") }),
+			[]string{`Conmutados nombra "platform"`}},
+		{"a module is repeated", mutate(func(r *candados.Reglas) { r.Conmutados = append(r.Conmutados, "edge", "edge") }),
+			[]string{`Conmutados repite "edge"`}},
+		{"a module swapped for a bridge", mutate(func(r *candados.Reglas) {
+			r.Conmutados = r.Conmutados[1:]
+			r.Puentes = append(r.Puentes, candados.Puente{Desde: "a", Hacia: "b"})
+		}), []string{"Puentes tiene 1 entradas", `Conmutados no tiene "acceso"`}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := checkRelayTable(tc.table)
+			if len(got) != len(tc.want) {
+				t.Fatalf("motivos = %q; quiero %d: %q", got, len(tc.want), tc.want)
+			}
+			for i, want := range tc.want {
+				if !strings.Contains(got[i], want) {
+					t.Errorf("motivo %d = %q; quiero uno que diga %q", i, got[i], want)
+				}
+			}
+		})
+	}
+	if len(reglas.Puentes) != 0 || len(reglas.Conmutados) != len(allModules) {
+		t.Errorf("los casos mutaron la tabla real: Puentes=%v Conmutados=%v", reglas.Puentes, reglas.Conmutados)
+	}
 }
 
 // conversationDir y catalogIndexPkg delimitan la arista prohibida por SUBPAQUETE: nada bajo el

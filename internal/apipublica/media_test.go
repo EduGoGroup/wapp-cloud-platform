@@ -165,7 +165,7 @@ func TestMountMedia_NilMWPanicsAtMount(t *testing.T) {
 	v := recuperar(func() {
 		apipublica.MountMedia(apipublica.Nueva(), apipublica.Common{}, apipublica.MediaDeps{Uploader: mediaNewSpy()})
 	})
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountMedia") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountMedia") {
 		t.Errorf("MountMedia con MW nil: panic = %v; quiero un panic de cableado que nombre MountMedia", v)
 	}
 }

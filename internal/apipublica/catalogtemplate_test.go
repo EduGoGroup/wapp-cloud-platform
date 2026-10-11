@@ -127,7 +127,7 @@ func TestMountCatalogTemplate_MissingDependencyIs404(t *testing.T) {
 func TestMountCatalogTemplate_NilMWPanicsAtMount(t *testing.T) {
 	d := catalogImportDeps(&catalogImportStoreSpy{repo: store.NewMemoryRepository()})
 	v := recuperar(func() { apipublica.MountCatalogTemplate(apipublica.Nueva(), apipublica.Common{}, d) })
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountCatalogTemplate") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountCatalogTemplate") {
 		t.Errorf("MountCatalogTemplate con MW nil: panic = %v; quiero un panic de cableado que nombre MountCatalogTemplate", v)
 	}
 }

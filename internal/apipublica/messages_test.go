@@ -197,7 +197,7 @@ func TestMountMessages_NilMWPanicsAtMount(t *testing.T) {
 	v := recuperar(func() {
 		apipublica.MountMessages(apipublica.Nueva(), apipublica.Common{}, apipublica.MessagesDeps{Sender: okSender(), Sessions: sessA()})
 	})
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountMessages") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountMessages") {
 		t.Errorf("MountMessages con MW nil: panic = %v; quiero un panic de cableado que nombre MountMessages", v)
 	}
 }

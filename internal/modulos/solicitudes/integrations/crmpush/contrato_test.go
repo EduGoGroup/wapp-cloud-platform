@@ -11,10 +11,6 @@ package crmpush
 // vigilando un sitio VACÍO: verde sin mirar nada. Por eso barre los DOS directorios
 // y por eso exige encontrar sitios en cada uno.
 //
-// Nació con `//go:build pendiente` (mientras push.go era contrato sin lógica, este
-// paquete no fijaba ninguno de los dos campos y la guarda anti-hueco cortaba) y la
-// perdió con el verde de push.go.
-//
 // La lista de directorios es la de la fase F6 y se re-toca en F8, cuando el motor
 // pase a `../../../conversacion/runtime` (diseno.md §6), con la guarda intacta.
 
