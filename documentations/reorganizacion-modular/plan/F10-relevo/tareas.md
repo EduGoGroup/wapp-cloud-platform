@@ -45,9 +45,9 @@ espera, no sesión: se abre con T10.4 y la sesión se relanza al final para T10.
 - [x] **T10.4 · Captura y cambio de binario** · dep. T10.3 · cumple R10.1.a–c · ✎ hecha el 2026-10-11 (F10-03): modular @ `e82b6e92` en UAT desde las 22:17:54 UTC; acta §5.1–§5.4. El guion con el viejo **no** se corrió antes (Jhoan)
   - **Hecho cuando**: `diseno.md` §2.1 y §2.2 hechos; §2.3 · 1–6 verdes con sus salidas en el acta
   - **Gate**: `go version -m /proc/$pid/exe` → `path …/cmd/server-modular`; líneas de clave `key_source=config|file`
-- [~] **T10.5 · La ventana** · dep. T10.4 · cumple R10.1.d–e · ✎ 2026-10-11 (Jhoan): **sin ventana de 24 h** («nadie usa UAT»), y la conversación, en local y no en UAT. Medido: acta §5.5 (a los 37 min) y §5.6 (local, viejo y nuevo en verde). Lo no visto: acta §5.7
+- [x] **T10.5 · La ventana** · dep. T10.4 · cumple R10.1.d–e · ✎ 2026-10-11 (Jhoan): **sin ventana de 24 h** («nadie usa UAT»), y la conversación, en local y no en UAT. Medido: acta §5.5 (a los 37 min) y §5.6 (local, viejo y nuevo en verde). Lo no visto: acta §5.7. Cerrada **sin** la tabla de 24 h, por esa decisión (PR #81)
   - **Hecho cuando**: la tabla de `diseno.md` §2.4 rellena con números al final de la ventana (mínimo 24 h, D-F10-1); si un corte salta, §2.5 ejecutado en < 5 min y la tarea queda `[~]` con el hallazgo
-- [~] **T10.6 · Acta y veredicto** · dep. T10.5 · ✎ 2026-10-11: acta escrita (§5); **falta el veredicto de Jhoan** (§5.9)
+- [x] **T10.6 · Acta y veredicto** · dep. T10.5 · ✎ 2026-10-11: acta escrita (§5, `0326c622`); veredicto de Jhoan: **«sigue»** (§5.9); D-F10-2 aplicada (PR #81)
   - **Ficheros**: `traspasos/TRASPASO-F10-relevo.md` (acta, `diseno.md` §2.6)
   - ✎ 2026-10-11 (D-FW-3): «sigue» admite defectos **menores**, listados en el acta, si cada uno se puede corregir **sin** el código viejo; uno que pida comparar con el viejo es «vuelta atrás» o espera, y T10.7–T10.11 no empiezan
   - **Hecho cuando**: veredicto de Jhoan escrito. «Sigue» → D-F10-2 aplicada. «Vuelta atrás» → viejo restaurado y verificado; F10 vuelve a su entrada

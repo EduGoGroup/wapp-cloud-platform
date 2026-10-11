@@ -9,7 +9,7 @@
 > | 2 | La dorada de la huella | F10-02 (T10.2) | escrita el 2026-10-11 |
 > | 3 | Capturas de referencia (`cmd/prompts`, `cmd/casebank`) | F10-02 (T10.1) | escrita el 2026-10-11 |
 > | 4 | Preparación de la prueba en UAT y SHA a desplegar | F10-02 (T10.3) | escrita el 2026-10-11; el SHA de `dev` lo fija F10-03 |
-> | 5 | El cambio de binario en UAT, la prueba en local y el veredicto | F10-03 (T10.4–T10.6) | escrita el 2026-10-11; **sin ventana de 24 h** (Jhoan); veredicto pendiente de su palabra |
+> | 5 | El cambio de binario en UAT, la prueba en local y el veredicto | F10-03 (T10.4–T10.6) | escrita el 2026-10-11; **sin ventana de 24 h** (Jhoan); veredicto: **«sigue»** |
 > | 6 | Cierre del relevo | F10-04 y F10-05 | pendiente |
 
 ## 1 · Verdad de campo antes del relevo (T10.1)
@@ -383,10 +383,12 @@ Edge; las rutas de `/v1/diag` no se sondearon); la sesión real, escuchando como
 
 ### 5.9 · Veredicto (T10.6)
 
-**Pendiente de la palabra de Jhoan** («sigue» o «vuelta atrás»). Lo que tiene delante: §5.4 y §5.6 en verde, y la lista
-de §5.7. La opinión de la sesión: sano para seguir; lo de §5.7 no pide el código viejo para corregirse (D-FW-3), que
-además sigue en `main` y en el historial.
+**«Sigue»** — Jhoan, 2026-10-11, con §5.4 y §5.6 en verde y la lista de §5.7 delante («sigue si»). Antes había preguntado
+si la sesión lo veía sano para pasar al siguiente paso; la respuesta fue que sí, porque nada de §5.7 pide el código
+viejo para corregirse (D-FW-3), que además sigue en `main` y en el historial.
 
-## 6 · Cierre del relevo
-
-*Pendiente: sesiones F10-04 y F10-05.*
+- **D-F10-2 aplicada**: `cmd/server-modular` se queda corriendo en UAT; el relevo (F10-04) tiene que llegar en ≤ 7 días,
+  es decir, antes del 2026-10-18.
+- Lo de §5.7 queda **sin ver**, no dado por bueno: si F10-04 o F10-05 pasan por UAT, la conversación con el WhatsApp
+  falso y una inferencia real son lo primero que mirar.
+- PR #81 integrado. **Siguiente sesión: F10-04.**
