@@ -379,3 +379,17 @@ func TestMountIntents_TenantComesFromTheToken(t *testing.T) {
 		t.Errorf("tenantA quedó con %s, quiero el cuerpo que mandó", got.Blob)
 	}
 }
+
+// TestMountIntents_GetTenantlessIdentityIs401: con el permiso pero sin empresa en la identidad,
+// E1 corta en el handler con el 401 de siempre y no lee el almacén.
+func TestMountIntents_GetTenantlessIdentityIs401(t *testing.T) {
+	h := apipublicahelpertest.New(t)
+	store := newIntentsStore()
+	cara := intentsCara(tenantlessCommon(h, intentsReadPerm), apipublica.IntentsDeps{
+		Intents: store, Entitlements: withFeatures(entitlements.FeatureLLMIntent), ConfigPush: &intentsPusherSpy{},
+	})
+	wantTenantless401(t, "E1", h, cara, http.MethodGet, intentsTarget, "")
+	if store.gets != 0 {
+		t.Errorf("E1 sin empresa: el almacén recibió %d lecturas, quiero 0", store.gets)
+	}
+}

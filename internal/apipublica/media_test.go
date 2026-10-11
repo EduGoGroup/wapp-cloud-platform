@@ -332,3 +332,12 @@ func TestMountMedia_PresignFailureIs502(t *testing.T) {
 	mediaWantCalls(t, "firma caída", up, 1)
 	mediaWantOneAudit(t, "firma caída", h, "failure", http.StatusBadGateway)
 }
+
+// TestMountMedia_TenantlessIdentityIs401: con el permiso pero sin empresa en la identidad, I5
+// corta en el handler con el 401 de siempre y no firma nada (la key se namespacea por tenant).
+func TestMountMedia_TenantlessIdentityIs401(t *testing.T) {
+	h := apipublicahelpertest.New(t)
+	up := mediaNewSpy()
+	wantTenantless401(t, "I5", h, mediaCara(tenantlessCommon(h, mediaPerm), up), http.MethodPost, mediaTarget, mediaValidBody)
+	mediaWantCalls(t, "I5 sin empresa", up, 0)
+}

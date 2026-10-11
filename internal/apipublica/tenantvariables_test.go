@@ -495,3 +495,18 @@ func TestMountTenantVariables_AuditCarriesNoContent(t *testing.T) {
 		}
 	}
 }
+
+// TestMountTenantVariables_TenantlessIdentityIs401: con el permiso pero sin empresa en la
+// identidad, G11 y G12 cortan en el handler con el 401 de siempre: ni se lee ni se reemplaza.
+func TestMountTenantVariables_TenantlessIdentityIs401(t *testing.T) {
+	h := apipublicahelpertest.New(t)
+	store := newTenantVarStore()
+	cara := tenantVarCara(tenantlessCommon(h, tenantVarReadPerm, tenantVarWritePerm),
+		apipublica.TenantVariablesDeps{TenantVariables: store})
+
+	wantTenantless401(t, "G11", h, cara, http.MethodGet, tenantVarTarget, "")
+	wantTenantless401(t, "G12", h, cara, http.MethodPut, tenantVarTarget, `{"variables":{"saludo":"hola"}}`)
+	if store.lists != 0 || store.replaces != 0 {
+		t.Errorf("G11 y G12 sin empresa: %d lecturas y %d reemplazos; quiero 0 y 0", store.lists, store.replaces)
+	}
+}

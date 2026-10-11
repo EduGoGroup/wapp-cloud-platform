@@ -40,7 +40,7 @@ en 333 ficheros —46,8 % comentario— más 151.891 de test en 528.
    `dev` o `main` solo si Jhoan lo pide **expresamente** en la conversación: que una ficha o un prompt
    de sesión diga «push a `dev`» **no** cuenta. Vale también para los sub-agentes en *worktrees*: sus
    commits se integran en la rama. El PR lo integra Jhoan en GitHub: ninguna sesión fusiona en `dev` en
-   local (`plan/sesiones/PROTOCOLO-CLI.md` §2). Y antes de fusionar, la documentación que da el PR por integrado va **en la rama**, como último commit: no se corrige en `dev` después (Jhoan, 2026-10-10). (Regla de Jhoan, 2026-10-03, tras F1-06, que aterrizó en `dev`.)
+   local (`plan/sesiones/PROTOCOLO-CLI.md` §2). 🔴 **La documentación no da por fusionado un PR abierto** (Jhoan, 2026-10-11; sustituye a la del 2026-10-10): mientras el PR está en revisión dice «PR #N abierto, en revisión», y **solo justo antes de fusionar** un último commit de la rama la pasa a «PR #N integrado», «fase cerrada» y «siguiente sesión». Sigue sin corregirse nada en `dev` después. Skill `pre-merge-docs`. (Regla de Jhoan, 2026-10-03, tras F1-06, que aterrizó en `dev`.)
 
 ## Antes de tocar nada
 
@@ -73,7 +73,7 @@ reescriben **por proceso con testcontainers**, nunca contra un Postgres vivo.
 - 🔄 **D-10**: la cara HTTP es **única y nueva**, `internal/apipublica`, construida por olas delante del `publicapi` viejo ([`plan/FX-cara-http/`](documentations/reorganizacion-modular/plan/FX-cara-http/README.md)).
 - **Las skills del repo**: `contrato-tdd` (un fichero) · `reconstruir-modulo` (una fase) ·
   `validar-antes-de-cerrar` (los gates) · `traspaso-web-local` (en desuso desde el 2026-10-04: ya no hay sesiones web) ·
-  `procesos-testcontainers` (F9) · `describir-pr` (el cuerpo de **todo** PR: objetivo, dónde encaja, resultado).
+  `procesos-testcontainers` (F9) · `pre-merge-docs` (qué dice la documentación mientras el PR está abierto y qué al fusionarlo) · `describir-pr` (el cuerpo de **todo** PR: objetivo, dónde encaja, resultado).
 - **La parada de F1 se resolvió el 2026-10-03**: manda `05` E-12 (tres niveles de ceremonia) y, para lo que decidió
   Jhoan, [`plan/DECISIONES.md`](documentations/reorganizacion-modular/plan/DECISIONES.md) §3. **El 80 % de cobertura ya no
   bloquea**: `make cobertura-ficheros` es un informe (rc=0 con ficheros por debajo, sin exentos) desde F1-06.

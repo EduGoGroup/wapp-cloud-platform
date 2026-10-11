@@ -6,7 +6,8 @@ package apipublica_test
 // ellas: una R (C2, MountEntitlements) y una W (B2, MountRolePlane).
 //
 // Aquí viven también los auxiliares que comparten los tests de las áreas (wantCode, wantJSON,
-// wantPatterns, routeCase y checkChain).
+// wantPatterns, routeCase, checkChain y —para la guarda de identidad de los handlers—
+// tenantlessCommon y wantTenantless401).
 
 import (
 	"encoding/json"
@@ -18,10 +19,13 @@ import (
 	"strings"
 	"testing"
 
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica/apipublicahelpertest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements/entitlementshelpertest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/domain"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 const (
@@ -123,6 +127,43 @@ func checkChain(t *testing.T, h *apipublicahelpertest.Harness, cara *apipublica.
 	if got.Meta["status"] != rc.want {
 		t.Errorf("%s: meta.status = %v, quiero %d", rc.id, got.Meta["status"], rc.want)
 	}
+}
+
+// grantedTenantless es un httpapi.UserTokenValidator que acredita CUALQUIER token como una
+// persona SIN empresa que SÍ trae grants. El firmador de wapp-shared no emite ese token (con
+// tenant vacío no acepta grants, D-056.12), pero el middleware no lo impide: Authenticate copia
+// el tenant de los claims tal cual y RequirePermission solo mira los grants. Es la única identidad
+// que llega POR LA CADENA hasta la guarda `id.TenantID == ""` de un handler.
+type grantedTenantless struct{ grants []string }
+
+var _ httpapi.UserTokenValidator = grantedTenantless{}
+
+func (v grantedTenantless) ValidateToken(string) (*sharedjwt.Claims, error) {
+	return &sharedjwt.Claims{UserID: subject, Grants: sharedjwt.Grants{Allow: slices.Clone(v.grants)}}, nil
+}
+
+// tenantlessCommon es el Common del arnés (su auditor y su logger) con el MW cambiado por uno que
+// resuelve toda credencial a una identidad sin empresa con esos grants.
+func tenantlessCommon(h *apipublicahelpertest.Harness, grants ...string) apipublica.Common {
+	k := h.Common()
+	k.MW = httpapi.NewMiddleware(grantedTenantless{grants: grants}, nil)
+	return k
+}
+
+// callTenantless pide la ruta a una cara montada con tenantlessCommon (la credencial puede ser
+// cualquier texto no vacío: la resuelve grantedTenantless).
+func callTenantless(h *apipublicahelpertest.Harness, cara *apipublica.Cara, method, target, body string) *httptest.ResponseRecorder {
+	return h.Call(cara, "persona-sin-empresa", method, target, body)
+}
+
+// wantTenantless401 exige que la ruta, pedida con el permiso pero sin empresa, pase la cadena y
+// la corte la guarda del HANDLER: 401 {"error":"autenticación requerida"}. Que la dependencia no
+// se tocó lo afirma cada test con su doble.
+func wantTenantless401(t *testing.T, what string, h *apipublicahelpertest.Harness, cara *apipublica.Cara, method, target, body string) {
+	t.Helper()
+	rec := callTenantless(h, cara, method, target, body)
+	wantCode(t, what+" con identidad sin empresa", rec, http.StatusUnauthorized)
+	wantErrorBody(t, what+" con identidad sin empresa", rec, "autenticación requerida")
 }
 
 // entitlementsCara monta C2 (cadena R) con k.

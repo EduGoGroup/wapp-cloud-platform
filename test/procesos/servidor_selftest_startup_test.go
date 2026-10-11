@@ -33,6 +33,9 @@ func TestArnes_EntornoLimpio(t *testing.T) {
 	t.Setenv("WAPP_STORAGE_S3_ENDPOINT", "http://trampa.invalid")
 	t.Setenv("WAPP_CONFIG_FILE", "/no/existe.yaml")
 	t.Setenv("AWS_ENDPOINT_URL", "http://trampa.invalid")
+	// Bajo `make cobertura-combinada` el arnés añade GOCOVERDIR a propósito (envCoverDir). Aquí
+	// se apaga para que este autotest afirme siempre el entorno por defecto, que es el cerrado.
+	t.Setenv(envCoverDir, "")
 
 	s := arrancar(t, opcionesServidor{Proceso: "arnes_entorno"})
 

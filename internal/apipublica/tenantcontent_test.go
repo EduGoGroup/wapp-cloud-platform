@@ -495,3 +495,29 @@ func TestMountTenantContent_StoreFailureIs500(t *testing.T) {
 		})
 	}
 }
+
+// TestMountTenantContent_TenantlessIdentityIs401: con los permisos pero sin empresa en la
+// identidad, las cinco rutas cortan en el handler con el 401 de siempre y ninguna toca el store.
+func TestMountTenantContent_TenantlessIdentityIs401(t *testing.T) {
+	cases := []struct {
+		id, method, target, body string
+	}{
+		{"I6", http.MethodPut, tenantContentTarget, tenantContentBlob},
+		{"I7", http.MethodPost, tenantContentTarget, tenantContentBlob},
+		{"I8", http.MethodDelete, tenantContentTarget, ""},
+		{"I9", http.MethodGet, tenantContentBase, ""},
+		{"I10", http.MethodGet, tenantContentTarget, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			h := apipublicahelpertest.New(t)
+			cs := tenantContentNewSpy()
+			cs.seed("", tenantContentRef, tenantContentBlob)
+			cara := apipublica.Nueva()
+			apipublica.MountTenantContent(cara, tenantlessCommon(h, tenantContentRead, tenantContentWrite),
+				apipublica.TenantContentDeps{Content: cs})
+			wantTenantless401(t, tc.id, h, cara, tc.method, tc.target, tc.body)
+			tenantContentWantCalls(t, tc.id+" sin empresa", cs)
+		})
+	}
+}

@@ -6,7 +6,7 @@
 | Entorno | 💻 solo local: testcontainers y los dos binarios |
 | Nivel (E-12) | No aplica: F9 no reconstruye un módulo y no lleva inventario E-12. Son tests de proceso (caja negra) |
 | Duración objetivo | 45–90 min |
-| Tareas | T9.30–T9.33 |
+| Tareas | T9.30–T9.33 y T9.36 |
 | Depende de | F8-07 (F8 conmutada y cerrada en local; T9.29 `[x]`) |
 | Decisiones | Las de [`../DECISIONES.md`](../DECISIONES.md) que bloquean «F9 bloque D» |
 | Se para cuando | `CUENTA=3 make test-procesos` da `RC=0` contra viejo y nuevo, 0 SKIP, 0 FAIL, sin intermitencias; las 22 filas de `diseno.md` §5 tienen su `--- PASS`; el recuento de T9.31 está limpio; la condición del relevo queda escrita en `ESTADO.md` |
@@ -29,7 +29,7 @@ documentations/reorganizacion-modular/plan/sesiones/PROTOCOLO-CLI.md
 Tu encargo (y solo este):
 - Fase: F9 · procesos (testcontainers) → documentations/reorganizacion-modular/plan/F9-procesos/
 - Bloque: D · cierre
-- Tareas: T9.30–T9.33 de plan/F9-procesos/tareas.md
+- Tareas: T9.30–T9.33 y T9.36 de plan/F9-procesos/tareas.md
 - Entrada: F8 conmutada, T9.29 [x], puentes (imports) = 0.
 - T9.30: `CUENTA=3 make test-procesos` contra los dos binarios, sin intermitencias; lee las notas de T9.30 sobre
   la carrera de `sin_errores` (contradicción 19, D-F9-10) antes de interpretar un rojo o un verde.
@@ -49,7 +49,7 @@ Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr cre
 
 ## Al terminar debe existir
 
-- En [`../F9-procesos/tareas.md`](../F9-procesos/tareas.md): T9.30–T9.33 `[x]` con SHA.
+- En [`../F9-procesos/tareas.md`](../F9-procesos/tareas.md): T9.30–T9.33 y T9.36 `[x]` con SHA.
 - Un bloque en `ESTADO.md` con los dos logs (`RC`, PASS, SKIP por binario, duración) y `F9 CERRADA <fecha>`: es la condición del relevo que lee F10.
 - El [README de F9](../F9-procesos/README.md) con el estado y los números medidos, y los hallazgos nuevos.
 - PR a `dev` abierto desde la rama de la sesión.

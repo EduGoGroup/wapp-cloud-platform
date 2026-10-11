@@ -113,7 +113,7 @@ INTEGRATION_PG_PASSWORD  := wapp
 INTEGRATION_PG_DB        := wapp_test
 INTEGRATION_DSN          := postgres://$(INTEGRATION_PG_USER):$(INTEGRATION_PG_PASSWORD)@localhost:$(INTEGRATION_PG_PORT)/$(INTEGRATION_PG_DB)?sslmode=disable
 
-.PHONY: tools toolchain fmt-check vet vet-pendiente vet-integracion test-pendiente test-procesos cobertura-ficheros lint build test test-integration ci-local ci-docker migrate migrate-status
+.PHONY: tools toolchain fmt-check vet vet-pendiente vet-integracion test-pendiente test-procesos cobertura-ficheros cobertura-combinada lint build test test-integration ci-local ci-docker migrate migrate-status
 
 # Idempotente: si $(LINT_LOCAL) ya es la versión fijada, no descarga nada. Si no, baja el
 # tarball de la release para ESTA máquina (GOHOSTOS/GOHOSTARCH: el binario tiene que ejecutar
@@ -291,7 +291,39 @@ cobertura-ficheros: ## INFORME de cobertura por fichero en verde del árbol nuev
 	perfil=$$(mktemp "$${TMPDIR:-/tmp}/cobertura-ficheros.XXXXXX") || exit 2; \
 	trap 'rm -f "$$perfil"' EXIT; \
 	$(GO) test -covermode=set -coverprofile="$$perfil" $$paqs || exit $$?; \
+	for extra in $(PERFIL_EXTRA); do \
+		[ -s "$$extra" ] || { echo "cobertura-ficheros: PERFIL_EXTRA $$extra no existe o está vacío"; exit 2; }; \
+		grep -v '^mode:' "$$extra" >> "$$perfil"; \
+	done; \
 	$(GO) run ./cmd/cobertura-ficheros -perfil "$$perfil" -umbral 80 -dirs "$$dirs" -bridges "$$bridges"
+
+# ── Cobertura combinada: unitarios + suites contra Postgres + flujos de proceso ─
+# El informe de arriba solo ve lo que ejecutan los tests unitarios. Este suma lo que recorren
+# los procesos de F9: compila el servidor NUEVO con `go build -cover` (GOFLAGS llega al
+# `go build` del arnés), le pasa GOCOVERDIR por WAPP_PROCESOS_COVERDIR, corre los procesos y
+# ⚠️ -coverpkg abarca el módulo ENTERO: si deja fuera el paquete main, el binario no vuelca
+# nada (medido el 2026-10-11: con `internal/...` el directorio quedó vacío).
+# añade al perfil unitario (PERFIL_EXTRA) el del binario y el de las suites `Contrato` que
+# corren en el propio proceso de test. cmd/cobertura-ficheros se queda, por bloque, con la
+# cuenta máxima: un bloque cuenta como cubierto si lo ejecutó CUALQUIERA de los tres.
+# Sigue siendo un INFORME (rc=0 con ficheros por debajo). Necesita Docker. El servidor vuelca
+# sus contadores al salir limpio (SIGTERM): un proceso matado con SIGKILL no aporta los suyos.
+# COBERTURA_COMBINADA_DIR conserva los perfiles para leer qué bloques quedan sin cubrir.
+COBERTURA_COMBINADA_DIR ?= $(PROCESOS_LOG_DIR)/cobertura-combinada
+# Con `=` y no `:=`: el `go list` solo corre al expandir el target, no en cada `make`.
+MODULO = $(shell GOWORK=off go list -m)
+
+cobertura-combinada: ## INFORME de cobertura sumando unitarios, suites contra Postgres y flujos de proceso (binario nuevo); necesita Docker
+	@d="$(COBERTURA_COMBINADA_DIR)"; rm -rf "$$d"; mkdir -p "$$d/bin" || exit 2; \
+	d=$$(cd "$$d" && pwd); \
+	WAPP_PROCESOS_BINARIO=nuevo WAPP_PROCESOS_COVERDIR="$$d/bin" \
+	GOFLAGS="-cover -covermode=set -coverpkg=$(MODULO)/..." \
+	$(GO) test -tags integracion -count=1 -v -timeout 30m -parallel 4 -coverprofile="$$d/suites.out" ./test/procesos/... > "$$d/procesos.log" 2>&1; \
+	rc=$$?; echo "RC=$$rc" >> "$$d/procesos.log"; \
+	echo "procesos (binario nuevo, instrumentado): RC=$$rc · PASS=$$(grep -c -- '--- PASS' "$$d/procesos.log") FAIL=$$(grep -c -- '--- FAIL' "$$d/procesos.log") SKIP=$$(grep -c -- '--- SKIP' "$$d/procesos.log") · $$d/procesos.log"; \
+	[ $$rc -eq 0 ] || exit $$rc; \
+	$(GO) tool covdata textfmt -i="$$d/bin" -o="$$d/binario.out" || exit 2; \
+	$(MAKE) --no-print-directory cobertura-ficheros PERFIL_EXTRA="$$d/binario.out $$d/suites.out"
 
 lint: ## golangci-lint $(LINT_VERSION): el de .bin/ (make tools) o el del PATH — falla si ninguno es la versión fijada (decisión T-1)
 	@$(RESOLVE_LINT); \

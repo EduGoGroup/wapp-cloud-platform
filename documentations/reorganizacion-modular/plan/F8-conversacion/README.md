@@ -855,6 +855,45 @@ Las dos filas de F5 (`catalogo → flujos/model`) de `arquitectura.md` §5.1 est
     otro *worktree*). Los candados R8.4.a–c, mutados otra vez: los tres caen. **Sin correr**: `ci-docker`, los procesos
     contra el viejo, la integración vieja y el Edge real (D-38).
 
+72. **(F8-08, mutantes) Los de `admin` y la cara HTTP de F8-06, por fin repetidos y con lista.** El hallazgo 51 (h) lo
+    dejó como deuda del cierre, F8-07b lo pasó y F8-07 hizo solo el cableado (hallazgo 69): se **corrió la arruga** dos
+    veces. Ahora, por quien no escribió el código, con `go test -overlay` sobre copias fuera del repo, en serie:
+    **`admin`: 24 escritos, 24 muertos** (`durable_flow` 4, `handlers` 7, `triggers` 6, `triggers_delete` 4,
+    `triggers_list` 3; dos no compilaban y se rehicieron); el orquestador repitió cuatro (m05, m15, m19, m23): mueren.
+    **`apipublica`: muestra de 40 sobre los seis grupos de rutas, 39 muertos y 1 superviviente** (la guarda de tenant de
+    `entitlements.go:86`: hallazgo 73). No son «los mismos» 22 y 169 de F8-06, que no tienen lista; la muestra de la cara
+    es 40, no 169. Sin mutar en `admin` (fuera del reparto): los 405, `len(req.Definition) == 0`, los 500 de
+    `InsertDefinition`/`Insert`/`Delete`, el 502 de `ErrSessionOffline`, `triggerID == ""` y el 404 de `ErrTriggerNotFound`.
+73. **(F8-08, barrida) 🔴 31 de las 43 guardas de «identidad sin tenant» de la cara HTTP no las probaba nadie.** El
+    superviviente del 72 no era un caso suelto: la misma línea (`if !ok || id.TenantID == "" {`) está en 43 handlers.
+    Mutadas las 43 una a una (quitar `|| id.TenantID == ""`): **12 morían, 31 sobrevivían**. La producción está bien —la
+    guarda existe en las 43—; faltaban los tests. Arreglo, solo tests (`40644508`): 17 rutas llamadas **por la cadena
+    real** con una identidad con permiso y sin tenant → 401, cuerpo «autenticación requerida» y cero llamadas al doble.
+    Tras él: **29 mueren, 14 sobreviven**. Las 14 son **inalcanzables por la cadena**: antes corta el gate de
+    entitlements (`acceso/entitlements/middleware.go:53` y `:100`) con 403 `feature_not_enabled` (catálogo, eventos de
+    conversación, avisos de degradación, export, resumen, sugerencia de presupuesto, las cuatro de `integrations` y las
+    tres de `tenantllm`). Se dejan como **defensa en profundidad, sin test forzado**. Matiz: el firmador actual no emite
+    un token con tenant vacío (`GenerateToken` de `wapp-shared` lo rechaza), así que el caso se construye con un
+    validador falso; es alcanzable en el middleware, no con un token legítimo de hoy.
+74. **(F8-08, cobertura) La premisa «los flujos completos cubren los huecos» no se había medido nunca; medida, se
+    cumple.** El informe por fichero solo veía los unitarios. `make cobertura-combinada` (`a3fcbe3a`) suma lo que ejecuta
+    el binario nuevo bajo los procesos y las suites `Contrato` contra Postgres: **`FICHEROS_EVALUADOS=418 · POR_DEBAJO=0`**
+    (con solo unitarios eran 8). 261 ficheros al 100 %, 134 entre 90 y 99, 23 entre 80 y 89; el más bajo,
+    `acceso/platformadmin/postgres.go`, 80,6 %. Los siete adaptadores de Postgres de F1–F2 que el cierre de F8 daba por
+    cubiertos «por la suite» lo están de verdad (80,6–100 %). Trampa de método: con `-coverpkg` acotado a `internal/...`
+    el binario **no vuelca nada** (el paquete `main` tiene que estar instrumentado): la primera corrida salió vacía.
+    🟡 **No hecho**: clasificar los bloques que siguen sin cubrir en los 157 ficheros por debajo del 100 % (promesa sin
+    test / alcanzable con un flujo / defensiva). Queda como **T9.36**, en el cierre de F9.
+75. **(F8-08, `events_summary.go`) El único fichero de `conversacion` bajo el 80 % tenía dos promesas sin test.** Las 9
+    sentencias sin ejecutar eran cinco ramas «falló → aviso → se sigue». Ningún flujo las provoca (piden que la base o el
+    envío fallen en un instante exacto). Pero el contrato promete «best-effort» dos veces —abandonar y volver ocurren
+    aunque falle el resumen— y nadie hacía fallar el resumen. Tres tests (`dc84fae9`), con una fuente que falla: 5 de las 9
+    sentencias pasan a ejecutarse (89,4 % en el informe combinado). Las otras 4 (sin destino; fallo del envío del
+    recordatorio) son **defensivas**: el envío de la pantalla que va justo después tropieza con lo mismo y lo devuelve.
+76. **(F8-08, gates)** `GOWORK=off make ci-local` → `GATE_RC=0 (239 ok, 0 FAIL, 0 SKIP, lint 0 issues.; 223 paquetes de la caché de go test)`. `make test-procesos` → viejo y nuevo RC=0 · PASS=1291 · FAIL=0 · SKIP=0. `make cobertura-combinada`
+    (binario nuevo instrumentado) → `RC=0 · PASS=1291 · FAIL=0 · SKIP=0`. **Sin correr**: `make ci-docker`, la integración
+    vieja y el Edge real (fase FW).
+
 ## Orden de lectura
 
 `README` → [`arquitectura.md`](arquitectura.md) (sobre todo §4 singleton y §5 puentes y adaptadores) →
@@ -880,6 +919,7 @@ bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../ses
 | F8-07a | limpieza tras D-F7-9 (✎ 2026-10-10, Jhoan: F8-07 se parte en tres) | medio | T8.41–T8.43 | `PutSourceText` y `ComposeAtFlush` borrados (D-35), tests de cableado al día sin debilitarse; el caso adversario del callback del CRM tolera el corte; los siete mutantes de D-F7-9 repetidos y muertos |
 | F8-07b ✅ | Docker y arranque real (✎ 2026-10-10) | — | T8.36, T8.37 | `make ci-docker` rc=0 (no corre desde F8-01); suites `Contrato` contra Postgres; `cmd/server-modular` arranca solo y recorre una conversación con el Edge falso; hallazgo 51 refutado. ✎ **hecha** (2026-10-10; rama `reorg/f8-07b-docker-y-arranque-real`, `866e47a6`, `02ad985a`, `ffba56e7`, PR #71 a `dev`, **integrado** por orden expresa de Jhoan (2026-10-11), sin squash; `ci-docker` RC=0; tres casos de proceso nuevos; del hallazgo 51 quedan cuatro puntos sin ver desde fuera, que Jhoan da por buenos en estático el 2026-10-11: hallazgos 64–67) |
 | F8-07 ✅ | cierre | — | T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera (2026-10-11, `5fde368d`, rama `reorg/f8-07-cierre`, PR #72 **integrado**: los 10 puntos en `ESTADO.md`; 31 mutantes de cableado, 31 muertos; hallazgos 68–71) |
+| F8-08 👉 | barrida tras el cierre: mutantes pendientes y cobertura combinada | — | T8.44–T8.46 | lo que el repaso del cierre con Jhoan dejó por hacer (2026-10-11, rama `reorg/f8-08-coverage-sweep-and-mutants`, **PR #73 abierto, en revisión**; hallazgos 72–76) |
 
 Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (medido en el código viejo):
 `admin` importa `runtime` (`handlers.go:24,306,308`), así que no puede nacer antes que sus contratos y va con la cara

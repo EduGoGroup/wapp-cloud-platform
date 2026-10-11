@@ -562,3 +562,14 @@ func TestMountEventTelemetry_ReaderErrorIs500(t *testing.T) {
 		t.Errorf("el puerto recibió el tenant %q, quiero el del token %q", spy.tenant, tenantA)
 	}
 }
+
+// TestMountEventTelemetry_TenantlessIdentityIs401: con el permiso pero sin empresa en la
+// identidad, G18 corta en el handler con el 401 de siempre y no lee la telemetría de nadie.
+func TestMountEventTelemetry_TenantlessIdentityIs401(t *testing.T) {
+	h := apipublicahelpertest.New(t)
+	reader := &telemetryReaderSpy{rows: []apipublica.EventTelemetryRow{telemetryRow(1, "evento", telemetryBase)}}
+	wantTenantless401(t, "G18", h, telemetryCara(tenantlessCommon(h, telemetryPerm), reader), http.MethodGet, telemetryTarget, "")
+	if reader.calls != 0 {
+		t.Errorf("G18 sin empresa: el lector recibió %d llamadas, quiero 0", reader.calls)
+	}
+}

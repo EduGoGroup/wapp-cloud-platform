@@ -378,3 +378,20 @@ func TestMountSessions_StatusThroughTheChain(t *testing.T) {
 		})
 	}
 }
+
+// TestMountSessions_TenantlessIdentityIs401: con el permiso pero sin empresa en la identidad, D2
+// y D4 cortan en el handler con su 401 —D2 en JSON, D4 en el texto plano del handler viejo— sin
+// listar la flota ni fijar ningún estado.
+func TestMountSessions_TenantlessIdentityIs401(t *testing.T) {
+	h := apipublicahelpertest.New(t)
+	lister, status := sessA(), &statusStoreFake{found: true}
+	cara := sessionsCara(tenantlessCommon(h, "sessions.read", "sessions.write"),
+		apipublica.SessionsDeps{Sessions: lister, SessionStatus: status})
+
+	wantTenantless401(t, "D2", h, cara, http.MethodGet, sessionsTarget, "")
+	wantPlain(t, "D4 con identidad sin empresa", callTenantless(h, cara, http.MethodPost, statusTarget, loggedOutBody),
+		http.StatusUnauthorized, msgNoIdentity)
+	if lister.calls != 0 || status.calls != 0 {
+		t.Errorf("D2 y D4 sin empresa: %d listados y %d escrituras de estado; quiero 0 y 0", lister.calls, status.calls)
+	}
+}
