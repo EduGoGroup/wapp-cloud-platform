@@ -1,8 +1,7 @@
 # FW · WhatsApp enchufable — el Edge real conversa sin WhatsApp
 
-> **Estado**: 🟡 **bloque D (FW-04) escrito el 2026-10-11 y en revisión: PR #79 de este repo y PR #13 de `wapp-edge-agent`,
-> abiertos. La receta de UAT está escrita y ejecutada en local ([`receta-uat.md`](receta-uat.md)); la fase se da por cerrada
-> al fusionarlos. Siguiente paso: fusionar esos dos PR; después, F10-03.** Bloque C (FW-03): el carrito conversa con Cloud y Edge reales; PR #78 de este repo
+> **Estado**: ✅ **CERRADA el 2026-10-11 (FW-04, bloque D): PR #79 de este repo y PR #13 de `wapp-edge-agent`, integrados.
+> La receta de UAT está escrita y ejecutada en local ([`receta-uat.md`](receta-uat.md)). Siguiente sesión: F10-03.** Bloque C (FW-03): el carrito conversa con Cloud y Edge reales; PR #78 de este repo
 > integrado. Bloque B (FW-02): el transporte falso, en el Edge (PR #12 de `wapp-edge-agent` y PR #77 de este repo, integrados). Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
 > decididas y **ADR-0049 aprobado** (vigente; commiteado en la raíz de wApp, `1abd9fe`). D-FW-5 decidida al arrancar FW-03 (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
 > [`deuda.md`](../../../deuda.md)). Medida sobre `edge/wapp-edge-agent` @ `38e5f91` (rama `main`; su rama por defecto es `dev`).
@@ -268,7 +267,7 @@ con las palancas bajas. Salidas en [`receta-uat.md`](receta-uat.md) §5.
     `operacion.md`; y se corrigieron dos líneas de su constitución que FW-01 había señalado (hallazgos 4 y 6): la
     trampa 10 (`internal/app/send.go` ya no existe) e INV-2 («no hay ningún test» de lease: ya hay uno). 🟡 Sigue sin
     test el otro escape de INV-2: un Edge **sin** `lease_pubkey_path` despacha.
-49. **El runbook del ecosistema queda sin commitear en la raíz de wApp**, como quedó el ADR-0049 tras FW-01: la raíz
+49. ✎ **Resuelto antes de fusionar**: commiteado en `main` de la raíz por orden de Jhoan (`928c7cc`, solo el runbook y su fila del índice). Lo que se dijo: **El runbook del ecosistema queda sin commitear en la raíz de wApp**, como quedó el ADR-0049 tras FW-01: la raíz
     no tiene remoto ni `dev`, y tiene cambios de Jhoan sin commitear. `make check-docs` de la raíz: rc=0, gate de
     diagramas **saltado** (falta `mmdc`).
 50. 🟡 **RW.5.b no se puede cerrar aquí**: «al terminar la ventana, el Edge de UAT queda con la palanca baja» se
