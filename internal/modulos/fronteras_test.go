@@ -62,46 +62,10 @@ var reglas = candados.Reglas{
 			"solicitudes", // flujos/modules/cart → intakes
 		},
 	},
-	// Viejo → módulo (04 §4; gana el prefijo más largo: internal/flujos/contact va a nucleo
-	// aunque internal/flujos vaya a conversacion, e internal/intake/catalogo a catalogo aunque
-	// internal/intake vaya a captacion). Sirve para saber a qué módulo pertenece el destino de
-	// un puente y para prohibir que internal/arranque cablee lo viejo de un módulo conmutado.
-	Mapa: map[string]string{
-		"internal/iam":           "acceso",
-		"internal/platformadmin": "acceso",
-		"internal/entitlements":  "acceso",
-
-		"internal/gateway":     "edge",
-		"internal/diagnostics": "edge",
-		"internal/inferstats":  "edge",
-		"internal/receipts":    "edge",
-		"internal/ingest":      "edge",
-		"internal/filtercfg":   "edge",
-
-		"internal/flujos":         "conversacion",
-		"internal/turnoacotado":   "conversacion",
-		"internal/flujos/contact": "nucleo",
-
-		"internal/catalogimport":   "catalogo",
-		"internal/intake/catalogo": "catalogo",
-
-		"internal/intake":      "captacion",
-		"internal/intakeahead": "captacion",
-		"internal/evidence":    "captacion",
-		"internal/reanalisis":  "captacion",
-		"internal/casebank":    "captacion",
-		"internal/intentcfg":   "captacion",
-
-		"internal/llmvia":      "inferencia",
-		"internal/prompts":     "inferencia",
-		"internal/tenantllm":   "inferencia",
-		"internal/degradation": "inferencia",
-
-		"internal/intakes":      "solicitudes",
-		"internal/integrations": "solicitudes",
-		"internal/contracts":    "solicitudes",
-		"internal/tenantvars":   "solicitudes",
-	},
+	// Viejo → módulo: vacío desde el relevo (F10 · T10.11), que borró el árbol viejo entero. Mientras
+	// existió decía a qué módulo pertenecía cada paquete viejo, para juzgar los puentes y prohibir
+	// que internal/arranque cableara lo viejo de un módulo conmutado.
+	Mapa: map[string]string{},
 	// Módulos conmutados (el arranque nuevo ya los cablea SOLO con lo nuevo). Un módulo entra con
 	// el commit que retira su ÚLTIMO adaptador internal/arranque/bridge_<x>.go, o con su
 	// conmutar(<m>) si nunca tuvo adaptador (05 §4.2, D-F1-15): mientras viva un adaptador, la

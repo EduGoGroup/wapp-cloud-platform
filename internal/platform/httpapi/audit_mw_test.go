@@ -6,18 +6,17 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // fakeAuditor captura el último evento registrado por AuditMiddleware.
 type fakeAuditor struct {
 	calls int
-	last  in.AuditInput
+	last  httpapi.AuditInput
 	err   error
 }
 
-func (f *fakeAuditor) Record(_ context.Context, ev in.AuditInput) error {
+func (f *fakeAuditor) Record(_ context.Context, ev httpapi.AuditInput) error {
 	f.calls++
 	f.last = ev
 	return f.err

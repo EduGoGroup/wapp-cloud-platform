@@ -49,11 +49,11 @@ var watchedFields = []string{"RevisionNo", "LifecycleStatus"}
 
 // watchedDirs (era directoriosVigilados) son los dos sitios donde hoy se fija alguno
 // de esos campos: aquí (Build arma el documento y el adaptador de revisiones rellena
-// el Input) y el traductor del motor de flujos VIEJO, que es el que corre y saca los
-// datos del efecto (internal/flujos/runtime). Si uno de los dos deja de tener
+// el Input) y el traductor del motor de flujos, que saca los
+// datos del efecto (internal/modulos/conversacion/runtime). Si uno de los dos deja de tener
 // sitios, el barrido CORTA en vez de dar verde: es la señal de que el código se mudó
 // otra vez y este candado se quedó mirando a la pared.
-var watchedDirs = []string{".", filepath.Join("..", "..", "..", "..", "flujos", "runtime")}
+var watchedDirs = []string{".", filepath.Join("..", "..", "..", "conversacion", "runtime")}
 
 // TestContract_NoKeyFieldIsConstant (era TestContrato_NingunCampoClaveEsConstante)
 // recorre TODOS los ficheros de producción de los directorios vigilados y exige que

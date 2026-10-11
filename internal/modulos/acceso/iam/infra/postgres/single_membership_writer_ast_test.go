@@ -57,10 +57,9 @@ const (
 )
 
 // expectedWriters son los ÚNICOS ficheros que pueden dar de alta una membresía, con la ruta
-// relativa a sweepRoot: el viejo y el nuevo, hasta F10. Añadir uno aquí sin la guarda no engaña
+// relativa a sweepRoot. Añadir uno aquí sin la guarda no engaña
 // al test: la guarda se comprueba aparte, función por función.
 var expectedWriters = []string{
-	"iam/infra/postgres/memberships.go",
 	"modulos/acceso/iam/infra/postgres/memberships.go",
 }
 

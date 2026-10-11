@@ -4,10 +4,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/inferstats"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics/inferencia"
 )
 
 func ptr(v int64) *int64 { return &v }
+
+// fixedSource devuelve una FuenteInferencia que entrega siempre el agregado a. El agregado de
+// verdad lo calcula el almacén de internal/modulos/edge/inferstats, que este paquete no puede
+// importar y que prueba allí su suma entre Edges; aquí se prueba lo que el colector PUBLICA de un
+// agregado dado.
+func fixedSource(a inferencia.Agregado) FuenteInferencia {
+	return func() inferencia.Agregado { return a }
+}
 
 // TestInferenceStats_ElCriterioDeT179 es el criterio de la tarea, ejercido: «¿qué
 // proporción de las inferencias de la última hora pagó arranque en frío?» tiene que
@@ -22,14 +30,13 @@ func ptr(v int64) *int64 { return &v }
 // rojo (el `# TYPE` deja de decir counter).
 func TestInferenceStats_ElCriterioDeT179(t *testing.T) {
 	m := New()
-	st := inferstats.New()
-	if err := m.RegisterInferenceStats(st.Agrega); err != nil {
+	src := fixedSource(inferencia.Agregado{
+		PorRegimen: map[string]int64{"frio": 3, "templado": 2, "caliente": 45},
+		Edges:      1,
+	})
+	if err := m.RegisterInferenceStats(src); err != nil {
 		t.Fatalf("RegisterInferenceStats: %v", err)
 	}
-
-	st.Observa(inferstats.Clave{TenantID: "t-1", EdgeID: "edge-1"}, inferstats.Parte{
-		PorRegimen: map[string]int64{"frio": 3, "templado": 2, "caliente": 45},
-	})
 
 	cuerpo := scrape(t, m)
 	for _, quiero := range []string{
@@ -57,13 +64,13 @@ func TestInferenceStats_ElCriterioDeT179(t *testing.T) {
 // generación aparece valiendo 0).
 func TestInferenceStats_AusenteNoEsCero(t *testing.T) {
 	m := New()
-	st := inferstats.New()
-	if err := m.RegisterInferenceStats(st.Agrega); err != nil {
+	src := fixedSource(inferencia.Agregado{
+		MuestrasPrefill: ptr(91), // la generación NO llega
+		Edges:           1,
+	})
+	if err := m.RegisterInferenceStats(src); err != nil {
 		t.Fatalf("RegisterInferenceStats: %v", err)
 	}
-	st.Observa(inferstats.Clave{TenantID: "t-1", EdgeID: "edge-1"}, inferstats.Parte{
-		MuestrasPrefill: ptr(91), // la generación NO llega
-	})
 
 	cuerpo := scrape(t, m)
 	if !strings.Contains(cuerpo, `wapp_edge_inference_samples_total{fase="prefill"} 91`) {
@@ -84,11 +91,9 @@ func TestInferenceStats_AusenteNoEsCero(t *testing.T) {
 // el futuro tendrá que borrar este test, y al hacerlo leerá el porqué.
 func TestInferenceStats_ElCuantilNoSube(t *testing.T) {
 	m := New()
-	st := inferstats.New()
-	if err := m.RegisterInferenceStats(st.Agrega); err != nil {
+	if err := m.RegisterInferenceStats(fixedSource(inferencia.Agregado{MuestrasPrefill: ptr(10), Edges: 1})); err != nil {
 		t.Fatalf("RegisterInferenceStats: %v", err)
 	}
-	st.Observa(inferstats.Clave{TenantID: "t-1", EdgeID: "e-1"}, inferstats.Parte{MuestrasPrefill: ptr(10)})
 
 	// Se miran las líneas de MUESTRA, no el cuerpo entero: el `# HELP` de la serie de
 	// muestras explica por qué el cuantil no sube, así que un Contains sobre todo el
@@ -112,12 +117,9 @@ func TestInferenceStats_ElCuantilNoSube(t *testing.T) {
 // pudiera agregar en PromQL, y es tentador— así que se afirma en vez de confiarse.
 func TestInferenceStats_NoSeEtiquetaPorTenantNiPorEdge(t *testing.T) {
 	m := New()
-	st := inferstats.New()
-	if err := m.RegisterInferenceStats(st.Agrega); err != nil {
+	if err := m.RegisterInferenceStats(fixedSource(inferencia.Agregado{PorClase: map[string]int64{"lote": 1}, Edges: 1})); err != nil {
 		t.Fatalf("RegisterInferenceStats: %v", err)
 	}
-	st.Observa(inferstats.Clave{TenantID: "tenant-secreto", EdgeID: "edge-secreto"},
-		inferstats.Parte{PorClase: map[string]int64{"lote": 1}})
 
 	cuerpo := scrape(t, m)
 	for _, prohibido := range []string{"tenant-secreto", "edge-secreto", "tenant_id=", "edge_id=", "session_id="} {
@@ -134,12 +136,9 @@ func TestInferenceStats_NoSeEtiquetaPorTenantNiPorEdge(t *testing.T) {
 // pinta.
 func TestInferenceStats_ElNumeroDeEdgesEsGauge(t *testing.T) {
 	m := New()
-	st := inferstats.New()
-	if err := m.RegisterInferenceStats(st.Agrega); err != nil {
+	if err := m.RegisterInferenceStats(fixedSource(inferencia.Agregado{MuestrasPrefill: ptr(2), Edges: 2})); err != nil {
 		t.Fatalf("RegisterInferenceStats: %v", err)
 	}
-	st.Observa(inferstats.Clave{TenantID: "t", EdgeID: "e-1"}, inferstats.Parte{MuestrasPrefill: ptr(1)})
-	st.Observa(inferstats.Clave{TenantID: "t", EdgeID: "e-2"}, inferstats.Parte{MuestrasPrefill: ptr(1)})
 
 	cuerpo := scrape(t, m)
 	if !strings.Contains(cuerpo, "# TYPE wapp_edge_inference_reporting_edges gauge") {
@@ -159,18 +158,18 @@ func TestInferenceStats_ElNumeroDeEdgesEsGauge(t *testing.T) {
 // entera por una métrica.
 func TestRegisterInferenceStats_NilSafeEIdempotente(t *testing.T) {
 	var nada *Metrics
-	if err := nada.RegisterInferenceStats(inferstats.New().Agrega); err != nil {
+	if err := nada.RegisterInferenceStats(fixedSource(inferencia.Agregado{})); err != nil {
 		t.Fatalf("sobre un *Metrics nil: %v", err)
 	}
 	m := New()
 	if err := m.RegisterInferenceStats(nil); err != nil {
 		t.Fatalf("sin fuente: %v", err)
 	}
-	st := inferstats.New()
-	if err := m.RegisterInferenceStats(st.Agrega); err != nil {
+	src := fixedSource(inferencia.Agregado{})
+	if err := m.RegisterInferenceStats(src); err != nil {
 		t.Fatalf("primera: %v", err)
 	}
-	if err := m.RegisterInferenceStats(st.Agrega); err != nil {
+	if err := m.RegisterInferenceStats(src); err != nil {
 		t.Fatalf("segunda llamada (tiene que ser idempotente): %v", err)
 	}
 }
