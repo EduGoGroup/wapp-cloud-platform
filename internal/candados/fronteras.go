@@ -59,7 +59,7 @@ type Reglas struct {
 //
 // Clasificación (por prefijo en frontera de «/»):
 //   - árbol NUEVO: internal/modulos, internal/nucleo, internal/apipublica,
-//     internal/pendiente, internal/candados, internal/arranque, cmd/server-modular y
+//     internal/pendiente, internal/candados, internal/arranque, cmd/server, cmd/server-modular, cmd/casebank, cmd/prompts y
 //     cmd/cobertura-ficheros;
 //   - platform: internal/platform. Es código viejo, pero todo el árbol nuevo puede
 //     importarlo, igual que nucleo y pendiente;
@@ -129,7 +129,10 @@ var arbolNuevo = []string{
 	"internal/pendiente",
 	"internal/candados",
 	"internal/arranque",
+	"cmd/server",
 	"cmd/server-modular",
+	"cmd/casebank",
+	"cmd/prompts",
 	"cmd/cobertura-ficheros",
 }
 

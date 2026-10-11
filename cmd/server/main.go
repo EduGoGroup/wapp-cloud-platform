@@ -19,7 +19,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/bootstrap"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/arranque"
 )
 
 func main() {
@@ -32,5 +32,5 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	return bootstrap.Run(ctx)
+	return arranque.Ejecutar(ctx)
 }

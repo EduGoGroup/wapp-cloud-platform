@@ -31,7 +31,7 @@
 //
 // 🔴 EL CASO QUE SIEMBRA HOY ES CALIDAD C: texto REDACTADO, no la transcripción
 // real del cliente. La propia fila lo declara en `expected._procedencia`. Ver
-// internal/casebank/semilla.go.
+// internal/modulos/captacion/casebank/seed.go.
 package main
 
 import (
@@ -44,7 +44,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/casebank"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/casebank"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
@@ -86,7 +86,7 @@ type peticion struct {
 // una auditoría (2026-08-27) metió DOS mutaciones aquí que la suite entera dejó
 // pasar con `vet` en 0:
 //
-//   - construir el anonimizador SIN `casebank.NombresDelCaso()` ⇒ los nombres
+//   - construir el anonimizador SIN `casebank.CaseNames()` ⇒ los nombres
 //     propios se siembran EN CLARO, que es PII en la nube (ADR-0034);
 //   - poner `caso.Consented = true` fijo, ignorando el flag ⇒ el consentimiento
 //     deja de significar nada y este binario pasa a afirmar por su cuenta algo
@@ -100,16 +100,16 @@ type peticion struct {
 // La frontera está puesta donde acaba la decisión y empieza el I/O: todo lo que
 // esta función devuelve se puede afirmar sin una base delante, y todo lo que
 // `run` hace después necesita una y no decide nada.
-func preparar(p peticion) (casebank.Caso, casebank.Anonimizador, error) {
+func preparar(p peticion) (casebank.Case, casebank.Anonymizer, error) {
 	if p.tenant == "" {
-		return casebank.Caso{}, casebank.Anonimizador{}, errSinTenant
+		return casebank.Case{}, casebank.Anonymizer{}, errSinTenant
 	}
-	caso := casebank.CasoAmbar(p.tenant)
+	caso := casebank.AmbarCase(p.tenant)
 	// 🔴 El flag NO se suma al consentimiento del fixture: lo SUSTITUYE. Sin
 	// `-consentido`, el guard de casebank rechaza y el operador ve por qué —
 	// que es justo lo que este binario existe para hacer explícito.
 	caso.Consented = p.consentido
-	return caso, casebank.NuevoAnonimizador(casebank.NombresDelCaso()...), nil
+	return caso, casebank.NewAnonymizer(casebank.CaseNames()...), nil
 }
 
 func run(tenant string, consentido bool) error {
@@ -144,12 +144,12 @@ func run(tenant string, consentido bool) error {
 	}
 	stdlog.Printf("base de datos: %s (host %s:%d, usuario %s)", base, cfg.DB.Host, cfg.DB.Port, cfg.DB.User)
 
-	svc, err := casebank.NewServicio(casebank.NewPostgres(db), anonimizador)
+	svc, err := casebank.NewService(casebank.NewPostgres(db), anonimizador)
 	if err != nil {
 		return err
 	}
 
-	id, sembro, err := svc.Sembrar(ctx, caso)
+	id, sembro, err := svc.Seed(ctx, caso)
 	if err != nil {
 		return err
 	}
