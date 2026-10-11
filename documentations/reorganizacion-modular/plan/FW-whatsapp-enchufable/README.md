@@ -1,7 +1,7 @@
 # FW · WhatsApp enchufable — el Edge real conversa sin WhatsApp
 
-> **Estado**: 🟡 **bloque A (FW-01) escrito el 2026-10-11, PR #76 abierto, en revisión; el diseño y el ADR-0049 esperan la
-> aprobación de Jhoan antes de FW-02** (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
+> **Estado**: 🟡 **bloque A (FW-01) hecho el 2026-10-11, PR #76 integrado; D-FW-1 decidida (ADR nuevo). Antes de FW-02 faltan de Jhoan
+> las decisiones D-FW-2, 4, 6, 7 y 8 y la aprobación del diseño y del texto del ADR-0049** (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
 > [`deuda.md`](../../../deuda.md)). Medida sobre `edge/wapp-edge-agent` @ `38e5f91` (rama `main`; su rama por defecto es `dev`).
 > **Forma**: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Spec **corta a propósito**; lo que faltaba por
 > medir lo midió FW-01 (solo lectura) y está en [`diseno.md`](diseno.md) §2, con lo que solo se sabe ejecutando en su §6.
@@ -85,7 +85,7 @@ reconstrucción del Cloud.
 
 | # | Pregunta | Recomendación |
 |---|---|---|
-| **D-FW-1** | ¿ADR nuevo o enmienda del ADR-0041? | **ADR nuevo**. El 0041 decide un *inyector* sobre el adaptador real; esto decide un *adaptador sustituto*. Lo escribe FW-01, lo apruebas tú |
+| **D-FW-1** | ¿ADR nuevo o enmienda del ADR-0041? | ✅ **Decidida: ADR nuevo** (Jhoan, 2026-10-11): el ADR-0049, en borrador. El 0041 decide un *inyector* sobre el adaptador real; esto decide un *adaptador sustituto*. Lo escribe FW-01, lo apruebas tú |
 | **D-FW-2** | ¿El WhatsApp falso va en el **mismo binario** tras una palanca, o en un binario / *build tag* aparte? | **Mismo binario, palanca apagada por defecto**. El ADR-0041 ya rechazó el binario aparte: «un instrumento que solo existe en un binario que no se despliega no mide el sistema desplegado» |
 | **D-FW-3** | ¿El relevo (F10-04) espera a esta fase? | ✅ **Decidida: sí** (Jhoan, 2026-10-11). F10-03 depende de FW y F10-04 de F10-03: el código viejo se borra solo cuando el flujo nuevo está visto funcionando, o le quedan detalles menores que se arreglan sin el viejo delante |
 | **D-FW-4** | ¿Se limpia toda la fuga de `whatsmeow` fuera de su adaptador? | **Solo lo que impida enchufar el falso**. El resto, deuda del Edge con número. Se decide con el inventario de TW.1 |
@@ -129,5 +129,5 @@ reconstrucción del Cloud.
 12. **La raíz de wApp no tiene remoto ni rama `dev`**: solo `main`, con cambios de Jhoan sin commitear. El borrador del
     ADR-0049 queda como fichero nuevo **sin commitear**; cómo entra lo decide Jhoan. `make check-docs` de la raíz dio
     `rc=0` con el gate de diagramas **saltado** (falta `mmdc`): un salto no es un verde, y el ADR no trae diagramas.
-13. **Las decisiones D-FW-1, D-FW-2, D-FW-4, D-FW-5 y D-FW-6 siguen vacías** en [`../DECISIONES.md`](../DECISIONES.md) §8.
-    FW-01 no las necesitaba; FW-02 sí, junto con D-FW-7 y D-FW-8.
+13. ✎ D-FW-1 la decidió Jhoan en la misma sesión (ADR nuevo). **Las decisiones D-FW-2, D-FW-4, D-FW-5 y D-FW-6 siguen vacías** en [`../DECISIONES.md`](../DECISIONES.md) §8.
+    FW-01 no las necesitaba; FW-02 sí (salvo D-FW-5, que es de FW-03), junto con D-FW-7 y D-FW-8.

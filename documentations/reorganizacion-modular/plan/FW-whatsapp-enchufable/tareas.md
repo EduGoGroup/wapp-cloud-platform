@@ -16,7 +16,7 @@ Para cuando: [`diseno.md`](diseno.md) sin «sin medir» y el ADR en borrador. **
     fuera del adaptador, listada y partida en «estorba al falso» / «no estorba» (D-FW-4)
 - [~] **TW.2 · El ADR** · raíz de wApp (`documentations/adrs/`) · D-FW-1, D-FW-2, D-FW-6 · borrador escrito el 2026-10-11:
   `0049-el-transporte-de-whatsapp-del-edge-es-enchufable.md`, **sin commitear** (la raíz no tiene remoto ni `dev`: hallazgo 12);
-  `make check-docs` rc=0 con el gate de diagramas saltado. **Falta: la aprobación de Jhoan**, y entonces el índice de ADR y el commit
+  `make check-docs` rc=0 con el gate de diagramas saltado. D-FW-1 decidida el 2026-10-11 (ADR nuevo). **Falta: que Jhoan apruebe el texto**, y entonces el índice de ADR y el commit
   - **Hecho cuando**: borrador con la decisión, su tabla de alternativas descartadas y la relación con el ADR-0041 y el
     ADR-0007; `make check-docs` de la raíz verde; **aprobado por Jhoan**
 - [x] **TW.3 · El diseño, con lo medido** · Cloud (documentación) · dep. TW.1 · `f9c7c309` (este repo) · 🟡 pendiente de la aprobación de Jhoan ([`diseno.md`](diseno.md) §3 y §5)
