@@ -9,8 +9,8 @@
   **(a)** se hace, en una sesión propia en el repo del Edge, antes de F10-03; o **(b)** no se hace y se renueva una sesión
   de WhatsApp para la prueba en UAT. Las sesiones de WhatsApp de local y del VPS estaban caducadas el 2026-10-10.
   ✎ **2026-10-11 · Decidida: (a), como fase propia**, [FW](../FW-whatsapp-enchufable/README.md). Lo que queda por decidir
-  está en [`../DECISIONES.md`](../DECISIONES.md) §8 (D-FW-1 … D-FW-6); **D-FW-3** (¿el relevo espera a FW?) es la que
-  toca a la fecha de F10-03.
+  está en [`../DECISIONES.md`](../DECISIONES.md) §8 (D-FW-1 … D-FW-6); **D-FW-3** quedó decidida el mismo día: el relevo
+  **espera** a FW, así que la fecha de F10-03 va detrás del cierre de FW.
 - **D-F10-1** (ventana de la prueba en UAT ≥ 24 h) y **D-F10-2** (dejarlo corriendo si el relevo
   llega en ≤ 7 días) fijan **cuándo** se hace F10-03: elige la fecha.
 - **D-F10-6** (tag `v0.3.0`) y el paso a `main` (F10-06) solo ocurren **si lo pides expresamente** en

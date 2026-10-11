@@ -43,6 +43,7 @@ espera, no sesión: se abre con T10.4 y la sesión se relanza al final para T10.
   - **Hecho cuando**: la tabla de `diseno.md` §2.4 rellena con números al final de la ventana (mínimo 24 h, D-F10-1); si un corte salta, §2.5 ejecutado en < 5 min y la tarea queda `[~]` con el hallazgo
 - [ ] **T10.6 · Acta y veredicto** · dep. T10.5
   - **Ficheros**: `traspasos/TRASPASO-F10-relevo.md` (acta, `diseno.md` §2.6)
+  - ✎ 2026-10-11 (D-FW-3): «sigue» admite defectos **menores**, listados en el acta, si cada uno se puede corregir **sin** el código viejo; uno que pida comparar con el viejo es «vuelta atrás» o espera, y T10.7–T10.11 no empiezan
   - **Hecho cuando**: veredicto de Jhoan escrito. «Sigue» → D-F10-2 aplicada. «Vuelta atrás» → viejo restaurado y verificado; F10 vuelve a su entrada
   - **Commit**: `docs(reorganizacion-modular): F10, acta de la prueba en UAT`
 

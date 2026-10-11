@@ -84,7 +84,7 @@ reconstrucción del Cloud.
 |---|---|---|
 | **D-FW-1** | ¿ADR nuevo o enmienda del ADR-0041? | **ADR nuevo**. El 0041 decide un *inyector* sobre el adaptador real; esto decide un *adaptador sustituto*. Lo escribe FW-01, lo apruebas tú |
 | **D-FW-2** | ¿El WhatsApp falso va en el **mismo binario** tras una palanca, o en un binario / *build tag* aparte? | **Mismo binario, palanca apagada por defecto**. El ADR-0041 ya rechazó el binario aparte: «un instrumento que solo existe en un binario que no se despliega no mide el sistema desplegado» |
-| **D-FW-3** | ¿El relevo (F10-04) espera a esta fase? | **Sí** (así queda escrito): F10-03 depende de FW y F10-04 de F10-03. 🟡 **Asumido** de «que se haga con la fase nueva»; si prefieres relevar antes, se quita esa dependencia y las filas 1 y 6 de §2.4 se miran después del relevo |
+| **D-FW-3** | ¿El relevo (F10-04) espera a esta fase? | ✅ **Decidida: sí** (Jhoan, 2026-10-11). F10-03 depende de FW y F10-04 de F10-03: el código viejo se borra solo cuando el flujo nuevo está visto funcionando, o le quedan detalles menores que se arreglan sin el viejo delante |
 | **D-FW-4** | ¿Se limpia toda la fuga de `whatsmeow` fuera de su adaptador? | **Solo lo que impida enchufar el falso**. El resto, deuda del Edge con número. Se decide con el inventario de TW.1 |
 | **D-FW-5** | ¿Quién conduce la conversación? | **El arnés de `test/procesos`** de este repo, con un modo «Edge real» junto al Edge falso (que no se retira). 🟡 Sin medir si puede lanzar el binario del Edge: lo dice TW.1 |
 | **D-FW-6** | La contradicción ADR-0041 («permanente») ↔ comentario de `control/diag` («se borra») | Manda el ADR; el comentario se corrige en TW.4 |
