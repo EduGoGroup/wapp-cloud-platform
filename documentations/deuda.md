@@ -660,6 +660,25 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 
 ---
 
+### D-47 · 🟡 La primera pantalla del carrito no usa el `page_size` de la empresa
+
+> Abierta el 2026-10-11 tras FW-03 (hallazgo 35 del README de FW). **Rareza heredada**: el binario viejo hace lo mismo.
+> Decisión de Jhoan: **para después del relevo**.
+
+- **Qué hay hoy**: `tenant_settings.page_size` lo siembra la política de reanudación al llegar cada mensaje de un
+  carrito **ya abierto**. La pantalla que abre el carrito (las categorías) la pinta el arranque del flujo, antes de
+  sembrar nada, con el tamaño por defecto (5): `internal/modulos/conversacion/modules/cart/cart.go` lo dice en su
+  comentario («`Render` … usa el default del Module»).
+- **Qué se nota**: una empresa con `page_size` menor que su número de categorías las muestra todas al abrir, y pagina
+  desde el segundo mensaje. Medido con `TestEdgeReal_CartResumePolicy` (`page_size = 1`): el estado del carrito recién
+  abierto no trae el ajuste. No se pierde ningún dato.
+- **Qué pediría**: sembrar los ajustes de la empresa antes de pintar la primera pantalla.
+- **Sin medir**: si alguna empresa de UAT tiene un `page_size` menor que su número de categorías; y si el checklist de
+  comprador (`buyer_fields`), que se siembra por el mismo camino, tiene un efecto parecido.
+- **Veredicto**: pendiente. No bloquea el relevo.
+
+---
+
 ## 5 · Deudas con nombre heredadas de los planes
 
 | Marca | Dónde | Qué significa |
