@@ -503,6 +503,22 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 
 ---
 
+### D-39 · 🟡 Ningún proceso nota que falte la política de reanudación del carrito (`WithResumePolicy`)
+
+> Abierta el 2026-10-11 al cerrar F8 (F8-07; hallazgos 66 y 69 del README de F8). **Para después del relevo.**
+
+- **Qué hay hoy**: quitar `flowruntime.WithResumePolicy(cart.NodeTypeCart, …)` de `internal/arranque/fase7_flujos.go`
+  **sí** pone rojo el candado estático de cableado (`TestCableado_TheRuntimeHasTheCartResumePolicy` y
+  `TestCableado_SinksAndResumePolicyGetRealArguments`; repetido en F8-07). El arranque no puede perderla sin que se vea.
+- **Qué falta**: un caso en `test/procesos` que lo note **desde fuera**. `TestP3_CartConversation` pasa igual sin la
+  opción: con `tenant_settings` sin `page_size` ni `buyer_fields`, los valores por defecto dan el mismo recorrido.
+- **Qué pediría**: una empresa con tamaño de página propio o con checklist de comprador, y una conversación de carrito
+  que se interrumpa y se reanude.
+- **Sin medir**: cuánto alarga `make test-procesos`.
+- **Veredicto**: pendiente. No bloquea el relevo: el invariante está cubierto en estático.
+
+---
+
 ## 5 · Deudas con nombre heredadas de los planes
 
 | Marca | Dónde | Qué significa |
