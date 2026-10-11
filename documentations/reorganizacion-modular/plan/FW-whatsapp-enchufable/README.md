@@ -2,7 +2,7 @@
 
 > **Estado**: 🟡 **bloque B (FW-02) hecho el 2026-10-11: el transporte falso está escrito en el Edge, PR #12 de
 > `wapp-edge-agent` y PR #77 de este repo, los dos abiertos, en revisión.** Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
-> decididas. Falta de Jhoan: aprobar el **texto** del ADR-0049 y decidir D-FW-5 (es de FW-03) (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
+> decididas y **ADR-0049 aprobado** (vigente; sin commitear en la raíz de wApp). Falta de Jhoan: D-FW-5 (es de FW-03) (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
 > [`deuda.md`](../../../deuda.md)). Medida sobre `edge/wapp-edge-agent` @ `38e5f91` (rama `main`; su rama por defecto es `dev`).
 > **Forma**: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Spec **corta a propósito**; lo que faltaba por
 > medir lo midió FW-01 (solo lectura) y está en [`diseno.md`](diseno.md) §2, con lo que solo se sabe ejecutando en su §6.
@@ -86,7 +86,7 @@ reconstrucción del Cloud.
 
 | # | Pregunta | Recomendación |
 |---|---|---|
-| **D-FW-1** | ¿ADR nuevo o enmienda del ADR-0041? | ✅ **Decidida: ADR nuevo** (Jhoan, 2026-10-11): el ADR-0049, en borrador. El 0041 decide un *inyector* sobre el adaptador real; esto decide un *adaptador sustituto*. Lo escribe FW-01, lo apruebas tú |
+| **D-FW-1** | ¿ADR nuevo o enmienda del ADR-0041? | ✅ **Decidida: ADR nuevo** (Jhoan, 2026-10-11): el ADR-0049, **aprobado** el mismo día. El 0041 decide un *inyector* sobre el adaptador real; esto decide un *adaptador sustituto*. Lo escribe FW-01, lo apruebas tú |
 | **D-FW-2** | ¿El WhatsApp falso va en el **mismo binario** tras una palanca, o en un binario / *build tag* aparte? | ✅ **Decidida: mismo binario tras palanca** (Jhoan, 2026-10-11) |
 | **D-FW-3** | ¿El relevo (F10-04) espera a esta fase? | ✅ **Decidida: sí** (Jhoan, 2026-10-11). F10-03 depende de FW y F10-04 de F10-03: el código viejo se borra solo cuando el flujo nuevo está visto funcionando, o le quedan detalles menores que se arreglan sin el viejo delante |
 | **D-FW-4** | ¿Se limpia toda la fuga de `whatsmeow` fuera de su adaptador? | ✅ **Decidida: solo lo que estorba** (Jhoan, 2026-10-11). El resto es deuda **del Edge** (A-5 de su `deuda.md`), y la frontera se diseñó para crecer |
@@ -171,5 +171,5 @@ reconstrucción del Cloud.
     gana el campo `whatsapp=real` en **todos** los Edge (un `real` explícito es un dato; es el mismo criterio del campo
     `inyector`), y el aviso de «sesión sin escucha» nombra `WithEscucha` en vez de `WithWhatsmeowListen`. Ni rutas, ni
     proto, ni conducta. Si algo en campo parsea esa línea por posición, lo nota.
-26. **El borrador del ADR-0049 sigue sin commitear** en la raíz de wApp, ahora con las cinco decisiones. `make check-docs`
+26. **El ADR-0049 está aprobado (Jhoan, 2026-10-11) y sigue sin commitear** en la raíz de wApp, con las cinco decisiones y su fila en el índice. Los contadores de ADR de `documentations/README.md` y `ACTIVE.md` de la raíz ya iban atrasados (dicen 46) y no se tocaron. `make check-docs`
     de la raíz: rc=0, 0 enlaces rotos, gate de diagramas **saltado** (falta `mmdc`).

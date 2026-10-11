@@ -453,7 +453,7 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
   `GATE_RC=0`, 239 paquetes `ok`, lint `0 issues.`.
   `make check-docs` de la raíz → rc=0, 0 enlaces rotos, diagramas **saltados** (falta `mmdc`).
 - **No corrido**: el Edge con la palanca echada contra un Cloud real, ni en contenedor (FW-03); `make test-procesos`.
-- **TW.2** sigue `[~]`: el ADR-0049 lleva ya las cinco decisiones, pero su **texto** no está aprobado ni commiteado.
+- **TW.2** `[x]`: Jhoan aprobó el texto del ADR-0049 al cerrar la sesión. Vigente y en el índice de la raíz; **sin commitear** allí.
 - **Con la palanca baja** cambian dos textos del log y nada más: el latido gana `whatsapp=real` y un aviso nombra la
   opción nueva (hallazgo 25).
 - **Hallazgos**: 13 nuevos (14–26), en [`plan/FW-whatsapp-enchufable/README.md`](plan/FW-whatsapp-enchufable/README.md).
@@ -1928,7 +1928,7 @@ en paralelo (entitlements, iam/infra/postgres, transport/http, platformadmin en 
 | F9-D | ✅ **cerrado: F9 CERRADA** (2026-10-11, F9-05 💻, PR #74 integrado): `CUENTA=3` viejo y nuevo `RC=0 · PASS=3873 · SKIP=0`; condición del relevo medida | T9.30–T9.33 y T9.36 | `d1f12bdc`, `23b6f80b`, `73f5e61e`, `bc92cc0a` y la documentación `1f3302b5` (rama `reorg/f9-05-cierre`) |
 | F10-A | ✅ **cerrado** (2026-10-11, F10-02 💻, PR #75 integrado): verdad de campo limpia, dorada congelada, acta abierta, inventario de divergencias | T10.1–T10.3 y T10.24 | `7434ea91`, `374d8652`, `7541c4f8` y el cierre (rama `reorg/f10-02-dorada`) |
 | F10-B…F | pendiente (el bloque B espera a la fase FW, D-FW-3) | — | — |
-| FW | 🔄 bloque B hecho (2026-10-11, FW-02 💻, PR #77 y PR #12 de `wapp-edge-agent` abiertos, en revisión; D-FW-2, 4, 6, 7 y 8 decididas; falta aprobar el texto del ADR-0049) · bloque A hecho (2026-10-11, FW-01 💻, PR #76 integrado; D-FW-1 decidida) (✎ 2026-10-11: fase nueva, WhatsApp enchufable; spec y cuatro sesiones escritas, `FW-01`…`FW-04`; código en `edge/wapp-edge-agent`; resuelve D-38; condición de F10-03) | — | — |
+| FW | 🔄 bloque B hecho (2026-10-11, FW-02 💻, PR #77 y PR #12 de `wapp-edge-agent` abiertos, en revisión; D-FW-2, 4, 6, 7 y 8 decididas; ADR-0049 aprobado) · bloque A hecho (2026-10-11, FW-01 💻, PR #76 integrado; D-FW-1 decidida) (✎ 2026-10-11: fase nueva, WhatsApp enchufable; spec y cuatro sesiones escritas, `FW-01`…`FW-04`; código en `edge/wapp-edge-agent`; resuelve D-38; condición de F10-03) | — | — |
 
 *(La sesión que cierre un bloque actualiza esta tabla y la línea «Siguiente paso».)*
 
@@ -2107,7 +2107,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Para retomar
 
-0. ✎ 2026-10-11 · **FW-02 está hecha; sus dos PR están abiertos, en revisión** (#77 aquí, #12 en `wapp-edge-agent`). **Siguiente paso: fusionarlos.** Las decisiones D-FW-2, 4, 6, 7 y 8 ya están; sigue faltando que Jhoan apruebe el texto del ADR-0049. Lo que sigue es lo que se dijo antes.
+0. ✎ 2026-10-11 · **FW-02 está hecha; sus dos PR están abiertos, en revisión** (#77 aquí, #12 en `wapp-edge-agent`). **Siguiente paso: fusionarlos.** Las decisiones D-FW-2, 4, 6, 7 y 8 ya están y el ADR-0049 está aprobado; para FW-03 falta D-FW-5. Lo que sigue es lo que se dijo antes.
 0. ✎ 2026-10-11 · **FW-01 está hecha (PR #76 integrado).** **Siguiente sesión: FW-02** ([`FW-02-cli-adaptador-falso`](plan/sesiones/FW-02-cli-adaptador-falso.md)). Antes falta **Jhoan**: aprobar [`diseno.md`](plan/FW-whatsapp-enchufable/diseno.md) §3 y §5 y el texto del ADR-0049 (raíz de wApp, sin commitear), y decidir D-FW-2, 4, 6, 7 y 8 de [`plan/DECISIONES.md`](plan/DECISIONES.md) §8 (D-FW-1 ya está: ADR nuevo; D-FW-5 es de FW-03).
 0. ✎ 2026-10-11 · **F10-02 está hecha (PR #75 integrado): el bloque A de F10, cerrado.** **Siguiente sesión: FW-01** ([`FW-01-cli-inventario-y-adr`](plan/sesiones/FW-01-cli-inventario-y-adr.md)); no corrió en paralelo: Jhoan decidió el 2026-10-11 esperar a este PR, porque FW-01 escribe en este mismo repo. F10-03 espera a que FW cierre (D-FW-3). Lo que sigue es lo que se dijo antes.
 0. ✎ 2026-10-11 · **En paralelo a lo de abajo: la fase FW** ([`FW-01-cli-inventario-y-adr`](plan/sesiones/FW-01-cli-inventario-y-adr.md), solo lectura en el Edge). No bloquea F9-05, F10-01 ni F10-02; **sí** tiene que estar cerrada antes de F10-03 (D-FW-3). Decisiones abiertas: D-FW-1 … D-FW-6, [`plan/DECISIONES.md`](plan/DECISIONES.md) §8.

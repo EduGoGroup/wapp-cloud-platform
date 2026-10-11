@@ -14,9 +14,9 @@ Para cuando: [`diseno.md`](diseno.md) sin «sin medir» y el ADR en borrador. **
   - **Ficheros**: [`diseno.md`](diseno.md) §2 (las seis preguntas, contestadas con `fichero:línea`)
   - **Hecho cuando**: cada pregunta tiene respuesta medida o un «no se pudo medir, porque…»; la fuga de `whatsmeow`
     fuera del adaptador, listada y partida en «estorba al falso» / «no estorba» (D-FW-4)
-- [~] **TW.2 · El ADR** · raíz de wApp (`documentations/adrs/`) · D-FW-1, D-FW-2, D-FW-6 · borrador escrito el 2026-10-11:
+- [x] **TW.2 · El ADR** · raíz de wApp (`documentations/adrs/`) · D-FW-1, D-FW-2, D-FW-6 · borrador escrito el 2026-10-11:
   `0049-el-transporte-de-whatsapp-del-edge-es-enchufable.md`, **sin commitear** (la raíz no tiene remoto ni `dev`: hallazgo 12);
-  `make check-docs` rc=0 con el gate de diagramas saltado. D-FW-1 decidida el 2026-10-11 (ADR nuevo). ✎ FW-02 lo actualizó con D-FW-2, 4, 6, 7 y 8 (once piezas, y la sección «Pensado para más de dos transportes»). **Falta: que Jhoan apruebe el texto**, y entonces el índice de ADR y el commit
+  `make check-docs` rc=0 con el gate de diagramas saltado. D-FW-1 decidida el 2026-10-11 (ADR nuevo). ✎ FW-02 lo actualizó con D-FW-2, 4, 6, 7 y 8 (once piezas, y la sección «Pensado para más de dos transportes»). ✅ **Texto aprobado por Jhoan el 2026-10-11** (tras FW-02): el ADR-0049 está vigente y dado de alta en el índice de ADR de la raíz. Sigue **sin commitear** allí: la raíz no tiene remoto ni `dev`, y cómo entra lo decide Jhoan (por eso no lleva SHA). `make check-docs` de la raíz, con el índice: rc=0, diagramas saltados
   - **Hecho cuando**: borrador con la decisión, su tabla de alternativas descartadas y la relación con el ADR-0041 y el
     ADR-0007; `make check-docs` de la raíz verde; **aprobado por Jhoan**
 - [x] **TW.3 · El diseño, con lo medido** · Cloud (documentación) · dep. TW.1 · `f9c7c309` (este repo) · ✅ decidido por Jhoan el 2026-10-11, al arrancar FW-02 ([`diseno.md`](diseno.md) §3 y §5)
