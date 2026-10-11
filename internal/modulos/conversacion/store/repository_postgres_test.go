@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -340,5 +341,38 @@ func TestPostgres_ExistsAndDelete(t *testing.T) {
 	requireNoError(t, "Delete sin filas afectadas", h.repo.Delete(t.Context(), pgKey))
 	for i, stmt := range loose(t, h.fake, 3) {
 		requireArgs(t, fmt.Sprintf("sentencia %d", i), stmt, pgTenant, "sess-1", pgContact)
+	}
+}
+
+// TestPostgres_UnserializableValues_NeverReachTheDatabase: unas Vars o un Payload que no se pueden
+// escribir como JSON (un canal) fallan ANTES de ir a la base, cada uno con su texto, y sin
+// sentencia alguna.
+func TestPostgres_UnserializableValues_NeverReachTheDatabase(t *testing.T) {
+	unserializable := map[string]any{"canal": make(chan int)}
+	cases := []struct {
+		name   string
+		prefix string
+		call   func(r *PostgresRepository) error
+	}{
+		{"Save", "store: serializar vars: ", func(r *PostgresRepository) error {
+			return r.Save(t.Context(), model.Conversation{TenantID: pgTenant, SessionID: "sess-1", ContactID: pgContact, Vars: unserializable})
+		}},
+		{"InsertFlowEvent", "store: serializar payload de efecto: ", func(r *PostgresRepository) error {
+			return r.InsertFlowEvent(t.Context(), FlowEvent{TenantID: pgTenant, Payload: unserializable})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newFakeRepository(t)
+
+			err := tc.call(h.repo)
+
+			requireErrPrefix(t, tc.name, err, tc.prefix)
+			var unsupported *json.UnsupportedTypeError
+			if !errors.As(err, &unsupported) {
+				t.Errorf("%s: err = %v, quería que envolviera el fallo de encoding/json", tc.name, err)
+			}
+			requirePgUntouched(t, h.fake)
+		})
 	}
 }

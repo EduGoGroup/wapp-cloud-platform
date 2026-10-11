@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/runtime"
@@ -205,6 +206,46 @@ func TestHandleIncoming_Advance_ReleasesNameTheActiveEvent(t *testing.T) {
 			signals := spy.seen()
 			if len(signals) != 1 || signals[0].ActiveEventKind != trigger.EventKindCart || signals[0].Intent != nil {
 				t.Errorf("señales al resolver = %+v, quería una con el tipo del evento que estaba activo (cart)", signals)
+			}
+		})
+	}
+}
+
+// TestHandleIncoming_Advance_ReleasesWithADeadActiveEventNameNothing: §4.5 y §4.6. Las mismas
+// dos sueltas cuando el puntero del estado mira a un evento que YA NO está vivo: no se puede
+// nombrar, así que el disparo siguiente va SIN tipo de evento activo y no se emite ningún
+// event_escaped. La suelta ocurre igual.
+func TestHandleIncoming_Advance_ReleasesWithADeadActiveEventNameNothing(t *testing.T) {
+	cases := map[string]func(st *model.Conversation){
+		"state without flow": func(*model.Conversation) {},
+		"terminal state without pending closure": func(st *model.Conversation) {
+			st.FlowID, st.FlowVersion, st.CurrentNode = incomingFlowID, 1, model.NodeTerminal
+		},
+	}
+	for name, state := range cases {
+		t.Run(name, func(t *testing.T) {
+			var spy *incomingSpyResolver
+			h := newHarness(t, incomingWithSpyResolver(&spy))
+			h.seedFlow(incomingStepFlow())
+			ev := h.seedEvent(trigger.EventKindCart, incomingFlowID, 1)
+			if err := h.events.TransitionEvent(t.Context(), ev.ID, events.StatusCancelled); err != nil {
+				t.Fatalf("cancelar el evento sembrado: %v", err)
+			}
+			st := model.Conversation{TenantID: harnessTenant, SessionID: harnessSession, ContactID: h.contactID(harnessPhone), EventID: ev.ID}
+			state(&st)
+			if err := h.repo.Save(t.Context(), st); err != nil {
+				t.Fatalf("sembrar el estado: %v", err)
+			}
+
+			h.say("wa-1", "texto libre-qzx")
+
+			incomingWantNoState(t, h)
+			if reasons := incomingEscapeReasons(h); len(reasons) != 0 {
+				t.Errorf("reason de event_escaped = %v, un evento muerto no se escapa", reasons)
+			}
+			signals := spy.seen()
+			if len(signals) != 1 || signals[0].ActiveEventKind != "" {
+				t.Errorf("señales al resolver = %+v, quería una SIN tipo de evento activo", signals)
 			}
 		})
 	}

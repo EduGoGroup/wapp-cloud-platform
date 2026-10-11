@@ -269,6 +269,32 @@ func TestHandleIncoming_LoadStateError(t *testing.T) {
 	incomingWantTexts(t, h)
 }
 
+// incomingRacedStore es el almacén del guion visto por quien PIERDE la carrera del arranque:
+// la carga del estado no encontró nada, pero al ir a guardar la conversación ya existe (otro
+// proceso la creó entre las dos lecturas).
+type incomingRacedStore struct{ *store.MemoryRepository }
+
+// Exists implementa store.ConversationStore: la conversación ya está.
+func (incomingRacedStore) Exists(context.Context, store.Key) (bool, error) { return true, nil }
+
+// TestHandleIncoming_Trigger_StartLostToARaceIsBenign: si entre la carga del estado y el
+// arranque otro creó la conversación, el disparo se aborta sin error, se anuncia a INFO y no
+// se guarda ni se envía nada: quien ganó la carrera ya atendió al cliente.
+func TestHandleIncoming_Trigger_StartLostToARaceIsBenign(t *testing.T) {
+	h := newHarness(t)
+	h.seedFlow(incomingStepFlow())
+	h.seedRule(incomingKeywordRule(incomingFlowID))
+	rt := runtime.New(incomingRacedStore{h.repo}, h.engine, h.sender, h.tenants, h.contacts, h.log, h.runtimeOptions()...)
+
+	if err := incomingHandleOn(h, rt, h.incoming("wa-1", incomingKeyword)); err != nil {
+		t.Fatalf("HandleIncoming = %v, perder la carrera del arranque no es un error", err)
+	}
+
+	incomingWantLog(t, h, "info", "runtime: disparo abortado por conversación ya viva (carrera benigna)", 1)
+	incomingWantNoState(t, h)
+	incomingWantTexts(t, h)
+}
+
 // incomingBrokenContacts es el resolver de contactos del guion con Resolve roto.
 type incomingBrokenContacts struct {
 	contact.Resolver

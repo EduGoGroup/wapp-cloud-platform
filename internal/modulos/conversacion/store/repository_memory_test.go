@@ -2,6 +2,9 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -278,5 +281,26 @@ func TestMemoryRepository_ConcurrentUse(t *testing.T) {
 	}
 	if got := len(repo.FlowEvents()); got != writers {
 		t.Errorf("%d efectos guardados, quería %d", got, writers)
+	}
+}
+
+// TestMemoryRepository_Save_UnserializableVarsKeepWhatWasStored: el gemelo guarda un clon JSON del
+// estado, así que unas Vars que no se pueden escribir como JSON (un canal) son un error con su
+// texto, y lo que había guardado para esa clave sigue como estaba.
+func TestMemoryRepository_Save_UnserializableVarsKeepWhatWasStored(t *testing.T) {
+	repo, _ := newMemoryRepository()
+	k := store.Key{TenantID: "t1", SessionID: "s1", ContactID: "c1"}
+	mustSave(t, repo, conversation(k, "root"))
+	broken := conversation(k, "second")
+	broken.Vars = map[string]any{"canal": make(chan int)}
+
+	err := repo.Save(ctx, broken)
+
+	var unsupported *json.UnsupportedTypeError
+	if err == nil || !strings.HasPrefix(err.Error(), "store: clonar estado: ") || !errors.As(err, &unsupported) {
+		t.Errorf("Save = %v, quería \"store: clonar estado: \" envolviendo el fallo de encoding/json", err)
+	}
+	if got := nodeAt(t, repo, k); got != "root" {
+		t.Errorf("nodo guardado = %q, quería root: un Save fallido no pisa el estado", got)
 	}
 }
