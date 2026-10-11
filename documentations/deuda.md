@@ -640,6 +640,26 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 
 ---
 
+### D-46 · 🟡 El servidor sigue despachando a un Edge con el lease revocado, y da por mostrada la pantalla
+
+> Abierta el 2026-10-11 tras FW-03 (hallazgo 34 del README de FW). **Rareza heredada**: el binario viejo hace lo mismo.
+> Decisión de Jhoan: **para después del relevo**.
+
+- **Qué hay hoy**: con el lease de un Edge revocado, un entrante sigue subiendo (el lease no gobierna lo que entra) y
+  el motor de flujos lo atiende: guarda el estado y ordena los envíos. El Edge los rechaza en su gate («lease no
+  vigente») y no sale nada: la doble llave se cumple. Pero el servidor **da la pantalla por mostrada**. Medido con
+  `TestEdgeReal_CartConversation`: un cliente nuevo escribe «carrito», quedan un carrito abierto y una racha de
+  auto-respuesta, y las categorías no las vio nadie.
+- **Qué se nota**: si el lease se restaura y ese cliente contesta «1», recibe la lista de un menú que nunca vio. La
+  bienvenida sí se reintenta (el motor lo dice en su log); la pantalla del flujo, no.
+- **Qué pediría**: decidir si un rechazo del Edge deja la conversación como estaba, o si el servidor ni siquiera
+  atiende el entrante de un Edge revocado. Cambia conducta visible del motor.
+- **Sin medir**: qué pasa con los demás motivos de rechazo del Edge (sesión caída, tiempo agotado), que recorren el
+  mismo camino; y la inferencia con el lease revocado, que el recorrido del carrito no llega a pedir.
+- **Veredicto**: pendiente. No bloquea el relevo: solo ocurre con un Edge revocado.
+
+---
+
 ## 5 · Deudas con nombre heredadas de los planes
 
 | Marca | Dónde | Qué significa |
