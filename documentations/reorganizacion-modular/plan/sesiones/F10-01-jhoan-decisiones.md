@@ -13,6 +13,8 @@
   **espera** a FW, así que la fecha de F10-03 va detrás del cierre de FW.
 - **D-F10-1** (ventana de la prueba en UAT ≥ 24 h) y **D-F10-2** (dejarlo corriendo si el relevo
   llega en ≤ 7 días) fijan **cuándo** se hace F10-03: elige la fecha.
+  ✎ **2026-10-11 · Decidida: fecha relativa.** La ventana se abre al cerrar FW (TW.10), el primer día en que Jhoan pueda
+  dar el veredicto 24 h después y hacer F10-04 en la semana siguiente. F10-03 escribe el día y la hora en el acta.
 - **D-F10-6** (tag `v0.3.0`) y el paso a `main` (F10-06) solo ocurren **si lo pides expresamente** en
   esa sesión.
 - **D-F10-7** (regla de conteo del ADR-0010) toca la documentación del ecosistema: la hace F10-05.

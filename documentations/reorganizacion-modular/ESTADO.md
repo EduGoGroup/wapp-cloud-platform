@@ -402,8 +402,9 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
 - **Gates**: `make toolchain` rc=0 (`go1.26.5`, `v2.12.2`) · `GOWORK=off make ci-local` → `GATE_RC=0`, 239 paquetes
   `ok`, lint `0 issues.` · SKIP con `-v` en `./internal/arranque/...`: 0. **No corrido**: `make test-procesos` (vale el
   de F9-05: el binario no cambia), `make ci-docker`, el Edge real y UAT.
-- **Hallazgos**: 8, en [`plan/F10-relevo/README.md`](plan/F10-relevo/README.md). El que pide decisión: qué pasa con
-  `internal/candados` en el relevo (D-F10-3 no lo dice, y nombra `pendiente.Implementar` en 11 sitios).
+- **Hallazgos**: 8, en [`plan/F10-relevo/README.md`](plan/F10-relevo/README.md). Los tres que pedían decisión, **decididos por Jhoan el 2026-10-11** en la misma sesión: `internal/candados` se queda
+  en el relevo sin la parte de «pendiente» (**D-F10-10**); el 401 del callback del CRM con la hora desbordada se queda
+  (**D-F10-11**, V5); y la fecha de la ventana de UAT es relativa al cierre de FW (D-F10-1). F10-01 queda hecha.
 - **Siguiente paso: fusionar el PR #75.** Después, **FW-01** (la fase FW tiene que cerrar antes de F10-03, D-FW-3).
   `main` sin tocar.
 

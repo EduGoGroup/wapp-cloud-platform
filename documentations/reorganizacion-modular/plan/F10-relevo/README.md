@@ -35,7 +35,7 @@ ninguno). Sin umbral de cobertura (P2): `make cobertura-ficheros` es un informe.
 | La huella del nuevo es igual a la del viejo (F0, `internal/arranque/huella_test.go` contra `internal/bootstrap/arranque/huella_vieja_test.go`, D-F0-2) | `make ci-local` GATE_RC=0 |
 | La cara vieja no sirve **ninguna** ruta en el binario nuevo (FX, cierre de F8) | Test del estrangulador de FX en verde |
 | `make test-integration` (batería vieja) verde, por última vez, sobre el `dev` de entrada | `make test-integration; echo rc=$?` → 0, SKIP contados con `-v` |
-| Jhoan da el visto bueno a la ventana de UAT (D-F10-1) | Fecha y hora escritas en «Decisiones» |
+| Jhoan da el visto bueno a la ventana de UAT (D-F10-1) | Fecha y hora escritas en «Decisiones». ✎ 2026-10-11: la fecha es **relativa** (al cerrar FW; D-F10-1 en `DECISIONES.md` §6); el día y la hora reales los escribe F10-03 en el acta |
 | ✎ 2026-10-11 · **Solo para el bloque B**: la fase [FW](../FW-whatsapp-enchufable/README.md) cerrada (el Edge de UAT puede conversar con WhatsApp falso). Los bloques de antes (F10-01, F10-02) no la esperan | Bloque «FW cerrada» en `ESTADO.md`; TW.10 `[x]` |
 
 ## Salidas (es cierto al cerrar)
@@ -154,6 +154,7 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
    9 y 25; 7 directorios en `cmd/`.
 7. **La fecha de la ventana de UAT no está escrita.** D-F10-1 decide la duración (≥ 24 h), pero la fila de «Entradas»
    pide fecha y hora. No bloquea el bloque A; la sesión F10-01 sigue «pendiente» en el índice de sesiones aunque sus
-   tres decisiones (D-F10-1, 2 y 6) tienen respuesta desde el 2026-09-30.
+   tres decisiones (D-F10-1, 2 y 6) tienen respuesta desde el 2026-09-30. ✅ **Decidido el 2026-10-11 (Jhoan)**: la fecha es
+   relativa, al cerrar FW; F10-03 escribe el día y la hora en el acta. F10-01 queda hecha.
 8. **`make ci-docker` y `make test-procesos` no se corrieron en esta sesión.** Los procesos valen por F9-05 (el binario
    no cambia: solo tests y `testdata`).

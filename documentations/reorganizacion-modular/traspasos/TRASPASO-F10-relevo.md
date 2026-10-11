@@ -57,7 +57,7 @@ borrar en el relevo.
 | La huella del nuevo es la del viejo | `GOWORK=off make ci-local`, rc leído del log | **`GATE_RC=0`**, lint `0 issues.` (sobre el código de §2) |
 | La cara vieja no sirve ninguna ruta en el binario nuevo | `internal/arranque/old_face_serves_nothing_test.go`, dentro de `ci-local` | verde |
 | La integración vieja, por última vez | el procedimiento de `make test-integration` (Postgres 16 efímero, `WAPP_TEST_REQUIRE_DB=1`, `-p 1`) con `-v` y en el puerto 55432 | **`INTEG_RC=0` · 17.497 PASS · 0 FAIL · 0 SKIP** · 156 paquetes `ok` |
-| Visto bueno a la ventana de UAT (D-F10-1) | `plan/DECISIONES.md` §6 | decidida la duración (≥ 24 h, 2026-09-30); **la fecha y la hora no están escritas**: las pone F10-03, que además espera a la fase FW (D-FW-3) |
+| Visto bueno a la ventana de UAT (D-F10-1) | `plan/DECISIONES.md` §6 | decidida la duración (≥ 24 h, 2026-09-30) y, el 2026-10-11, que **la fecha es relativa**: al cerrar la fase FW (D-FW-3). El día y la hora reales los escribe F10-03 en §5 |
 
 Dos precisiones sobre la integración vieja: se corrió con un `go test` a mano y no con el target, porque el target no
 lleva `-v` y sin `-v` no se pueden contar los SKIP; y arrancó sobre `bf2d0ae9` mientras se editaba
