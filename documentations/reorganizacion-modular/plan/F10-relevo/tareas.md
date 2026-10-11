@@ -33,7 +33,7 @@ Entrada: F9 `CERRADO`; F10-01 hecha. Para cuando: la dorada commiteada y verific
 
 ## Bloque B · la prueba en UAT en sustitución · sesión F10-03 · T10.4–T10.6 · necesita UAT (SSH)
 
-Entrada: T10.3; D-F10-1 decidida (ventana y fecha). Para cuando: acta con veredicto. La ventana (≥ 24 h) es
+Entrada: T10.3; D-F10-1 decidida (ventana y fecha); ✎ 2026-10-11: la fase [FW](../FW-whatsapp-enchufable/README.md) cerrada (TW.10), porque los criterios conversacionales de `diseno.md` §2.4 se miran con su WhatsApp falso. Para cuando: acta con veredicto. La ventana (≥ 24 h) es
 espera, no sesión: se abre con T10.4 y la sesión se relanza al final para T10.5–T10.6.
 
 - [ ] **T10.4 · Captura y cambio de binario** · dep. T10.3 · cumple R10.1.a–c

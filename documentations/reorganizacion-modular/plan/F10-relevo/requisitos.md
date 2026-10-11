@@ -25,7 +25,8 @@
   operación **DEBERÁ** restaurar el binario viejo y reiniciar en menos de 5 minutos. — Verifica: acta
   con la hora del fallo, la de la restauración y el §6 del despliegue repetido sobre el viejo.
 - **R10.1.e** · **LA** dueña del negocio **NO DEBERÁ** notar el cambio: mismas rutas, mismos textos,
-  mismos mensajes al cliente. — Verifica: el e2e con WhatsApp real de la ventana y cero quejas
+  mismos mensajes al cliente. — Verifica: el e2e de la ventana (✎ 2026-10-11: con el WhatsApp falso de la fase
+  [FW](../FW-whatsapp-enchufable/README.md), RW.5.a; antes decía «con WhatsApp real») y cero quejas
   registradas; `/metrics` con los mismos nombres `wapp_*` que antes (lista capturada antes y después).
 
 ## H10.2 · Un solo arranque

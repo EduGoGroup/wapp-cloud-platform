@@ -500,6 +500,11 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   una sesión de WhatsApp para la prueba en UAT.
 - **Sin medir**: cuánto trabajo es (a), qué ruta expone hoy el inyector y si funciona.
 - **Veredicto**: pendiente de Jhoan. Se le pregunta en F10-01, antes de fijar la fecha de F10-03.
+- ✎ **2026-10-11 · Decidida por Jhoan: salida (a), como fase propia.** No es «hacer permanente el inyector» sin más (el
+  ADR-0041 ya lo declara permanente, y el inyector necesita un `Listener` del adaptador real: sin sesión viva responde
+  `409`): es que el Edge arranque con un **WhatsApp falso**, con entrada y salida capturada. Spec:
+  [`reorganizacion-modular/plan/FW-whatsapp-enchufable/`](reorganizacion-modular/plan/FW-whatsapp-enchufable/README.md).
+  La cierra TW.8 (el golden con Edge real). La línea «hoy temporal» de arriba queda corregida por esta nota.
 
 ---
 

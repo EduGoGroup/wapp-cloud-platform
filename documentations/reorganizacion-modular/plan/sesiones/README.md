@@ -10,7 +10,7 @@
 > **nombre del fichero** (no se renombran: lo enlazan las specs) pero su prompt ya es local. No hay traspasos nuevos.
 > Lo que NO cambia: el código nace en una rama partida de `dev` y entra por PR sin squash (regla 6 del `CLAUDE.md`).
 >
-> **60 pasos** (✎ 2026-10-10, Jhoan tras F8-06b: eran 58; F8-07 se parte en F8-07a, F8-07b y F8-07, pasos 51–53, y los siguientes se renumeran · ✎ 2026-10-10, D-F8-13: eran 57; nace F8-06b, paso 50, para el arreglo de D-F7-9, y los siguientes se renumeran · ✎ 2026-10-10, D-F8-11: eran 56; F8-04 se parte en F8-04 y F8-04b, paso 47, y los siguientes se renumeran). El recuento del 2026-10-04, sobre 56, era: 23 hechos y **33 pendientes** (32 💻 · 1 🧑). Recalibrado el 2026-10-03 tras la
+> **64 pasos** (✎ 2026-10-11, Jhoan al cerrar F8: eran 60; nace la fase **FW** (WhatsApp enchufable), cuatro sesiones `FW-01`…`FW-04` que **no se numeran en la fila**: corren en paralelo a los pasos 54–56 y tienen que estar cerradas antes del paso 57, F10-03 · ✎ 2026-10-10, Jhoan tras F8-06b: eran 58; F8-07 se parte en F8-07a, F8-07b y F8-07, pasos 51–53, y los siguientes se renumeran · ✎ 2026-10-10, D-F8-13: eran 57; nace F8-06b, paso 50, para el arreglo de D-F7-9, y los siguientes se renumeran · ✎ 2026-10-10, D-F8-11: eran 56; F8-04 se parte en F8-04 y F8-04b, paso 47, y los siguientes se renumeran). El recuento del 2026-10-04, sobre 56, era: 23 hechos y **33 pendientes** (32 💻 · 1 🧑). Recalibrado el 2026-10-03 tras la
 > parada de F1 ([`../DECISIONES.md`](../DECISIONES.md) §3): eran 81; las 66 pendientes se reagruparon en 41.
 
 ## Cómo se usa
@@ -129,7 +129,11 @@ La columna «Nivel» es el **provisional** de la spec (`05` E-12); el que vale e
 | 54 | [`F9-05-cli-cierre`](F9-05-cli-cierre.md) | 💻 | F9 | D | T9.30–T9.33 — condición del relevo | — | pendiente |
 | 55 | [`F10-01-jhoan-decisiones`](F10-01-jhoan-decisiones.md) | 🧑 | F10 | — | — | — | pendiente |
 | 56 | [`F10-02-cli-dorada`](F10-02-cli-dorada.md) | 💻 | F10 | A | T10.1–T10.3 | — | pendiente |
-| 57 | [`F10-03-cli-prueba-uat`](F10-03-cli-prueba-uat.md) | 💻 | F10 | B | T10.4–T10.6 (UAT por SSH, ventana ≥ 24 h) | — | pendiente |
+| ∥ | [`FW-01-cli-inventario-y-adr`](FW-01-cli-inventario-y-adr.md) | 💻 | FW | A · inventario y ADR (✎ 2026-10-11: fase nueva; en paralelo a los pasos 54–56) | TW.1–TW.3 (Edge en solo lectura) | — | pendiente |
+| ∥ | [`FW-02-cli-adaptador-falso`](FW-02-cli-adaptador-falso.md) | 💻 | FW | B · el adaptador falso (en `edge/wapp-edge-agent`) | TW.4–TW.6 | — | pendiente |
+| ∥ | [`FW-03-cli-conversacion-edge-real`](FW-03-cli-conversacion-edge-real.md) | 💻 | FW | C · la conversación con Edge real (Docker) | TW.7–TW.8 (cierra D-38) | — | pendiente |
+| ∥ | [`FW-04-cli-cierre-y-receta-uat`](FW-04-cli-cierre-y-receta-uat.md) | 💻 | FW | D · cierre y receta de UAT | TW.9–TW.10 | — | pendiente |
+| 57 | [`F10-03-cli-prueba-uat`](F10-03-cli-prueba-uat.md) | 💻 | F10 | B | T10.4–T10.6 (UAT por SSH, ventana ≥ 24 h) · ✎ 2026-10-11: **depende de FW cerrada** (D-FW-3) | — | pendiente |
 | 58 | [`F10-04-cli-relevo`](F10-04-cli-relevo.md) | 💻 | F10 | C | T10.7–T10.14, T10.23 (TX.25) | — | pendiente |
 | 59 | [`F10-05-cli-cierre-y-fuera-del-repo`](F10-05-cli-cierre-y-fuera-del-repo.md) | 💻 | F10 | D/E | T10.15–T10.21 | — | pendiente |
 | 60 | [`F10-06-cli-main`](F10-06-cli-main.md) | 💻 | F10 | F | T10.22 — solo a petición de Jhoan | — | pendiente |
