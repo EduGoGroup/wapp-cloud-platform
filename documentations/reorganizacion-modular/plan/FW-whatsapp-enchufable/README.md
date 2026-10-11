@@ -1,7 +1,9 @@
 # FW · WhatsApp enchufable — el Edge real conversa sin WhatsApp
 
-> **Estado**: 🟡 **bloque C (FW-03) hecho el 2026-10-11: el carrito conversa con Cloud y Edge reales; PR #78 de este repo
-> integrado. Siguiente sesión: FW-04.** Bloque B (FW-02): el transporte falso, en el Edge (PR #12 de `wapp-edge-agent` y PR #77 de este repo, integrados). Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
+> **Estado**: 🟡 **bloque D (FW-04) escrito el 2026-10-11 y en revisión: PR #79 de este repo y PR #13 de `wapp-edge-agent`,
+> abiertos. La receta de UAT está escrita y ejecutada en local ([`receta-uat.md`](receta-uat.md)); la fase se da por cerrada
+> al fusionarlos. Siguiente paso: fusionar esos dos PR; después, F10-03.** Bloque C (FW-03): el carrito conversa con Cloud y Edge reales; PR #78 de este repo
+> integrado. Bloque B (FW-02): el transporte falso, en el Edge (PR #12 de `wapp-edge-agent` y PR #77 de este repo, integrados). Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
 > decididas y **ADR-0049 aprobado** (vigente; commiteado en la raíz de wApp, `1abd9fe`). D-FW-5 decidida al arrancar FW-03 (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
 > [`deuda.md`](../../../deuda.md)). Medida sobre `edge/wapp-edge-agent` @ `38e5f91` (rama `main`; su rama por defecto es `dev`).
 > **Forma**: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Spec **corta a propósito**; lo que faltaba por
@@ -231,3 +233,51 @@ Medido contra `edge/wapp-edge-agent` @ `0675d55` (su `dev`), en un contenedor `l
 40. **El primer intento de gate salió rojo y lo cazó un candado**: el `go build` del Edge copiaba el entorno del shell
     (`os.Environ`), que `TestSinBDViva` prohíbe en `test/procesos`. Arreglado sin tocar el candado.
 
+### FW-04 (2026-10-11) · la receta de UAT y el cierre (rama `reorg/fw-04-cierre-y-receta-uat`; en el Edge, `docs/fw-04-operacion-whatsapp-falso`)
+
+La receta se ejecutó a mano contra el Cloud nuevo y el Edge real @ `0675d55` en un contenedor `linux/arm64`, enrolado y
+con las palancas bajas. Salidas en [`receta-uat.md`](receta-uat.md) §5.
+
+41. 🔴 **Con la palanca echada, TODA sesión `active` del Edge escucha por el transporte falso, también una de WhatsApp
+    real.** `whatsappfalso.NuevaEscucha` no mira el JID (`internal/infra/wiring/transporte.go:43` del Edge): la sesión
+    sale `listening`, late hacia la nube y no está conectada a WhatsApp. Su almacén no se toca. **Leído, no ejecutado**
+    (no hay sesión real con la que probarlo). Ni el ADR-0049 ni la spec lo decían; ahora lo dicen la receta, el runbook
+    y `operacion.md` §3.3 del Edge. En UAT las sesiones estaban caducadas, pero la receta lista las que haya antes de
+    echar la palanca.
+42. **Bajar la palanca sin desvincular deja una sesión rota, y se midió**: `active` / `degraded`, y el transporte real
+    reintenta con *backoff* para siempre (`listen: whatsapp: no hay device pareado para el JID de la sesión`). El
+    `DELETE /v1/sessions/{id}` funciona igual con la palanca ya baja. La receta desvincula **antes** de bajar.
+43. 🔴 **El Edge de UAT necesita un binario nuevo antes de la ventana.** La documentación de despliegue de UAT lo daba
+    en `490f8212` (medido allí el 2026-08-30), anterior al transporte falso (`0675d55`). Un binario anterior **ignora la
+    palanca sin avisar** y arranca con WhatsApp real: por eso el paso 0 de la receta mira la revisión del proceso vivo.
+    Es trabajo de F10-03 que no estaba en su lista.
+44. **En la nube queda la fila de la sesión falsa** tras desvincularla en el Edge: `fleet_sessions` con `state`
+    `offline` y `self_pn` `0000…`. No se borra; se reconoce por el prefijo. No se investigó si una sesión real
+    desvinculada deja lo mismo (se supone que sí: es el mismo camino).
+45. **Lo capturado no sobrevive a un reinicio del Edge** (memoria, por diseño). La comparación viejo/nuevo de F10 §2.4
+    funciona porque el relevo reinicia el **Cloud**, no el Edge; si el Edge se reinicia entre las dos corridas, la
+    primera hay que haberla guardado en fichero (paso 6).
+46. **La escena local no es repetible con un comando, a propósito.** La montó un test temporal del arnés que dejaba el
+    Edge enrolado y parado, y que **no se commiteó**: la receta es manual (D-FW-5: lo repetible es
+    `make test-procesos-edge-real`). Tres diferencias con UAT, dichas en la receta: sin systemd ni `wapp-ctl`, sin
+    cajero, y cada `curl` dentro de un `docker exec`.
+47. **`make ci-docker` del Edge no cuenta SKIP**: corre `go test` sin `-v`. `GATE_RC=0` con 43 paquetes `ok` no dice
+    cuántos tests se saltaron. Para el punto 1 de la definición de hecho se corrieron aparte, con `-v`, los 15 tests
+    del transporte falso: 15 PASS, 0 SKIP.
+48. **La documentación del Edge ya traía la palanca y la ruta nueva en `contratos.md`** (las escribió FW-02). Faltaba
+    `operacion.md`; y se corrigieron dos líneas de su constitución que FW-01 había señalado (hallazgos 4 y 6): la
+    trampa 10 (`internal/app/send.go` ya no existe) e INV-2 («no hay ningún test» de lease: ya hay uno). 🟡 Sigue sin
+    test el otro escape de INV-2: un Edge **sin** `lease_pubkey_path` despacha.
+49. **El runbook del ecosistema queda sin commitear en la raíz de wApp**, como quedó el ADR-0049 tras FW-01: la raíz
+    no tiene remoto ni `dev`, y tiene cambios de Jhoan sin commitear. `make check-docs` de la raíz: rc=0, gate de
+    diagramas **saltado** (falta `mmdc`).
+50. 🟡 **RW.5.b no se puede cerrar aquí**: «al terminar la ventana, el Edge de UAT queda con la palanca baja» se
+    verifica en el acta de F10-03. En local quedó medida (paso 7 de la receta).
+51. 🔴 **El gate de este repo salió rojo la primera vez, por un test intermitente que no es de FW.** `make ci-local`:
+    `GATE_RC=2`, un solo fallo, `TestGrantTenantAccess_RoleInsertFailureHasItsOwnText` (`sql: transaction has already been
+    committed or rolled back` en la limpieza). Repetido sin cambiar nada: `GATE_RC=0`, 239 paquetes `ok`. El test solo,
+    300 veces con `-race`: 5 fallos. La rama solo toca documentación. Es la deuda **D-49** de
+    [`deuda.md`](../../../deuda.md); no se arregló aquí.
+52. **Los procesos con Edge real de esta sesión corrieron con el árbol del Edge sucio** (`0675d55…-dirty`): en ese
+    momento tenía sin commitear los dos `.md` de su PR #13. El código es el de `0675d55`; la marca la pone el arnés por
+    cualquier fichero versionado con cambios.

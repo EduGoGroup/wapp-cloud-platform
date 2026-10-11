@@ -62,12 +62,13 @@ Entrada: bloque B integrado en el `dev` del Edge. Para cuando: definición de he
 ## Bloque D · cierre y receta de UAT · sesión FW-04 · TW.9–TW.10
 
 Para cuando: definición de hecho 6–8. Tras este bloque, F10-03 puede arrancar.
+✎ FW-04 (2026-10-11): hecho; el PR #79 de este repo y el PR #13 de `wapp-edge-agent` están **abiertos, en revisión**. La fase se da por cerrada al fusionarlos.
 
-- [ ] **TW.9 · La receta para UAT** · Cloud (documentación) y raíz de wApp · dep. TW.8 · cumple RW.5.a, RW.5.b
+- [x] **TW.9 · La receta para UAT** · Cloud (documentación) y raíz de wApp · dep. TW.8 · cumple RW.5.a, RW.5.b · `55c87823` (este repo, rama `reorg/fw-04-cierre-y-receta-uat`, PR #79, **en revisión**): [`receta-uat.md`](receta-uat.md), ejecutada en local de principio a fin, y las filas 1 y 6 de F10 §2.4. ✎ El runbook del ecosistema, `operacion/runbooks/conversar-con-el-edge-sin-whatsapp.md`, está escrito en la raíz de wApp y **sin commitear** (la raíz no tiene remoto ni `dev`; lo decide Jhoan). 🟡 RW.5.b (la palanca baja al terminar la ventana) se comprueba en el acta de F10-03: aquí queda medida en local
   - **Ficheros**: [`../F10-relevo/diseno.md`](../F10-relevo/diseno.md) §2.4 (las filas 1 y 6, con los comandos), el runbook del ecosistema que corresponda
   - **Hecho cuando**: la receta —echar la palanca, conducir la conversación, leer lo capturado, **bajar la palanca**—
     ejecutada en local de principio a fin, con sus salidas
-- [ ] **TW.10 · Cerrar FW** · dep. TW.9
+- [x] **TW.10 · Cerrar FW** · dep. TW.9 · `TW10SHA` (este repo, mismo PR #79, **en revisión**) y `7e8ec71` (`edge/wapp-edge-agent`, rama `docs/fw-04-operacion-whatsapp-falso`, PR #13 de ese repo, **en revisión**: `operacion.md` §3.3 y dos líneas caducadas de su constitución). Los 8 puntos de [`reglas.md`](reglas.md) §4, con su evidencia, en el bloque FW-04 de [`ESTADO.md`](../../ESTADO.md)
   - **Ficheros**: [`deuda.md`](../../../deuda.md) (D-38 y D-39 cerradas), `ESTADO.md`, este README, `documentations/` del Edge (contratos y operación: la palanca y las rutas nuevas)
   - **Hecho cuando**: los 8 puntos de [`reglas.md`](reglas.md) §4, cada uno con su evidencia
   - **Commit**: `docs(reorganizacion-modular): FW cerrada`
