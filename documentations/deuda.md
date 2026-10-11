@@ -521,6 +521,8 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   que se interrumpa y se reanude.
 - **Sin medir**: cuánto alarga `make test-procesos`.
 - **Veredicto**: pendiente. No bloquea el relevo: el invariante está cubierto en estático.
+- ✎ **2026-10-11 · Decidida por Jhoan: se hace dentro de la fase FW**, como segunda conversación con Edge real: tarea
+  **TW.11** de [`reorganizacion-modular/plan/FW-whatsapp-enchufable/tareas.md`](reorganizacion-modular/plan/FW-whatsapp-enchufable/tareas.md). Deja de ser «para después del relevo».
 
 ---
 

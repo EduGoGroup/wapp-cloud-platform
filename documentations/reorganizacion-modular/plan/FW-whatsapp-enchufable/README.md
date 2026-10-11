@@ -51,13 +51,14 @@ FW **no depende de F9-05 ni de F10-01/F10-02**: avanza en paralelo.
 - Existe la receta para hacer lo mismo en el Edge de UAT (la usa F10-03).
 - La **doble llave** queda intacta: la DEK sigue en el cliente y no cruza el contrato; el lease lo sigue emitiendo y
   revocando el Cloud, **también** con WhatsApp falso. Sin Redis ni broker en el Edge.
-- La deuda D-38 cerrada; el ADR que lo ampara, aprobado por Jhoan.
+- Las deudas D-38 y D-39 cerradas; el ADR que lo ampara, aprobado por Jhoan.
 
 ## Las pruebas que se mudan aquí (decisión de Jhoan, 2026-10-11)
 
 | Prueba | Dónde estaba | Dónde queda |
 |---|---|---|
 | El golden con un **Edge real** | Deuda D-38, «a decidir en F10-01» | **TW.8** (sesión FW-03) |
+| Un proceso que note **desde fuera** que falta la política de reanudación del carrito | Deuda D-39, «para después del relevo» | **TW.11** (sesión FW-03), como segunda conversación |
 | «Un mensaje real entra y se contesta» y «los textos no cambian», con **WhatsApp real** | F10 [`diseno.md`](../F10-relevo/diseno.md) §2.4 (filas 1 y 6), R10.1.e, D-F10-1 | Se hacen con el **WhatsApp falso** de esta fase: en local en TW.8 y, durante la ventana de UAT, con la receta de TW.9. **F10-03 pasa a depender de FW** |
 
 Ya no hace falta renovar una sesión de WhatsApp para el relevo. 🟡 Lo que el WhatsApp falso **no** prueba —el protocolo
@@ -75,7 +76,7 @@ reconstrucción del Cloud.
 |---|---|---|---|---|
 | [FW-01](../sesiones/FW-01-cli-inventario-y-adr.md) | **A · inventario y ADR** | TW.1–TW.3 | Edge (solo lectura) y la raíz de wApp (el ADR) | Los «sin medir» de arriba, medidos; el borrador del ADR; diseño de este directorio corregido con lo medido. **Jhoan aprueba antes de escribir código** |
 | [FW-02](../sesiones/FW-02-cli-adaptador-falso.md) | **B · el adaptador falso** | TW.4–TW.6 | Edge | El Edge arranca con WhatsApp falso: entra un mensaje y se lee la respuesta capturada; con la palanca baja, nada cambia |
-| [FW-03](../sesiones/FW-03-cli-conversacion-edge-real.md) | **C · la conversación con Edge real** | TW.7–TW.8 | este repo y Edge · **Docker** | Un comando corre el carrito con Cloud nuevo + Edge real, `RC=0`, 0 SKIP |
+| [FW-03](../sesiones/FW-03-cli-conversacion-edge-real.md) | **C · la conversación con Edge real** | TW.7–TW.8, TW.11 | este repo y Edge · **Docker** | Un comando corre el carrito con Cloud nuevo + Edge real, `RC=0`, 0 SKIP; y un carrito interrumpido se reanuda con la política de la empresa (D-39) |
 | [FW-04](../sesiones/FW-04-cli-cierre-y-receta-uat.md) | **D · cierre y receta de UAT** | TW.9–TW.10 | este repo, Edge y la raíz de wApp | Receta para UAT escrita y probada en local; D-38 cerrada; documentación de las dos piezas al día |
 
 ## Decisiones que necesita (Jhoan)

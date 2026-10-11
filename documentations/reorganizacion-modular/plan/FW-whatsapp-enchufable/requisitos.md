@@ -55,6 +55,9 @@
   — Verifica: la comparación del caso (el golden de D-38).
 - **RW.4.c** · **EL** Edge falso de `test/procesos` **NO DEBERÁ** retirarse: los 1.291 casos siguen corriendo contra él.
   — Verifica: `make test-procesos` con el mismo `PASS` que antes de TW.7.
+- **RW.4.d** · **CUANDO** un cliente retoma un carrito interrumpido en una empresa con tamaño de página propio, **EL**
+  sistema **DEBERÁ** reanudarlo con la política de esa empresa, y **SI** el arranque pierde `WithResumePolicy`, **ENTONCES
+  EL** caso **DEBERÁ** fallar. — Verifica: el caso de TW.11 y su mutante (deuda D-39).
 
 ## HW.5 · La prueba de UAT ya no pide WhatsApp real
 

@@ -36,7 +36,7 @@ Entrada: TW.3 aprobado; D-FW-1 y D-FW-2 decididas. Para cuando: definición de h
   - **Hecho cuando**: un `SendText` y un `SendMedia` quedan en el registro con su `command_id` y se leen desde fuera; el
     acuse vuelve al Cloud como uno real
 
-## Bloque C · la conversación con Edge real · sesión FW-03 · TW.7–TW.8 · necesita Docker
+## Bloque C · la conversación con Edge real · sesión FW-03 · TW.7–TW.8 y TW.11 · necesita Docker
 
 Entrada: bloque B integrado en el `dev` del Edge. Para cuando: definición de hecho 5.
 
@@ -48,6 +48,11 @@ Entrada: bloque B integrado en el `dev` del Edge. Para cuando: definición de he
   - **Hecho cuando**: el carrito («carrito» → categoría → artículo → cantidad → resumen → confirmar) pasa con Edge real;
     los textos capturados son los del mismo caso con el Edge falso; tras revocar el lease, cero envíos; `RC=0`, 0 SKIP, 0 FAIL
   - **Commit**: `procesos(edge-real): el carrito con Cloud y Edge reales`
+- [ ] **TW.11 · La reanudación del carrito, vista desde fuera (cierra D-39)** · Cloud · dep. TW.8 · cumple RW.4.d · añadida el 2026-10-11 por decisión de Jhoan
+  - **Hecho cuando**: una empresa con `page_size` propio (o con checklist de comprador) en `tenant_settings`; el carrito
+    se interrumpe y se reanuda; el caso pasa con `flowruntime.WithResumePolicy` cableada y **cae** al quitarla de
+    `internal/arranque/fase7_flujos.go` (mutante, en un *worktree* desechable); anotado cuánto alarga la suite
+  - **Commit**: `procesos(edge-real): el carrito interrumpido se reanuda con la política de la empresa`
 
 ## Bloque D · cierre y receta de UAT · sesión FW-04 · TW.9–TW.10
 
@@ -58,6 +63,6 @@ Para cuando: definición de hecho 6–8. Tras este bloque, F10-03 puede arrancar
   - **Hecho cuando**: la receta —echar la palanca, conducir la conversación, leer lo capturado, **bajar la palanca**—
     ejecutada en local de principio a fin, con sus salidas
 - [ ] **TW.10 · Cerrar FW** · dep. TW.9
-  - **Ficheros**: [`deuda.md`](../../../deuda.md) (D-38 cerrada), `ESTADO.md`, este README, `documentations/` del Edge (contratos y operación: la palanca y las rutas nuevas)
+  - **Ficheros**: [`deuda.md`](../../../deuda.md) (D-38 y D-39 cerradas), `ESTADO.md`, este README, `documentations/` del Edge (contratos y operación: la palanca y las rutas nuevas)
   - **Hecho cuando**: los 8 puntos de [`reglas.md`](reglas.md) §4, cada uno con su evidencia
   - **Commit**: `docs(reorganizacion-modular): FW cerrada`
