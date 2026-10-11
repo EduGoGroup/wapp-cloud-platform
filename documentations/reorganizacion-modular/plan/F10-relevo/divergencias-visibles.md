@@ -204,6 +204,8 @@ del cliente o BFF; CloudLink → Edge; webhook y su callback → CRM.
 - **El caso real** que nombra el comentario: un puente que manda milisegundos en vez de segundos.
 - **Consumidor**: el CRM. **Sin decisión en `DECISIONES.md`**: solo está en el comentario
   (`internal/apipublica/crmcallback.go:217`).
+- ✎ **2026-10-11 · D-F10-11 (Jhoan)**: se queda el 401. Qué formato de hora manda cada CRM conectado se mira en la
+  segunda mitad de D-36, tras el relevo.
 
 ### V6 · Entregas del webhook al CRM de un puente encendido sin endpoint o sin secreto
 

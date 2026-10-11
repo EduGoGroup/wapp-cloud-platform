@@ -148,7 +148,7 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
    salen de él: la frase «Divergencia deliberada» solo cubre 1 de las 11 visibles; V5 (un callback del CRM con un
    timestamp absurdo pasa de 200 a 401) no tiene decisión escrita; y un comentario de
    `internal/modulos/captacion/reanalisis/reanalisis.go:337-338` dice que un error temprano «no ha tocado una sola
-   fila» cuando el texto pegado ya está guardado.
+   fila» cuando el texto pegado ya está guardado. ✅ **V5 decidida el 2026-10-11 (D-F10-11, Jhoan)**: se queda el 401.
 6. **Las cifras de la spec que han cambiado** (todas en el acta §1): 498 tests viejos y no 497; 165 menciones de rutas
    viejas en la documentación del repo y no 147; 6 ficheros y 22 `Test*` con base de datos en `internal/platform` y no
    9 y 25; 7 directorios en `cmd/`.

@@ -477,6 +477,9 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   `apipublica` las escriben con otras fórmulas; y el consumidor solo está confirmado para el CRM y el Edge. **Sigue
   abierta la segunda mitad**: mirar y adaptar los consumidores, tras el relevo. Las seis internas que cambian datos
   guardados (§6 del inventario) se miran también entonces, por si una pantalla los lee.
+- ✎ **2026-10-11 · D-F10-11 (Jhoan)**: la visible V5 (el callback del CRM con la hora en milisegundos pasa de 200 a 401)
+  **se queda**. En la segunda mitad hay que mirar qué formato de hora manda cada CRM conectado: uno que mande
+  milisegundos deja de funcionar al relevar.
 
 ### D-37 · 🟡 El hilo y la cola no se escriben en un solo acto: un mensaje puede entrar en dos ventanas
 
