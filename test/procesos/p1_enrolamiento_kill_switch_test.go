@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
@@ -174,6 +175,72 @@ func (p *p1Run) checkCommercialCut(t *testing.T) {
 	p1WaitAdminAudit(t, esc.DB, 1, p1AuditRow{tenantPlataformaID, "tenants.revoke.any", "tenant", "success", http.StatusNoContent, esc.Tenant})
 	p1WaitAdminAudit(t, esc.DB, 1, p1AuditRow{tenantPlataformaID, "tenants.revoke.any", "tenant", "success", http.StatusNoContent, fantasma})
 	p1WaitAdminAudit(t, esc.DB, 1, p1AuditRow{tenantPlataformaID, "tenants.revoke.any", "tenant", "failure", http.StatusBadRequest, ""})
+	t.Run("platform_reads_show_the_cut", func(t *testing.T) { p.checkPlatformReads(t, true) })
+}
+
+// p1TenantRevokedMicros es el instante del corte tal como lo guarda Postgres, en microsegundos.
+const p1TenantRevokedMicros = `SELECT (extract(epoch FROM revoked_at) * 1000000)::bigint FROM public.tenants WHERE id = $1::uuid`
+
+// p1TenantRead es lo que este paso mira de una empresa en las dos lecturas de plataforma. RevokedAt
+// se guarda crudo para distinguir el null literal de un campo que falta.
+type p1TenantRead struct {
+	ID        string          `json:"id"`
+	RevokedAt json.RawMessage `json:"revoked_at"`
+}
+
+// checkPlatformReads comprueba que el corte comercial SE VE por las dos lecturas del plano de
+// plataforma, GET /admin/tenants y GET /admin/tenants/{id}: con cut, la empresa del proceso trae en
+// revoked_at el instante que guarda Postgres; sin cut (tras reactivar), un null literal. En las dos
+// situaciones el resto de empresas del listado —la de plataforma entre ellas— trae null: el corte
+// es de UNA empresa.
+func (p *p1Run) checkPlatformReads(t *testing.T, cut bool) {
+	esc := p.esc
+	staff := esc.S.Admin(esc.TokenStaff)
+	want := func(que string, e p1TenantRead) {
+		t.Helper()
+		if !cut || e.ID != esc.Tenant {
+			if string(e.RevokedAt) != "null" {
+				t.Errorf("%s: la empresa %s trae revoked_at = %s, quería null", que, e.ID, e.RevokedAt)
+			}
+			return
+		}
+		var instante time.Time
+		if err := json.Unmarshal(e.RevokedAt, &instante); err != nil {
+			t.Errorf("%s: la empresa cortada trae revoked_at = %s, quería un instante: %v", que, e.RevokedAt, err)
+			return
+		}
+		if guardado := consultaEntero(t, esc.DB, p1TenantRevokedMicros, esc.Tenant); instante.UnixMicro() != int64(guardado) {
+			t.Errorf("%s: revoked_at = %s (%d µs), Postgres guarda %d µs", que, e.RevokedAt, instante.UnixMicro(), guardado)
+		}
+	}
+
+	var lista struct {
+		Items []p1TenantRead `json:"items"`
+	}
+	r := staff.Get(t, rutaTenants, nil)
+	if r.Codigo != http.StatusOK {
+		t.Fatalf("GET %s: HTTP %d, quería 200\ncuerpo: %s", rutaTenants, r.Codigo, recortar(r.Cuerpo))
+	}
+	r.JSON(t, &lista)
+	vistas := map[string]bool{}
+	for _, e := range lista.Items {
+		vistas[e.ID] = true
+		want("GET "+rutaTenants, e)
+	}
+	if !vistas[esc.Tenant] || !vistas[tenantPlataformaID] {
+		t.Errorf("GET %s no trae la empresa del proceso y la de plataforma: %s", rutaTenants, recortar(r.Cuerpo))
+	}
+
+	var detalle p1TenantRead
+	r = staff.Get(t, rutaTenants+"/"+esc.Tenant, nil)
+	if r.Codigo != http.StatusOK {
+		t.Fatalf("GET %s/{id}: HTTP %d, quería 200\ncuerpo: %s", rutaTenants, r.Codigo, recortar(r.Cuerpo))
+	}
+	r.JSON(t, &detalle)
+	if detalle.ID != esc.Tenant {
+		t.Errorf("GET %s/{id} devolvió la empresa %q, quería %s", rutaTenants, detalle.ID, esc.Tenant)
+	}
+	want("GET "+rutaTenants+"/{id}", detalle)
 }
 
 // checkBornUnderCut lleva por la puerta la regla de TestIntegration_TenantRevokedGatesNeverSeenEdge:
@@ -205,6 +272,7 @@ func (p *p1Run) checkCommercialRestore(t *testing.T) {
 	}
 	edgeEsperarValor(t, esc.DB, "false", "tenants.revoked_at tras reactivar", p1TenantRevoked, esc.Tenant)
 	p1WaitAdminAudit(t, esc.DB, 1, p1AuditRow{tenantPlataformaID, "tenants.restore.any", "tenant", "success", http.StatusNoContent, esc.Tenant})
+	t.Run("platform_reads_show_the_restore", func(t *testing.T) { p.checkPlatformReads(t, false) })
 
 	for _, c := range []struct {
 		e       *edge
