@@ -274,3 +274,110 @@ func (s *postgresState) Dueno(t *testing.T, tenantID, sessionID string) (contact
 		return "", "", false
 	}
 }
+
+// malformedUUID es un identificador que no es un UUID. La suite compartida no lo usa (Montaje solo
+// promete UUID bien formados: la memoria y Postgres divergen ahí), así que lo que el adaptador
+// Postgres promete con él se prueba en este fichero, fuera de contacthelpertest.Contrato.
+const malformedUUID = "no-es-uuid"
+
+// contactKindPhone es el texto de contact.KindPhoneE164, que aquí no se puede importar (R9.4.d: del
+// paquete del puerto, una suite de contrato solo usa los constructores).
+const contactKindPhone = "phone_e164"
+
+// contactNotFoundText es el texto de contact.ErrContactNotFound.
+const contactNotFoundText = "contact: contact_id no encontrado"
+
+// contactSentinels son los centinelas del paquete contact, por su nombre y su TEXTO: aquí no se
+// pueden importar (R9.4.d), así que no cabe un errors.Is. El texto de cada uno es observable y no
+// cambia (lo promete su comentario), y quien lo envuelve lo hace con %w, de modo que un error que
+// lleve el centinela lleva también su texto.
+var contactSentinels = []struct {
+	name, text string
+}{
+	{"ErrNoRefs", "contact: se requiere al menos una contact_ref"},
+	{"ErrNoDestino", "contact: sin destino enviable para el contact_id"},
+	{"ErrContactNotFound", contactNotFoundText},
+	{"ErrInvalidRef", "contact_ref inválida"},
+}
+
+// sliceOf devuelve los valores como slice. Existe para pasar a Resolve la Ref que devuelve
+// contact.NewRef sin nombrar su tipo, que no es un constructor (R9.4.d).
+func sliceOf[T any](values ...T) []T {
+	return values
+}
+
+// TestContactPostgres_Resolve_MalformedTenantIsParseError fija lo que promete Resolve con un
+// tenantID que no es un UUID: el error de parseo de Postgres, que sale de la transacción por
+// postgres.WithTx y Resolve devuelve tal cual, con el contactID vacío; nunca un centinela del
+// paquete. Y, como todo error del adaptador, sin el value de la ref ni el pushName (R1.4.d): son PII
+// y los errores suben a los logs.
+func TestContactPostgres_Resolve_MalformedTenantIsParseError(t *testing.T) {
+	const (
+		rawPhone = "+573009876543"
+		pushName = "Fulanita De Tal"
+	)
+	m := newContactMontaje(t)
+	ref, err := contact.NewRef(contactKindPhone, rawPhone)
+	if err != nil {
+		t.Fatalf("contact.NewRef(%q, %q): %v", contactKindPhone, rawPhone, err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), contactTimeout)
+	defer cancel()
+
+	id, err := m.Resolver.Resolve(ctx, malformedUUID, sliceOf(ref), pushName)
+	if err == nil {
+		t.Fatalf("Resolve(tenant %q) = (%q, nil); quiere el error de parseo de Postgres", malformedUUID, id)
+	}
+	t.Logf("Resolve(tenant %q): %v", malformedUUID, err)
+	if id != "" {
+		t.Errorf("Resolve(tenant %q) devolvió el contactID %q junto al error; quiere \"\"", malformedUUID, id)
+	}
+	text := err.Error()
+	for _, s := range contactSentinels {
+		if strings.Contains(text, s.text) {
+			t.Errorf("Resolve(tenant %q) devolvió el centinela %s (%q); quiere el error de parseo de Postgres", malformedUUID, s.name, text)
+		}
+	}
+	for _, pii := range []string{ref.Value, rawPhone, strings.TrimPrefix(rawPhone, "+"), pushName} {
+		if strings.Contains(text, pii) {
+			t.Errorf("el error de Resolve contiene PII (%q): %q", pii, text)
+		}
+	}
+}
+
+// TestContactPostgres_Destino_MalformedIDIsReadErrorNotNotFound fija lo que promete Destino con un
+// contactID o un tenantID que no es un UUID: la Ref cero y el error de parseo de Postgres envuelto
+// en «contact: leer refs del contacto: », NO ErrContactNotFound (que es lo que devuelve la memoria).
+func TestContactPostgres_Destino_MalformedIDIsReadErrorNotNotFound(t *testing.T) {
+	const prefix = "contact: leer refs del contacto: "
+	m := newContactMontaje(t)
+
+	cases := []struct {
+		name                string
+		tenantID, contactID string
+	}{
+		{"malformed contact id", m.TenantA, malformedUUID},
+		{"malformed tenant id", malformedUUID, uuid.NewString()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), contactTimeout)
+			defer cancel()
+
+			ref, err := m.Resolver.Destino(ctx, tc.tenantID, tc.contactID)
+			if err == nil {
+				t.Fatalf("Destino(tenant %q, contacto %q) = (%+v, nil); quiere el error de lectura", tc.tenantID, tc.contactID, ref)
+			}
+			t.Logf("Destino(tenant %q, contacto %q): %v", tc.tenantID, tc.contactID, err)
+			if ref.Kind != "" || ref.Value != "" {
+				t.Errorf("Destino devolvió la Ref %+v junto al error; quiere la Ref cero", ref)
+			}
+			if !strings.HasPrefix(err.Error(), prefix) {
+				t.Errorf("el error de Destino es %q; quiere que empiece por %q", err.Error(), prefix)
+			}
+			if strings.Contains(err.Error(), contactNotFoundText) {
+				t.Errorf("Destino devolvió ErrContactNotFound (%v); quiere el error de parseo de Postgres", err)
+			}
+		})
+	}
+}
