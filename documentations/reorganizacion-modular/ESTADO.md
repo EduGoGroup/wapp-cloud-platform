@@ -453,7 +453,7 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
   `GATE_RC=0`, 239 paquetes `ok`, lint `0 issues.`.
   `make check-docs` de la raíz → rc=0, 0 enlaces rotos, diagramas **saltados** (falta `mmdc`).
 - **No corrido**: el Edge con la palanca echada contra un Cloud real, ni en contenedor (FW-03); `make test-procesos`.
-- **TW.2** `[x]`: Jhoan aprobó el texto del ADR-0049 al cerrar la sesión. Vigente y en el índice de la raíz; **sin commitear** allí.
+- **TW.2** `[x]`: Jhoan aprobó el texto del ADR-0049 al cerrar la sesión. Vigente y en el índice de la raíz; ✎ commiteado allí tras FW-03 (`1abd9fe`, raíz de wApp).
 - **Con la palanca baja** cambian dos textos del log y nada más: el latido gana `whatsapp=real` y un aviso nombra la
   opción nueva (hallazgo 25).
 - **Hallazgos**: 13 nuevos (14–26), en [`plan/FW-whatsapp-enchufable/README.md`](plan/FW-whatsapp-enchufable/README.md).
@@ -484,6 +484,8 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
 - **Hallazgos**: 14 nuevos (27–40), en [`plan/FW-whatsapp-enchufable/README.md`](plan/FW-whatsapp-enchufable/README.md).
   Los que piden ojos: el caso es un recorrido paralelo al del Edge falso, no la misma función (33); el servidor sigue
   despachando a un Edge revocado (34); la primera pantalla del carrito no usa el `page_size` de la empresa (35).
+- ✎ **Tras el cierre, por orden de Jhoan**: los hallazgos 34, 35 y 33 pasan a deuda, para después del relevo (D-46, D-47 y
+  D-48 de [`../deuda.md`](../deuda.md), directo en `dev`); y el ADR-0049 queda commiteado en la raíz de wApp (`1abd9fe`).
 - **Siguiente sesión: FW-04** (la receta de UAT y el cierre de la fase). `main` sin tocar.
 
 **F9-05 · F9, bloque D: el cierre, T9.30–T9.33 y T9.36 (2026-10-11, 💻, rama `reorg/f9-05-cierre` desde `dev` @ `085366a2`) — PR #74 INTEGRADO en `dev`, sin squash. F9 CERRADA 2026-10-11.**

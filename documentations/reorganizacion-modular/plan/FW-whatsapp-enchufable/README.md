@@ -2,7 +2,7 @@
 
 > **Estado**: 🟡 **bloque C (FW-03) hecho el 2026-10-11: el carrito conversa con Cloud y Edge reales; PR #78 de este repo
 > integrado. Siguiente sesión: FW-04.** Bloque B (FW-02): el transporte falso, en el Edge (PR #12 de `wapp-edge-agent` y PR #77 de este repo, integrados). Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
-> decididas y **ADR-0049 aprobado** (vigente; sin commitear en la raíz de wApp). D-FW-5 decidida al arrancar FW-03 (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
+> decididas y **ADR-0049 aprobado** (vigente; commiteado en la raíz de wApp, `1abd9fe`). D-FW-5 decidida al arrancar FW-03 (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
 > [`deuda.md`](../../../deuda.md)). Medida sobre `edge/wapp-edge-agent` @ `38e5f91` (rama `main`; su rama por defecto es `dev`).
 > **Forma**: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Spec **corta a propósito**; lo que faltaba por
 > medir lo midió FW-01 (solo lectura) y está en [`diseno.md`](diseno.md) §2, con lo que solo se sabe ejecutando en su §6.
@@ -171,7 +171,7 @@ reconstrucción del Cloud.
     gana el campo `whatsapp=real` en **todos** los Edge (un `real` explícito es un dato; es el mismo criterio del campo
     `inyector`), y el aviso de «sesión sin escucha» nombra `WithEscucha` en vez de `WithWhatsmeowListen`. Ni rutas, ni
     proto, ni conducta. Si algo en campo parsea esa línea por posición, lo nota.
-26. **El ADR-0049 está aprobado (Jhoan, 2026-10-11) y sigue sin commitear** en la raíz de wApp, con las cinco decisiones y su fila en el índice. Los contadores de ADR de `documentations/README.md` y `ACTIVE.md` de la raíz ya iban atrasados (dicen 46) y no se tocaron. `make check-docs`
+26. ✎ **Resuelto tras FW-03**: el ADR-0049 y su fila del índice están commiteados en `main` de la raíz (`1abd9fe`, por orden de Jhoan), y el contador de ADR dice 48 (`e8f5a65`). Queda sin tocar la estadística de cumplimiento («23 de los 46»), que pide volver a medir. Lo que se dijo: **El ADR-0049 está aprobado (Jhoan, 2026-10-11) y sigue sin commitear** en la raíz de wApp, con las cinco decisiones y su fila en el índice. Los contadores de ADR de `documentations/README.md` y `ACTIVE.md` de la raíz ya iban atrasados (dicen 46) y no se tocaron. `make check-docs`
     de la raíz: rc=0, 0 enlaces rotos, gate de diagramas **saltado** (falta `mmdc`).
 
 ### FW-03 (2026-10-11) · la conversación con Cloud y Edge reales, en `test/procesos` (rama `reorg/fw-03-conversacion-edge-real`)
@@ -204,19 +204,19 @@ Medido contra `edge/wapp-edge-agent` @ `0675d55` (su `dev`), en un contenedor `l
     inferencias le bajaron, sus errores internos) y sus `wa_message_id` son otros (los del Edge real llevan la marca:
     `SINTETICO-CART-<n>-0000`). **No repite** del caso viejo: el hilo cifrado, el detalle de `conversation_events`, la
     revisión de la solicitud ni el mensaje posterior al cierre. Si un texto cambia en un caso y no en el otro, lo
-    notan las constantes; si cambia el guion, no.
+    notan las constantes; si cambia el guion, no. ✎ Es la deuda **D-48** de [`deuda.md`](../../../deuda.md), para después del relevo.
 34. **Con el lease revocado, lo que entra sigue subiendo y lo que sale se corta en el Edge.** El servidor ordena los
     dos envíos (bienvenida y categorías) y el Edge los rechaza en su gate con «lease no vigente», antes del
     transporte: cero capturados. El caso lo afirma por las dos caras (la línea del servidor y las dos del Edge), sin
     esperas a ciegas. 🟡 Dos cosas que **no** mide: la inferencia con el lease revocado (el recorrido no llega a
     pedirla), y que el servidor **sigue despachando** a un Edge revocado: la conversación de ese cliente queda con un
-    carrito abierto cuyas pantallas no recibió nadie. Es conducta heredada, igual con el binario viejo; no se tocó.
+    carrito abierto cuyas pantallas no recibió nadie. Es conducta heredada, igual con el binario viejo; no se tocó. ✎ Es la deuda **D-46**, para después del relevo.
 35. **TW.11: la interrupción es un reinicio del servidor a mitad del carrito.** El Edge real reconecta solo y entrega
     el mensaje siguiente; la lista sale paginada con el `page_size` de la empresa. **Mutante**: sin
     `flowruntime.WithResumePolicy` en `internal/arranque/fase7_flujos.go` (worktree desechable, binario nuevo), el caso
     cae —salen los dos artículos juntos— y `TestEdgeReal_CartConversation` **sigue pasando**, que es lo que decía D-39.
     🟡 De paso: la **primera** pantalla del carrito no usa el `page_size` de la empresa (la pinta el arranque del
-    flujo, antes de sembrar los ajustes). Heredado, igual en el viejo; es deuda para después del relevo.
+    flujo, antes de sembrar los ajustes). Heredado, igual en el viejo; es la deuda **D-47**, para después del relevo.
 36. **La custodia en el contenedor, vista**: la DEK cayó sola en su fichero (modo `600`, 32 bytes), sin tocar la
     custodia (D-FW-7). El caso mira el fichero, no su contenido.
 37. ✎ **Desvíos del diseño, decididos por la sesión**: (a) `WAPP_PROCESOS_EDGE_DIR` tiene valor por defecto en el
