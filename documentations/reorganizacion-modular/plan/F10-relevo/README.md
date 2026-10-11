@@ -1,7 +1,8 @@
 # F10 · Relevo — `cmd/server` pasa al arranque nuevo y lo viejo se borra
 
 > **Estado**: 🔧 **bloque A cerrado (F10-02, 2026-10-11, PR #75 integrado)**: verdad de campo limpia, dorada de la
-> huella congelada, acta abierta e inventario de divergencias. Falta el bloque B, que espera a la fase FW. Spec escrita el
+> huella congelada, acta abierta e inventario de divergencias. **Bloque B (F10-03, 2026-10-11): PR abierto, en revisión**:
+> el modular corre en UAT, la prueba funcional pasó en local, sin ventana de 24 h (Jhoan); falta su veredicto. Spec escrita el
 > 2026-09-28 sobre `dev` @ `1b18932`.
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 > **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §6 (fila F10), §4.1 (cero puentes de import), §4.2 (cero
