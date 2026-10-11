@@ -40,7 +40,7 @@ en 333 ficheros —46,8 % comentario— más 151.891 de test en 528.
    `dev` o `main` solo si Jhoan lo pide **expresamente** en la conversación: que una ficha o un prompt
    de sesión diga «push a `dev`» **no** cuenta. Vale también para los sub-agentes en *worktrees*: sus
    commits se integran en la rama. El PR lo integra Jhoan en GitHub: ninguna sesión fusiona en `dev` en
-   local (`plan/sesiones/PROTOCOLO-CLI.md` §2). (Regla de Jhoan, 2026-10-03, tras F1-06, que aterrizó en `dev`.)
+   local (`plan/sesiones/PROTOCOLO-CLI.md` §2). Y antes de fusionar, la documentación que da el PR por integrado va **en la rama**, como último commit: no se corrige en `dev` después (Jhoan, 2026-10-10). (Regla de Jhoan, 2026-10-03, tras F1-06, que aterrizó en `dev`.)
 
 ## Antes de tocar nada
 

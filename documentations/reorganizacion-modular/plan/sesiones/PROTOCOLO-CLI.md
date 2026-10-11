@@ -70,6 +70,12 @@ sesión fusiona en `dev` en local**. Sustituye a la mitad «la local fusiona con
 - **Quién integra el PR**: Jhoan, en GitHub, con «Create a merge commit» o «Rebase and merge». **Nunca squash**: el
   rojo y el verde de un fichero son commits distintos. La sesión solo lo fusiona (`gh pr merge --merge`) si Jhoan lo
   pide expresamente en la conversación.
+- 🔴 **La documentación que da el PR por integrado viaja DENTRO del PR** (Jhoan, 2026-10-10, tras F8-07a): antes de
+  fusionar una rama nacida de una sesión del plan, el **último commit de la rama** deja `ESTADO.md`, el índice de
+  sesiones y el «siguiente paso» diciendo ya «PR #N **integrado**», y se empuja; solo entonces se fusiona. Así el cambio
+  es atómico con el PR y **nadie escribe en `dev` después** para corregir un «abierto, sin integrar». El SHA del merge
+  no existe todavía: se cita el **número del PR**, no el SHA (se saca con `git log --merges` cuando haga falta). Por lo
+  mismo, el cierre de una sesión nunca escribe «sin integrar» como estado: escribe el número del PR y basta.
 - Si Jhoan ya lo integró: `git checkout dev && git pull --ff-only origin dev`, y tu cierre va en una rama nueva.
 
 ## 3 · Repetir los gates con TU toolchain (skill `validar-antes-de-cerrar`)
@@ -112,6 +118,7 @@ que corre**, no contra la documentación. Lo que se refute, se corrige (o se ano
 
 Y además: si había un traspaso abierto, su sección final **`CERRADO <fecha>`**; 🔴 **el código va en una rama
 partida de `dev` y entra por PR** (regla innegociable 6 del `CLAUDE.md`, 2026-10-03): `git push origin <rama>` (rc sin
-pipe) y PR hacia `dev`, sin squash. Directo a `dev` solo si Jhoan lo pide expresamente en la conversación; **`main` no
+pipe) y PR hacia `dev`, sin squash. Antes de fusionar, la documentación ya dice «PR #N integrado» en la propia rama (§2).
+Directo a `dev` solo si Jhoan lo pide expresamente en la conversación; **`main` no
 se toca** salvo petición expresa de Jhoan. Una sesión es un bloque de **45–90 min**: si no
 cabe, para en un punto limpio, cierra con las tres cosas y se relanza.
