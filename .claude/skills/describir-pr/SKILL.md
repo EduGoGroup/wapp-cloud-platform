@@ -113,6 +113,10 @@ dentro de las fases que la tocan; se nombra solo si el PR la toca.
 
 ## Reglas
 
+- 🔴 **El estado que escribes es el de un PR ABIERTO.** Ni el cuerpo ni la documentación que viaja en el PR dicen
+  «integrado», «fase cerrada» o «siguiente sesión» mientras esté en revisión: eso es un último commit, justo antes de
+  fusionar (skill `pre-merge-docs`). En «Dónde encaja», este PR es 👉 «en revisión», no ✅.
+
 - 🔴 **Nada de estado inventado**: cada ✅ de «Dónde encaja» y de «Resultado» sale de un fichero o de un SHA que acabas de
   leer. Si una fuente dice otra cosa que tu sesión (p. ej. `sesiones/README.md` sin actualizar), se arregla la fuente
   en el PR o se dice.

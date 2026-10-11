@@ -70,12 +70,17 @@ sesión fusiona en `dev` en local**. Sustituye a la mitad «la local fusiona con
 - **Quién integra el PR**: Jhoan, en GitHub, con «Create a merge commit» o «Rebase and merge». **Nunca squash**: el
   rojo y el verde de un fichero son commits distintos. La sesión solo lo fusiona (`gh pr merge --merge`) si Jhoan lo
   pide expresamente en la conversación.
-- 🔴 **La documentación que da el PR por integrado viaja DENTRO del PR** (Jhoan, 2026-10-10, tras F8-07a): antes de
-  fusionar una rama nacida de una sesión del plan, el **último commit de la rama** deja `ESTADO.md`, el índice de
-  sesiones y el «siguiente paso» diciendo ya «PR #N **integrado**», y se empuja; solo entonces se fusiona. Así el cambio
-  es atómico con el PR y **nadie escribe en `dev` después** para corregir un «abierto, sin integrar». El SHA del merge
-  no existe todavía: se cita el **número del PR**, no el SHA (se saca con `git log --merges` cuando haga falta). Por lo
-  mismo, el cierre de una sesión nunca escribe «sin integrar» como estado: escribe el número del PR y basta.
+- 🔴 **La documentación no da por fusionado un PR que está abierto** (Jhoan, 2026-10-11, tras el cierre de F8;
+  **sustituye** a la regla del 2026-10-10, que mandaba escribir «integrado» ya en el cierre y dejaba la documentación
+  mintiendo durante toda la revisión). Son **dos momentos**, y los detalla la skill **`pre-merge-docs`**:
+  1. **Al cerrar la sesión y abrir el PR**: tareas `[x]` con SHA; `ESTADO.md`, el índice de sesiones y el README de la
+     fase dicen «PR #N **abierto, en revisión**»; la fase **no** se da por cerrada y el «siguiente paso» sigue siendo
+     fusionar este PR.
+  2. **Justo antes de fusionar** (cuando Jhoan lo pide o avisa de que va a fusionar): **un último commit en la rama**
+     pasa todo eso a «PR #N **integrado**», «fase cerrada» y «siguiente sesión: …», se empuja, y solo entonces se fusiona.
+  Lo que **no** cambia: el estado viaja dentro del PR y **nadie escribe en `dev` después**. Se cita el **número del PR**,
+  no el SHA del merge (aún no existe). Si Jhoan fusionó sin avisar y quedó «en revisión», el arreglo es el primer commit
+  de la rama de la sesión siguiente.
 - Si Jhoan ya lo integró: `git checkout dev && git pull --ff-only origin dev`, y tu cierre va en una rama nueva.
 
 ## 3 · Repetir los gates con TU toolchain (skill `validar-antes-de-cerrar`)
@@ -118,7 +123,7 @@ que corre**, no contra la documentación. Lo que se refute, se corrige (o se ano
 
 Y además: si había un traspaso abierto, su sección final **`CERRADO <fecha>`**; 🔴 **el código va en una rama
 partida de `dev` y entra por PR** (regla innegociable 6 del `CLAUDE.md`, 2026-10-03): `git push origin <rama>` (rc sin
-pipe) y PR hacia `dev`, sin squash. Antes de fusionar, la documentación ya dice «PR #N integrado» en la propia rama (§2).
+pipe) y PR hacia `dev`, sin squash. Mientras el PR está abierto la documentación dice «PR #N abierto, en revisión»; pasa a «integrado» en un último commit de la rama, **justo antes de fusionar** (§2, skill `pre-merge-docs`).
 Directo a `dev` solo si Jhoan lo pide expresamente en la conversación; **`main` no
 se toca** salvo petición expresa de Jhoan. Una sesión es un bloque de **45–90 min**: si no
 cabe, para en un punto limpio, cierra con las tres cosas y se relanza.
