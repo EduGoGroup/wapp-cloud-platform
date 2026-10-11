@@ -418,3 +418,15 @@ func TestMountMessages_NilLogServesTheSame(t *testing.T) {
 		call(apipublica.MessagesDeps{Sender: &senderFake{err: errors.New("x")}, Sessions: sessA()}),
 		http.StatusInternalServerError)
 }
+
+// TestMountMessages_TenantlessIdentityIs401: con el permiso pero sin empresa en la identidad, D1
+// corta en el handler con el 401 de siempre: ni consulta la flota ni envía.
+func TestMountMessages_TenantlessIdentityIs401(t *testing.T) {
+	h := apipublicahelpertest.New(t)
+	sender, lister := okSender(), sessA()
+	cara := messagesCara(tenantlessCommon(h, "messages.send"), apipublica.MessagesDeps{Sender: sender, Sessions: lister})
+	wantTenantless401(t, "D1", h, cara, http.MethodPost, messagesTarget, sendBody)
+	if sender.calls != 0 || lister.calls != 0 {
+		t.Errorf("D1 sin empresa: %d envíos y %d consultas a la flota; quiero 0 y 0", sender.calls, lister.calls)
+	}
+}

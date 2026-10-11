@@ -361,3 +361,21 @@ func TestMountDiagnostics_Request_TTL(t *testing.T) {
 		})
 	}
 }
+
+// TestMountDiagnostics_TenantlessIdentityIs401: con el permiso pero sin empresa en la identidad,
+// D5 y D6 cortan en el handler con el 401 de siempre: ni se consulta el consentimiento, ni se
+// registra o emite nada, ni se lee un bundle.
+func TestMountDiagnostics_TenantlessIdentityIs401(t *testing.T) {
+	h := apipublicahelpertest.New(t)
+	store, requester := newStore(), &requesterSpy{}
+	store.ready = &diagnostics.Record{CommandID: "cmd-listo", SessionID: "sess-a"}
+	cara := diagCara(tenantlessCommon(h, diagPerm), diagDeps(store, requester))
+
+	wantTenantless401(t, "D5", h, cara, http.MethodPost, requestTarget, "")
+	wantTenantless401(t, "D6", h, cara, http.MethodGet, bundleTarget+"cmd-listo", "")
+	wantNothingEmitted(t, "D5 y D6 sin empresa", store, requester)
+	if len(store.gets) != 0 || len(store.remaining) != 0 {
+		t.Errorf("D5 y D6 sin empresa: %d lecturas de bundle y el almacén vio %v; quiero 0 y ninguna llamada",
+			len(store.gets), store.remaining)
+	}
+}

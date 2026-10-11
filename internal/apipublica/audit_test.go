@@ -136,3 +136,14 @@ func TestMountAudit_ReaderErrorIs500(t *testing.T) {
 	wantCode(t, "C1 con el lector caído", rec, http.StatusInternalServerError)
 	wantErrorBody(t, "C1 con el lector caído", rec, "no se pudo listar la auditoría")
 }
+
+// TestMountAudit_TenantlessIdentityIs401: con el permiso pero sin empresa en la identidad, C1
+// corta en el handler con el 401 de siempre y no lee la bitácora de nadie.
+func TestMountAudit_TenantlessIdentityIs401(t *testing.T) {
+	h := apipublicahelpertest.New(t)
+	reader := &auditReaderFake{}
+	wantTenantless401(t, "C1", h, auditCara(tenantlessCommon(h, "audit.read"), reader), http.MethodGet, "/api/v1/audit", "")
+	if reader.calls != 0 {
+		t.Errorf("C1 sin empresa: ListAudit se llamó %d veces, quiero 0", reader.calls)
+	}
+}

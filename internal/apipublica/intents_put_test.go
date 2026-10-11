@@ -438,3 +438,18 @@ func TestMountIntents_EventKindIsAdditive(t *testing.T) {
 		}
 	})
 }
+
+// TestMountIntents_PutTenantlessIdentityIs401: con el permiso pero sin empresa en la identidad,
+// E2 corta en el handler con el 401 de siempre, ANTES del gate de `llm_intent` (que respondería
+// 403): ni persiste ni empuja.
+func TestMountIntents_PutTenantlessIdentityIs401(t *testing.T) {
+	h := apipublicahelpertest.New(t)
+	store, pusher := newIntentsStore(), &intentsPusherSpy{}
+	cara := intentsCara(tenantlessCommon(h, intentsWritePerm), apipublica.IntentsDeps{
+		Intents: store, Entitlements: withFeatures(entitlements.FeatureLLMIntent), ConfigPush: pusher,
+	})
+	wantTenantless401(t, "E2", h, cara, http.MethodPut, intentsTarget, intentsValidBody)
+	if store.upserts != 0 || pusher.calls != 0 {
+		t.Errorf("E2 sin empresa: %d escrituras y %d pushes; quiero 0 y 0", store.upserts, pusher.calls)
+	}
+}

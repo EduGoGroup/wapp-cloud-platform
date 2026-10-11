@@ -107,3 +107,13 @@ func TestMountEntitlements_NoResolverIs404(t *testing.T) {
 	wantPatterns(t, "C2 sin resolver", c, nil)
 	wantCode(t, "C2 sin resolver", h.Call(c, h.With(tenantA, "entitlements.read"), http.MethodGet, "/api/v1/entitlements", ""), http.StatusNotFound)
 }
+
+// TestMountEntitlements_TenantlessIdentityIs401: con el permiso pero sin empresa en la identidad,
+// C2 corta en el handler con el 401 de siempre en vez de resolver los derechos del tenant "".
+func TestMountEntitlements_TenantlessIdentityIs401(t *testing.T) {
+	h := apipublicahelpertest.New(t)
+	c := apipublica.Nueva()
+	apipublica.MountEntitlements(c, tenantlessCommon(h, "entitlements.read"),
+		apipublica.EntitlementsDeps{Entitlements: &resolverSpy{plan: "pro", features: []string{"cart_basic"}, ttl: time.Minute}})
+	wantTenantless401(t, "C2", h, c, http.MethodGet, "/api/v1/entitlements", "")
+}
