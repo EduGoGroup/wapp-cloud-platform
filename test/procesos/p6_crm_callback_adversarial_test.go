@@ -212,13 +212,23 @@ func (w *p6World) callbackBodyAdversarial(t *testing.T) {
 	}
 	p6WantApplied(t, "callback de 64 KiB justos", w.post(t, w.signed(sized(p6MaxCallbackBody))), w.approved, status, false)
 	mark := p9Scalar(t, w.sc.DB, p6IntakeMark, w.approved)
+	// Los tres que siguen TIENEN que rechazarse: van por postRejected, que da por rechazo la respuesta
+	// de error o, si no llega ninguna, el corte de la conexión al enviar. La marca de después dice que
+	// nada se aplicó en ninguno de los dos casos.
 	over := w.signed(sized(p6MaxCallbackBody + 1))
-	p6WantError(t, "callback de 64 KiB + 1", w.post(t, over), http.StatusRequestEntityTooLarge, `"max_bytes":65536`)
+	if r, answered := w.postRejected(t, over); answered {
+		p6WantError(t, "callback de 64 KiB + 1", r, http.StatusRequestEntityTooLarge, `"max_bytes":65536`)
+	}
 	over.Signature = crmFakeSignaturePrefix + strings.Repeat("0", 64)
-	p6WantError(t, "callback de 64 KiB + 1 mal firmado", w.post(t, over), http.StatusRequestEntityTooLarge, `"max_bytes":65536`)
-	// La ventana va ANTES que el cuerpo: fuera de ventana ni se lee.
+	if r, answered := w.postRejected(t, over); answered {
+		p6WantError(t, "callback de 64 KiB + 1 mal firmado", r, http.StatusRequestEntityTooLarge, `"max_bytes":65536`)
+	}
+	// La ventana va ANTES que el cuerpo: fuera de ventana ni se lee. Es el que el servidor contesta
+	// con el cuerpo a medio llegar, y por eso el que puede acabar en corte.
 	stale := crmFakeSignedCallback(w.secret, w.sc.Tenant, time.Now().Add(-time.Hour), sized(p6MaxCallbackBody+1))
-	p6WantUnauthenticated(t, "callback de 64 KiB + 1 fuera de ventana", w.post(t, stale))
+	if r, answered := w.postRejected(t, stale); answered {
+		p6WantUnauthenticated(t, "callback de 64 KiB + 1 fuera de ventana", r)
+	}
 	p6WantMark(t, w.sc, "tras los callbacks sobre el techo", mark, p6IntakeMark, w.approved)
 	w.sc.expectNoPendingText(t, "tras la tabla de cuerpos del callback")
 }

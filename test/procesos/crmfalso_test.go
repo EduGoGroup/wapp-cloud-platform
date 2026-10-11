@@ -372,11 +372,17 @@ func crmFakeStatusBody(t *testing.T, intakeID, status, externalRef string, occur
 // (t.Fatalf) solo si la petición no se puede construir o no llega.
 func (cb crmFakeCallback) Post(t *testing.T, s *servidor) respuesta {
 	t.Helper()
-	r, err := cb.send(t.Context(), "http://"+s.PublicaAddr+crmFakeCallbackPath)
+	r, err := cb.Try(t.Context(), s)
 	if err != nil {
 		t.Fatalf("callback del CRM: %v", err)
 	}
 	return r
+}
+
+// Try es Post sin el t.Fatalf: manda el callback y devuelve el error de transporte tal cual, para el
+// llamante que tiene que distinguir un corte de conexión de un servidor que no está.
+func (cb crmFakeCallback) Try(ctx context.Context, s *servidor) (respuesta, error) {
+	return cb.send(ctx, "http://"+s.PublicaAddr+crmFakeCallbackPath)
 }
 
 // send hace el POST a url con las cabeceras no vacías del callback. Devuelve la respuesta, o el error

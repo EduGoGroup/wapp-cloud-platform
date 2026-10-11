@@ -3,9 +3,13 @@
 package procesos
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -81,6 +85,7 @@ type p6World struct {
 	sc    *draftScene
 	crm   *crmFake
 	calls *p9World // solo por su `call`, que reintenta el 429 (hallazgo 32)
+	cuts  int      // callbacks reintentados porque el servidor cortó la conexión al enviar (ver try)
 
 	admin    p9Caller // la administradora de la empresa del proceso
 	viewer   p9Caller // un viewer de la misma empresa: lee, no escribe
@@ -263,18 +268,73 @@ func (w *p6World) raw(t *testing.T, c p9Caller, action, method, path string, bod
 // post manda un callback del puente a la API pública, reintentando el 429: la ruta no lleva token y aun
 // así pasa por el límite de peticiones (el mismo 429 «demasiadas peticiones» del hallazgo 32), que
 // corta antes del handler, así que el callback reintentado es el primero que la puerta «vio».
+//
+// Reintenta también el corte de la conexión al enviar (ver p6CutWhileSending). Si vence el tope sin
+// respuesta, falla: quien llama a post quiere una respuesta que afirmar.
 func (w *p6World) post(t *testing.T, cb crmFakeCallback) respuesta {
 	t.Helper()
+	r, answered := w.try(t, cb)
+	if !answered {
+		t.Fatalf("pasaron %s sin respuesta al callback: el servidor cortó la conexión en cada intento", edgeTopeFila)
+	}
+	return r
+}
+
+// postRejected es post para un callback que el servidor TIENE que rechazar. Devuelve answered=false
+// si en todo el tope no llegó ninguna respuesta porque el servidor cortó la conexión en cada intento:
+// ese corte es un rechazo válido (el servidor no leyó el cuerpo, así que no pudo aplicarlo) y el
+// llamante no tiene código que afirmar. Con respuesta, la afirma como siempre: un servidor que ACEPTA
+// el cuerpo lo lee entero, no corta, y su 200 llega aquí.
+func (w *p6World) postRejected(t *testing.T, cb crmFakeCallback) (r respuesta, answered bool) {
+	t.Helper()
+	if r, answered = w.try(t, cb); !answered {
+		t.Logf("callback rechazado por corte de la conexión en cada intento durante %s", edgeTopeFila)
+	}
+	return r, answered
+}
+
+// try manda el callback hasta que hay una respuesta que no sea 429, con el tope de siempre. Devuelve
+// false si el tope venció y TODOS los intentos sin respuesta fueron cortes al enviar; un 429 que dura
+// todo el tope sigue siendo un fallo, y cualquier otro error de transporte también.
+func (w *p6World) try(t *testing.T, cb crmFakeCallback) (respuesta, bool) {
+	t.Helper()
 	var r respuesta
-	edgeEsperar(t, edgeTopeFila, "el callback sin 429", func() bool {
-		r = cb.Post(t, w.sc.S)
-		if r.Codigo == http.StatusTooManyRequests {
+	ctx, cancel := context.WithTimeout(t.Context(), edgeTopeFila)
+	defer cancel()
+	answered := edgeSondear(ctx, func() bool {
+		var err error
+		r, err = cb.Try(t.Context(), w.sc.S)
+		switch {
+		case p6CutWhileSending(err):
+			w.cuts++
+			return false
+		case err != nil:
+			t.Fatalf("callback del CRM: %v", err)
+		case r.Codigo == http.StatusTooManyRequests:
 			w.calls.throttled++
 			return false
 		}
 		return true
 	})
-	return r
+	if !answered && r.Codigo == http.StatusTooManyRequests {
+		t.Fatalf("pasaron %s sin que se diera: el callback sin 429", edgeTopeFila)
+	}
+	return r, answered
+}
+
+// p6CutWhileSending dice si err es el corte de la conexión mientras el cliente aún escribía el
+// cuerpo. Pasa cuando el servidor contesta SIN leer el cuerpo (el 401 de la ventana, que va antes que
+// el cuerpo, o un 429) y cierra: net/http no drena lo que el handler no leyó, y el cliente, que seguía
+// escribiendo un cuerpo grande, pierde a veces la carrera y ve el error en vez de la respuesta
+// (hallazgos 14 y 58 de F8; T8.42). Un 413 no lo provoca: para darlo, el servidor ya leyó el cuerpo
+// hasta el techo.
+//
+// El mismo corte sale con tres caras, según qué mitad del transporte lo note antes: «broken pipe» y
+// «connection reset by peer» si lo nota la escritura, y «use of closed network connection» si lo
+// nota la lectura, que cierra la conexión bajo los pies de la escritura (lo fija
+// TestP6CutWhileSending). «connection refused» —un servidor que no está— no es ninguna de las tres.
+func p6CutWhileSending(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, net.ErrClosed)
 }
 
 // p6Fields decodifica el cuerpo de una respuesta como objeto JSON. Falla (t.Fatalf) si no lo es.
@@ -380,5 +440,5 @@ func (w *p6World) closing(t *testing.T) {
 	// con su sobre) pueden dejar un job muerto por «no trae literal que analizar».
 	requireNoJobWithoutLiteral(t, w.sc)
 	edgeSinErrores(t, w.sc.S, w.errors)
-	t.Logf("peticiones reintentadas por 429: %d", w.calls.throttled)
+	t.Logf("peticiones reintentadas por 429: %d; callbacks reintentados por corte al enviar: %d", w.calls.throttled, w.cuts)
 }
