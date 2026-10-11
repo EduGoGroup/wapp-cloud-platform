@@ -1,31 +1,36 @@
 # FW · Arquitectura
 
-> Vista macro. 🟡 Es la **intención**; el dibujo exacto lo corrige FW-01 (TW.3) con lo que mida. Rutas del Edge sobre
-> `edge/wapp-edge-agent` @ `38e5f91`.
+> Vista macro, **corregida por FW-01 (TW.3, 2026-10-11) con lo medido** ([`diseno.md`](diseno.md) §2). Rutas del Edge
+> sobre `edge/wapp-edge-agent` @ `38e5f91`. 🟡 Pendiente de la aprobación de Jhoan.
 
 ## 1 · Hoy
 
 ```
-WhatsApp ⇄ adapters/whatsmeow ──(puertos de internal/app)──► cola SQLite cifrada ─► despachador ─► adapters/cloudlink ⇄ Cloud
-               ▲   Connector · ListenGateway · LiveSender
+WhatsApp ⇄ adapters/whatsmeow ─► puerta (Listener: 5 guardas, marca, Enqueue) ─► cola SQLite cifrada ─► despachador ─► adapters/cloudlink ⇄ Cloud
+               ▲   lo CONSTRUYE app/sessionmgr (listen.go:110, pairing.go:55), no el arranque
                └── inyector (ADR-0041): fabrica un *events.Message y lo mete por handleEvent;
                    necesita el Listener del adaptador real ⇒ sin sesión viva, 409
 ```
 
-Los puertos existen, pero solo tienen **una** implementación de producción, y la aplicación conoce tipos de `whatsmeow`
-(`internal/app/sessionmgr`, `internal/domain`).
+Los puertos existen y sus firmas están **limpias** de tipos de `whatsmeow` (`internal/domain` no importa la librería).
+El problema es otro: `internal/app/sessionmgr` **construye el adaptador concreto** y usa diez métodos suyos que no están
+en ningún puerto. La costura (`m.newListener`, `m.newPairer`) existe, pero es privada.
 
 ## 2 · Destino
 
 ```
-                 ┌─ adapters/whatsmeow   (real; por defecto)
-puertos de app ──┤
-                 └─ adapters/<falso>     (palanca; grita; todo sale marcado sintético)
-                        ├─ entrada: una ruta local hace entrar un mensaje ─► MISMA cola, despachador y CloudLink
-                        └─ salida : SendText / SendMedia se anotan en un registro legible desde fuera
+                        ┌─ adapters/whatsmeow       (real; por defecto)
+transporte de sesión ───┤
+(interfaz de sessionmgr)└─ adapters/whatsappfalso   (WAPP_AGENT_WHATSAPP_FALSO; grita; todo sale marcado sintético)
+                               ├─ alta   : el emparejamiento de siempre, con un Connector falso ─► la DEK nace en el cliente
+                               ├─ entrada: POST /v1/diag/inbound/inject ─► la MISMA puerta (Listener sin cliente) ─► cola, despachador, CloudLink
+                               └─ salida : SendText / SendMedia se anotan en memoria ─► GET /v1/diag/outbound/captured
 ```
 
-- **La elección se hace una vez, en el arranque** (`internal/infra/daemon`), según la palanca. Ni la aplicación ni el
+Se sustituye el **transporte** (el cliente de `whatsmeow`: socket, device, almacén), no la puerta de entrantes, que se
+reutiliza tal cual.
+
+- **La elección se hace una vez, en el arranque** (`internal/infra/daemon/daemon.go:226-227`), según la palanca. Ni la aplicación ni el
   dominio saben cuál de los dos corre.
 - **Todo lo demás es el Edge real**: cola cifrada, despachador, lease, CloudLink con mTLS, cliente de inferencia.
   Eso es justo lo que el Edge falso de `test/procesos` no ejercita.
@@ -36,8 +41,9 @@ puertos de app ──┤
 test/procesos (este repo)
    ├─ Postgres            (testcontainers, como hoy)
    ├─ cmd/server-modular  (como hoy; tras el relevo, cmd/server)
-   └─ wapp-edge-agent     (NUEVO: el binario real, con WhatsApp falso)
-          entrada ◄── el caso inyecta «carrito», «1», «2»…
+   └─ agent serve         (NUEVO: el binario real del Edge, con WhatsApp falso; sin wapp-ctl, sin cajero, sin Ollama)
+          antes   :   agent enroll <código> contra el :8102 del arnés (enrolamiento real, no interactivo)
+          entrada ◄── el caso inyecta «carrito», «1», «2»… por el socket unix de control
           salida  ──► el caso lee lo capturado y lo compara
 ```
 
@@ -50,7 +56,7 @@ no un sustituto (D-FW-5).
 |---|---|
 | El contrato de CloudLink (`cloud/wapp-cloudlink`) | La fase no añade ni un campo al proto. La marca sintética ya viaja en el `WAMessageID` |
 | La doble llave (ADR-0007, fuera de este repo: la DEK la custodia el cliente; el lease lo emite y revoca el servidor) | El falso no relaja el lease ni mueve la DEK |
-| Sin Redis ni broker en el Edge (ADR-0003) | El registro de envíos es memoria o SQLite; lo decide TW.3 |
+| Sin Redis ni broker en el Edge (ADR-0003) | El registro de envíos es **memoria**, con tope ([`diseno.md`](diseno.md) §3) |
 | El código de producción de este repo | Aquí solo cambian `test/procesos`, el `Makefile` y la documentación |
 | El Edge con la palanca baja | Requisito RW.1.b |
 
@@ -58,7 +64,11 @@ no un sustituto (D-FW-5).
 
 1. **Un transporte falso en un daemon de producción.** Se trata como el inyector: apagado por defecto, la superficie no
    existe con la palanca baja, grita, marca. El ADR de D-FW-1 lo deja escrito.
-2. **El arranque sin device pareado.** Hoy la escucha parte de un device cargado del almacén cifrado. Cuánto hay que
-   abrir para arrancar sin él está **sin medir** (TW.1).
-3. **La inferencia.** El Edge sirve la inferencia contra Ollama. En local, el caso necesita un Ollama o un doble de él:
-   lo decide TW.3 (el arnés de F9 ya resuelve esto para el Edge falso; ver [`F9-procesos/diseno.md`](../F9-procesos/diseno.md)).
+2. **El arranque sin device pareado.** ✅ Medido: el daemon arranca con cero sesiones; lo que exige device es `Listen`
+   del adaptador real ([`diseno.md`](diseno.md) §2.2). La sesión falsa nace por el emparejamiento de siempre.
+3. **La inferencia.** ✅ Medido: el carrito no la necesita; el Edge real sin cajero contesta `OLLAMA_DOWN`, que es lo que
+   el caso ya espera ([`diseno.md`](diseno.md) §2.6).
+4. **La DEK no es opcional aunque el falso no descifre nada**: la cola de entrantes sella con ella. Y en macOS su custodia
+   es el Keychain, fijado en compilación: decisión **D-FW-7**.
+5. **El lease sin validador.** Sin `WAPP_AGENT_CLOUDLINK_LEASE_PUBKEY_PATH` el Edge envía con el lease revocado: el caso
+   la pone siempre, o RW.3.c no mide nada.

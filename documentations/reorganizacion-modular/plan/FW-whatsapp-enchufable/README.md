@@ -1,9 +1,10 @@
 # FW · WhatsApp enchufable — el Edge real conversa sin WhatsApp
 
-> **Estado**: ⏳ sin empezar (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
+> **Estado**: 🟡 **bloque A (FW-01) escrito el 2026-10-11, PR abierto, en revisión; el diseño y el ADR-0049 esperan la
+> aprobación de Jhoan antes de FW-02** (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
 > [`deuda.md`](../../../deuda.md)). Medida sobre `edge/wapp-edge-agent` @ `38e5f91` (rama `main`; su rama por defecto es `dev`).
-> **Forma**: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). 🟡 Spec **corta a propósito**: lo que no se ha
-> medido está marcado «sin medir» y lo fija la primera sesión (FW-01), que es de solo lectura.
+> **Forma**: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Spec **corta a propósito**; lo que faltaba por
+> medir lo midió FW-01 (solo lectura) y está en [`diseno.md`](diseno.md) §2, con lo que solo se sabe ejecutando en su §6.
 > 🔴 **El código de esta fase NO vive en este repo**: vive en `edge/wapp-edge-agent`. Aquí viven la spec, las sesiones y
 > el caso de proceso que conduce la conversación. `05` (contratos y TDD de `internal/modulos`) **no** rige el código del
 > Edge: rige la `documentations/` del Edge.
@@ -25,12 +26,13 @@ P2→P5 o cualquier flujo, las veces que haga falta. Sirve para cerrar la migrac
 | El Edge **ya tiene** un inyector de entrantes (ADR-0041, fuera de este repo: «vía **permanente** y apagada por defecto»): `POST /v1/diag/inbound/inject`, palanca `WAPP_AGENT_INYECTOR_ENTRANTES` | `internal/adapters/control/diag/inyector.go:70` |
 | 🔴 El inyector **no sustituye** a WhatsApp: vive dentro del adaptador `whatsmeow`, fabrica `*events.Message` y necesita un `Listener` publicado; sin él responde `409` (`ErrSinEscuchaViva`) | `internal/adapters/whatsmeow/inyector.go:60`, `internal/app/sessionmgr/inyector.go:96` |
 | 🔴 Solo cubre la **entrada**. Un emisor falso que capture la salida: **no se encontró** (búsqueda no exhaustiva) | — |
-| `whatsmeow` se importa fuera de su adaptador y del almacén: `internal/app/sessionmgr` (2 ficheros), `internal/domain` (1), `internal/adapters/cloudlink` (1), `internal/infra/edgemigrate` (1) | `grep -rl 'go.mau.fi/whatsmeow' --include='*.go' . \| grep -v _test.go`, por directorio |
+| `whatsmeow` se importa fuera de su adaptador y del almacén en **3 ficheros**: `internal/app/sessionmgr` (2) e `internal/infra/edgemigrate` (1), los tres solo por `types.ParseJID`. ✎ FW-01: esta fila contaba también `internal/domain` y `internal/adapters/cloudlink`, que solo **mencionan** la librería en un comentario (hallazgo 1) | `grep -rn 'go.mau.fi/' --include='*.go' . \| grep -v _test.go`, contando ficheros con `import` |
 | 🟡 Contradicción: el ADR-0041 dice «permanente»; la cabecera de `control/diag/inyector.go` dice que el paquete «se BORRA cuando la pregunta esté respondida» | los dos textos |
 
-**Sin medir** (lo fija FW-01): si con la sesión caducada el `Listener` llega a publicarse; qué impide hoy arrancar el
-daemon sin un device pareado; cuánto de `sessionmgr` depende de tipos de `whatsmeow`; si el arnés de `test/procesos`
-puede lanzar el binario del Edge.
+**Lo que faltaba por medir, medido por FW-01** ([`diseno.md`](diseno.md) §2): con la sesión caducada el `Listener` solo
+sigue publicado mientras el proceso vive, y la sesión ya salió del mux (no sirve de base); el daemon **arranca** sin
+device pareado; `sessionmgr` no depende de tipos de `whatsmeow` en sus firmas, pero **construye** el adaptador concreto; y
+el arnés de `test/procesos` **puede** lanzar y enrolar el binario del Edge, con siete cosas por montar.
 
 ## Entradas (tiene que ser cierto para empezar)
 
@@ -74,7 +76,7 @@ reconstrucción del Cloud.
 
 | Sesión | Bloque | Tareas | Dónde trabaja | Para cuando |
 |---|---|---|---|---|
-| [FW-01](../sesiones/FW-01-cli-inventario-y-adr.md) | **A · inventario y ADR** | TW.1–TW.3 | Edge (solo lectura) y la raíz de wApp (el ADR) | Los «sin medir» de arriba, medidos; el borrador del ADR; diseño de este directorio corregido con lo medido. **Jhoan aprueba antes de escribir código** |
+| [FW-01](../sesiones/FW-01-cli-inventario-y-adr.md) | **A · inventario y ADR** | TW.1–TW.3 | Edge (solo lectura) y la raíz de wApp (el ADR) | Lo que faltaba por medir, medido; el borrador del ADR; diseño de este directorio corregido con lo medido. **Jhoan aprueba antes de escribir código** |
 | [FW-02](../sesiones/FW-02-cli-adaptador-falso.md) | **B · el adaptador falso** | TW.4–TW.6 | Edge | El Edge arranca con WhatsApp falso: entra un mensaje y se lee la respuesta capturada; con la palanca baja, nada cambia |
 | [FW-03](../sesiones/FW-03-cli-conversacion-edge-real.md) | **C · la conversación con Edge real** | TW.7–TW.8, TW.11 | este repo y Edge · **Docker** | Un comando corre el carrito con Cloud nuevo + Edge real, `RC=0`, 0 SKIP; y un carrito interrumpido se reanuda con la política de la empresa (D-39) |
 | [FW-04](../sesiones/FW-04-cli-cierre-y-receta-uat.md) | **D · cierre y receta de UAT** | TW.9–TW.10 | este repo, Edge y la raíz de wApp | Receta para UAT escrita y probada en local; D-38 cerrada; documentación de las dos piezas al día |
@@ -87,9 +89,45 @@ reconstrucción del Cloud.
 | **D-FW-2** | ¿El WhatsApp falso va en el **mismo binario** tras una palanca, o en un binario / *build tag* aparte? | **Mismo binario, palanca apagada por defecto**. El ADR-0041 ya rechazó el binario aparte: «un instrumento que solo existe en un binario que no se despliega no mide el sistema desplegado» |
 | **D-FW-3** | ¿El relevo (F10-04) espera a esta fase? | ✅ **Decidida: sí** (Jhoan, 2026-10-11). F10-03 depende de FW y F10-04 de F10-03: el código viejo se borra solo cuando el flujo nuevo está visto funcionando, o le quedan detalles menores que se arreglan sin el viejo delante |
 | **D-FW-4** | ¿Se limpia toda la fuga de `whatsmeow` fuera de su adaptador? | **Solo lo que impida enchufar el falso**. El resto, deuda del Edge con número. Se decide con el inventario de TW.1 |
-| **D-FW-5** | ¿Quién conduce la conversación? | **El arnés de `test/procesos`** de este repo, con un modo «Edge real» junto al Edge falso (que no se retira). 🟡 Sin medir si puede lanzar el binario del Edge: lo dice TW.1 |
+| **D-FW-5** | ¿Quién conduce la conversación? | **El arnés de `test/procesos`** de este repo, con un modo «Edge real» junto al Edge falso (que no se retira). ✅ Medido (FW-01): puede lanzarlo y enrolarlo; lo que falta montar está en [`diseno.md`](diseno.md) §2.5 |
 | **D-FW-6** | La contradicción ADR-0041 («permanente») ↔ comentario de `control/diag` («se borra») | Manda el ADR; el comentario se corrige en TW.4 |
+| **D-FW-7** | ✎ FW-01. La custodia de la DEK en macOS es el Keychain, fijado en compilación: cada binario nuevo abre un diálogo. ¿Cómo corre el caso sin nadie delante? | **Con la palanca echada, custodia en el archivo `0600` del cliente.** 🔴 Toca la custodia de la llave (no la mueve del cliente): no se hace sin tu sí. Alternativas en [`diseno.md`](diseno.md) §5 |
+| **D-FW-8** | ✎ FW-01. ¿El falso reutiliza la puerta de entrantes del adaptador real, o se escribe sin importar nada de `whatsmeow`? | **Reutiliza la puerta** (lección del ADR-0041: reescribir las guardas «mide otro tramo»). Se sustituye el transporte, no la puerta |
 
 ## Hallazgos
 
-*(vacío: los numera cada sesión al cerrar)*
+### FW-01 (2026-10-11) · inventario de solo lectura sobre `edge/wapp-edge-agent` @ `38e5f91`
+
+1. **La spec contaba menciones, no imports.** Decía que `internal/domain` e `internal/adapters/cloudlink` importaban
+   `whatsmeow`: solo lo nombran en un comentario (`internal/domain/jid.go:7`, `internal/adapters/cloudlink/adapter.go:628`).
+   Regla 6 del `CLAUDE.md` de la raíz: se dice con qué regla se contó.
+2. **El estorbo no son los tipos, es quién construye.** Ningún tipo de `whatsmeow` cruza un puerto. Lo que impide
+   enchufar el falso es que `sessionmgr` construye el adaptador concreto (`internal/app/sessionmgr/listen.go:110`,
+   `pairing.go:55`) y usa diez métodos suyos fuera de los puertos (`listen.go:113-201`). RW.1.c se reescribió con eso.
+3. **`LiveSender` es un puerto sin consumidor de producción** (solo una aserción de test,
+   `internal/adapters/whatsmeow/listen_gateway_test.go:11`); el envío real va por *closures*. Lo mismo `LiveLogout`. La spec
+   lo daba por el puerto del envío.
+4. **La «vertical muerta» de envío ya no existe**: `internal/app/send.go` se borró en `e5f149b`. La trampa 10 de la
+   constitución del Edge está caducada. Se corrige en la documentación del Edge en TW.10, no aquí.
+5. 🔴 **La DEK hace falta aunque el falso no descifre nada**: la cola de entrantes sella con ella
+   (`internal/infra/wiring/cloudlink.go:147-163`). Por eso la sesión falsa nace por el emparejamiento de siempre, que la
+   genera en el cliente (`internal/app/pair.go:143`, `:175`).
+6. 🔴 **Sin `WAPP_AGENT_CLOUDLINK_LEASE_PUBKEY_PATH` el Edge no tiene validador y envía con el lease revocado**
+   (`internal/infra/wiring/cloudlink.go:291-293`). El caso de RW.3.c la pone siempre o es verde sin medir. Además, la
+   constitución del Edge dice que **no hay ningún test** que afirme «sin lease no se despacha» (INV-2): el de TW.6 será el primero.
+7. **La custodia de la DEK en macOS es el Keychain, fijado en compilación** (`internal/adapters/keycustody/file.go:1`).
+   No hay variable. Abre la decisión **D-FW-7**.
+8. **El inyector se reutiliza**: su contrato es una *closure* sin tipos de la librería
+   (`internal/app/sessionmgr/session.go:194`). Y la puerta de entrantes (`NewListener`, `listener.go:331`) no necesita
+   cliente. Abre la decisión **D-FW-8**.
+9. **El arnés no tiene precedente de repo hermano ni de binario por variable**, y exige `GOWORK=off`
+   (`test/procesos/main_test.go:127-142`). La propuesta: `WAPP_PROCESOS_EDGE_DIR`, etiqueta `edgereal` y objetivo aparte.
+10. **El carrito no necesita Ollama ni el cajero**: es motor de flujos y la única inferencia ya se espera caída
+    (`test/procesos/p3_entrante_cart_test.go:238-248`).
+11. **Varios comentarios del Edge citan líneas ya desplazadas** (p. ej. `session.go:182` dice `listen.go:169` y el cable
+    está en `listen.go:187`). Las líneas de [`diseno.md`](diseno.md) son las reales a `38e5f91`.
+12. **La raíz de wApp no tiene remoto ni rama `dev`**: solo `main`, con cambios de Jhoan sin commitear. El borrador del
+    ADR-0049 queda como fichero nuevo **sin commitear**; cómo entra lo decide Jhoan. `make check-docs` de la raíz dio
+    `rc=0` con el gate de diagramas **saltado** (falta `mmdc`): un salto no es un verde, y el ADR no trae diagramas.
+13. **Las decisiones D-FW-1, D-FW-2, D-FW-4, D-FW-5 y D-FW-6 siguen vacías** en [`../DECISIONES.md`](../DECISIONES.md) §8.
+    FW-01 no las necesitaba; FW-02 sí, junto con D-FW-7 y D-FW-8.
