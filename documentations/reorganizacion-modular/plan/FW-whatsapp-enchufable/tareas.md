@@ -10,14 +10,16 @@
 
 Para cuando: [`diseno.md`](diseno.md) sin «sin medir» y el ADR en borrador. **Jhoan aprueba antes de FW-02.**
 
-- [ ] **TW.1 · Inventario del Edge** · Edge, solo lectura · cumple RW.1.c
+- [x] **TW.1 · Inventario del Edge** · Edge, solo lectura · cumple RW.1.c · `f9c7c309` (este repo; en el Edge, ni un commit: medido a `38e5f91`)
   - **Ficheros**: [`diseno.md`](diseno.md) §2 (las seis preguntas, contestadas con `fichero:línea`)
   - **Hecho cuando**: cada pregunta tiene respuesta medida o un «no se pudo medir, porque…»; la fuga de `whatsmeow`
     fuera del adaptador, listada y partida en «estorba al falso» / «no estorba» (D-FW-4)
-- [ ] **TW.2 · El ADR** · raíz de wApp (`documentations/adrs/`) · D-FW-1, D-FW-2, D-FW-6
+- [~] **TW.2 · El ADR** · raíz de wApp (`documentations/adrs/`) · D-FW-1, D-FW-2, D-FW-6 · borrador escrito el 2026-10-11:
+  `0049-el-transporte-de-whatsapp-del-edge-es-enchufable.md`, **sin commitear** (la raíz no tiene remoto ni `dev`: hallazgo 12);
+  `make check-docs` rc=0 con el gate de diagramas saltado. D-FW-1 decidida el 2026-10-11 (ADR nuevo). **Falta: que Jhoan apruebe el texto**, y entonces el índice de ADR y el commit
   - **Hecho cuando**: borrador con la decisión, su tabla de alternativas descartadas y la relación con el ADR-0041 y el
     ADR-0007; `make check-docs` de la raíz verde; **aprobado por Jhoan**
-- [ ] **TW.3 · El diseño, con lo medido** · Cloud (documentación) · dep. TW.1
+- [x] **TW.3 · El diseño, con lo medido** · Cloud (documentación) · dep. TW.1 · `f9c7c309` (este repo) · 🟡 pendiente de la aprobación de Jhoan ([`diseno.md`](diseno.md) §3 y §5)
   - **Ficheros**: [`diseno.md`](diseno.md) §3 y §4, [`requisitos.md`](requisitos.md) (los `<…>` sustituidos), [`arquitectura.md`](arquitectura.md)
   - **Hecho cuando**: palanca, paquete, entrada, salida y acuses tienen nombre; cada requisito nombra su test
   - **Commit**: `docs(reorganizacion-modular): FW, inventario del Edge y diseño`
