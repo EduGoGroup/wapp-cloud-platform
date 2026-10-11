@@ -416,7 +416,7 @@ func (p *Postgres) Fail(ctx context.Context, jobID, reason string) (bool, error)
 
 // execTransition ejecuta una transición de la máquina y traduce «0 filas» a
 // `(false, nil)`. Centraliza la convención del paquete —la misma que CloseWindow y
-// PutSourceText— en un solo sitio: una transición que no aplica NO es un error, es
+// CloseWithSourceText— en un solo sitio: una transición que no aplica NO es un error, es
 // que otro llegó antes o que el job ya estaba terminado.
 //
 // `what` es texto de operador para el error, ya compuesto por el llamante.

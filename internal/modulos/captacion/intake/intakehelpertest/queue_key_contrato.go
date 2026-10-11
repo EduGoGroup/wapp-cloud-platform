@@ -9,12 +9,11 @@ import (
 
 // Los textos con los que las escrituras de la cola rechazan una clave de ventana incompleta. Son
 // observables y LITERALES: los mismos en intake.Postgres y en intake.MemoryStore (hallazgo 7 de
-// F7), cada escritura con el suyo. El de la cuarta, CloseWithSourceText, está con sus casos en
+// F7), cada escritura con el suyo. El de la tercera, CloseWithSourceText, está con sus casos en
 // queue_close_contrato.go.
 const (
 	incompleteKeyOnOpen  = "intake: clave de ventana incompleta (tenant/session/contact/event)"
 	incompleteKeyOnClose = "intake: clave de ventana incompleta al cerrar"
-	incompleteKeyOnPut   = "intake: clave de ventana incompleta al guardar el literal"
 )
 
 // incompleteKey es una clave de ventana a la que le falta algo, con el nombre de lo que le falta.
@@ -112,29 +111,5 @@ func caseCloseIncompleteKey(t *testing.T, m QueueMontaje) {
 			t.Errorf("CloseWindow con la clave %s = (%v, %v), quería (false, %q)", c.name, ok, err, incompleteKeyOnClose)
 		}
 		requireSameQueue(t, m, "cerrar con la clave "+c.name, before, 2)
-	}
-}
-
-// casePutIncompleteKey: una clave incompleta no escribe el sobre en ninguna ventana cerrada:
-// (false, error) con su texto, y la tabla intacta. LA CLAVE SE MIRA ANTES QUE EL SOBRE: con las
-// dos cosas mal, el error es el de la clave.
-func casePutIncompleteKey(t *testing.T, m QueueMontaje) {
-	k := newKey(m.TenantA)
-	w := seedQueueWitness(t, m, k)
-	open(t, m, k, firstMessageTS, "wamid.one")
-	closeLive(t, m, k)
-	// El testigo del otro tenant también queda cerrado y sin sobre: es otra fila que rellenar.
-	closeLive(t, m, w.key)
-	before := queueSnapshot(t, m)
-	m.Advance(t)
-
-	for _, c := range incompleteKeysOf(k) {
-		for name, env := range map[string]intake.SourceText{"un sobre completo": envelope("stray"), "un sobre incompleto": {}} {
-			ok, err := m.Store.PutSourceText(context.Background(), c.key, env)
-			if ok || err == nil || err.Error() != incompleteKeyOnPut {
-				t.Errorf("PutSourceText con la clave %s y %s = (%v, %v), quería (false, %q)", c.name, name, ok, err, incompleteKeyOnPut)
-			}
-		}
-		requireSameQueue(t, m, "guardar el literal con la clave "+c.name, before, 0)
 	}
 }

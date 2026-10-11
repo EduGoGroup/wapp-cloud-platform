@@ -11,8 +11,8 @@ import (
 
 // Postgres es la implementación real de JobStore sobre `public.intake_jobs`
 // (migración 0072). No tiene cipher y NO DEBE TENERLO, ni siquiera desde que T1.4
-// escribe el sobre: lo que llega a PutSourceText son bytes YA cifrados por el
-// compositor del flush, que es quien tiene el KeyProvider. Un store sin cipher es
+// escribe el sobre: lo que llega a CloseWithSourceText y a OpenReanalysis son bytes YA
+// cifrados por el compositor, que es quien tiene el KeyProvider. Un store sin cipher es
 // un store que no puede escribir literal aunque alguien se lo pida — que es la
 // forma barata de sostener D-044.26.
 type Postgres struct {
@@ -136,79 +136,21 @@ func (p *Postgres) CloseWindow(ctx context.Context, k WindowKey) (bool, error) {
 	return n > 0, nil
 }
 
-// putSourceTextSQL escribe el sobre del literal sobre la ventana recién cerrada.
-//
-// # LAS DOS GUARDAS, Y EL ACCIDENTE QUE EVITA CADA UNA
-//
-//   - La SUBCONSULTA (`status='pending'` + `ORDER BY updated_at DESC, created_at
-//     DESC LIMIT 1`) elige UNA fila y solo una. Sin ella, un `UPDATE … WHERE tupla
-//     AND status='pending'` tocaría TODAS las ventanas que esa tupla haya cerrado
-//     desde siempre —el índice único de la 0072 es PARCIAL y solo cubre
-//     'aggregating'—, escribiendo el texto de hoy encima del de la semana pasada.
-//   - El `AND j.source_text_enc IS NULL` de fuera impide lo contrario: que el sobre
-//     de una ventana se escriba sobre una fila que YA tiene el suyo. Con las dos, un
-//     segundo intento sobre la misma ventana afecta 0 filas y devuelve false sin
-//     error, igual que CloseWindow.
-//
-// Las tres columnas se escriben en la MISMA sentencia: no hay forma de dejar la
-// fila con dos de tres (ver SourceText.Complete, que además lo comprueba antes).
-const putSourceTextSQL = `
-UPDATE public.intake_jobs AS j
-   SET source_text_enc    = $5,
-       source_text_dek    = $6,
-       source_text_kek_id = $7,
-       updated_at         = now()
- WHERE j.id = (
-        SELECT id
-          FROM public.intake_jobs
-         WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3 AND event_id = $4::uuid
-           AND status = 'pending'
-         ORDER BY updated_at DESC, created_at DESC
-         LIMIT 1)
-   AND j.source_text_enc IS NULL
-`
-
-// PutSourceText implementa JobStore.
-func (p *Postgres) PutSourceText(ctx context.Context, k WindowKey, env SourceText) (bool, error) {
-	if p == nil || p.db == nil {
-		return false, nil
-	}
-	if !k.Valid() {
-		return false, fmt.Errorf("intake: clave de ventana incompleta al guardar el literal")
-	}
-	if !env.Complete() {
-		// Un sobre a medias deja una fila INDESCIFRABLE, y eso no se puede deshacer
-		// leyendo: no hay copia de la DEK en ningún otro sitio. Se rechaza antes de
-		// tocar la base. El error NO cita el contenido, solo dice qué falta.
-		return false, fmt.Errorf("intake: sobre del literal incompleto (enc=%d dek=%d kek_id=%t): son las tres o ninguna",
-			len(env.Enc), len(env.DEK), env.KEKID != "")
-	}
-	res, err := p.db.ExecContext(ctx, putSourceTextSQL,
-		k.TenantID, k.SessionID, k.ContactID, k.EventID, env.Enc, env.DEK, env.KEKID)
-	if err != nil {
-		return false, fmt.Errorf("intake: guardar el literal de la ventana: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("intake: contar filas del literal guardado: %w", err)
-	}
-	return n > 0, nil
-}
-
 // closeWithSourceTextSQL cierra la ventana Y le guarda su sobre, en una sola sentencia.
 //
-// ✎ Divergencia deliberada del viejo (D-F7-9, D-F8-13). El viejo son closeWindowSQL y
-// después putSourceTextSQL: entre las dos la fila está en `pending` SIN sobre, que es
-// exactamente lo que reclama el worker. Aquí `status` y las tres columnas del sobre
-// cambian en el MISMO UPDATE, así que ningún reclamo puede ver la fila cerrada y vacía.
+// ✎ Divergencia deliberada del viejo (D-F7-9, D-F8-13). El viejo son dos sentencias, su
+// closeWindowSQL y después su putSourceTextSQL: entre las dos la fila está en `pending`
+// SIN sobre, que es exactamente lo que reclama el worker. Aquí `status` y las tres
+// columnas del sobre cambian en el MISMO UPDATE, así que ningún reclamo puede ver la fila
+// cerrada y vacía.
 //
 // # LAS TRES GUARDAS, Y EL ACCIDENTE QUE EVITA CADA UNA
 //
 //   - `id = $1::uuid` y no la tupla: una tupla puede tener varias filas (el índice único
 //     de la 0072 es PARCIAL), y quien llama es el barrido, que acaba de leer la fila con
 //     listAggregatingSQL y sí conoce su id. Es lo que ahorra la subconsulta y los dos
-//     ORDER BY de putSourceTextSQL, y lo que hace imposible que el sobre caiga en otra
-//     `pending` de la misma tupla.
+//     ORDER BY con que el viejo elegía la fila por la tupla (su putSourceTextSQL), y lo
+//     que hace imposible que el sobre caiga en otra `pending` de la misma tupla.
 //   - `status = 'aggregating'`: la idempotencia de closeWindowSQL. Un segundo cierre —o
 //     uno que llega después del adelanto por intent— afecta 0 filas.
 //   - `updated_at = $2`: SOLO SE CIERRA LO QUE SE LEYÓ. `$2` es el `updated_at` que dio
@@ -242,15 +184,16 @@ func (p *Postgres) CloseWithSourceText(ctx context.Context, seen OpenJob, env So
 	if p == nil || p.db == nil {
 		return false, nil
 	}
-	// La ventana se mira ANTES que el sobre, como en PutSourceText: con las dos cosas
-	// mal, el error es el de la ventana.
+	// La ventana se mira ANTES que el sobre: con las dos cosas mal, el error es el de la
+	// ventana.
 	if seen.ID == "" || !seen.Key.Valid() {
 		return false, fmt.Errorf("intake: ventana incompleta al cerrar con el literal")
 	}
 	// COMPLETO O VACÍO ENTERO. Vacío es el hilo sin mensajes y viaja como tres NULL —no
 	// como un bytea de longitud cero ni un kek_id "", que dejarían una fila que parece
-	// tener sobre—. A medias es una fila indescifrable: se rechaza antes de tocar la
-	// base, con el mismo texto que PutSourceText, que dice qué falta sin citar el contenido.
+	// tener sobre—. A medias deja una fila INDESCIFRABLE, y eso no se puede deshacer
+	// leyendo: no hay copia de la DEK en ningún otro sitio. Se rechaza antes de tocar la
+	// base. El error NO cita el contenido, solo dice qué falta.
 	var enc, dek, kekID any
 	switch {
 	case env.Complete():

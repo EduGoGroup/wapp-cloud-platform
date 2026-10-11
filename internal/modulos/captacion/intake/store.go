@@ -162,24 +162,23 @@ type OpenJob struct {
 	CreatedAt    time.Time
 }
 
-// JobStore es el puerto de `intake_jobs`. CINCO operaciones y ninguna más, a
+// JobStore es el puerto de `intake_jobs`. CUATRO operaciones y ninguna más, a
 // propósito: el tamaño del puerto es lo que impide que el sink en línea con el
 // mensaje pueda hacer algo que D-044.26 prohíbe — aquí NO HAY UN SOLO MÉTODO DE
 // LECTURA QUE EL SINK PUEDA LLAMAR. ListAggregating existe para el barrido, que
 // corre FUERA del camino del entrante.
 //
-// La cuarta —PutSourceText, T1.4— es también de fuera de línea, y el sink no la
-// puede usar aunque la tenga delante: pide un sobre YA cifrado y el sink no tiene
-// cipher (ver SourceText). Lo mismo vale para la quinta —CloseWithSourceText,
-// D-F7-9/D-F8-13—, que además pide el OpenJob que solo da ListAggregating: sin
-// haber leído no hay con qué llamarla.
+// La cuarta —CloseWithSourceText, D-F7-9/D-F8-13— es también de fuera de línea, y
+// el sink no la puede usar aunque la tenga delante: pide un sobre YA cifrado y el
+// sink no tiene cipher (ver SourceText), y pide además el OpenJob que solo da
+// ListAggregating: sin haber leído no hay con qué llamarla.
 //
-// 🔴 LA CLAVE INCOMPLETA SE RECHAZA EN LAS CUATRO ESCRITURAS (OpenOrAppend,
-// CloseWindow, PutSourceText y CloseWithSourceText): con una WindowKey que no es
-// Valid devuelven error —cada una con su texto— y no escriben nada. Vale para TODA
-// implementación, el gemelo en memoria incluido (hallazgo 7 de F7); lo afirma
-// intakehelpertest.ContratoQueue. En PutSourceText y en CloseWithSourceText la clave
-// se mira antes que el sobre.
+// 🔴 LA CLAVE INCOMPLETA SE RECHAZA EN LAS TRES ESCRITURAS (OpenOrAppend,
+// CloseWindow y CloseWithSourceText): con una WindowKey que no es Valid devuelven
+// error —cada una con su texto— y no escriben nada. Vale para TODA implementación,
+// el gemelo en memoria incluido (hallazgo 7 de F7); lo afirma
+// intakehelpertest.ContratoQueue. En CloseWithSourceText la clave se mira antes que
+// el sobre.
 type JobStore interface {
 	// OpenOrAppend abre la ventana si no existía y le añade las referencias del
 	// mensaje si ya existía, en UNA SOLA SENTENCIA y sin ninguna lectura
@@ -195,33 +194,6 @@ type JobStore interface {
 	// primero. Lo usa el barrido —NUNCA el camino del entrante—: es la lectura que
 	// D-044.26 saca de línea con el mensaje.
 	ListAggregating(ctx context.Context, limit int) ([]OpenJob, error)
-	// PutSourceText escribe el sobre del literal sobre la ventana RECIÉN CERRADA de
-	// esa tupla (T1.4). Devuelve true si esta llamada fue la que lo escribió.
-	//
-	// 🔴 IDENTIFICA LA FILA POR LA TUPLA Y NO POR ID, y hay que decir por qué,
-	// porque una tupla puede tener VARIAS filas `pending` a lo largo del día (el
-	// índice único de la 0072 es PARCIAL: solo cubre `aggregating`). La fila a la
-	// que va el sobre es LA ÚLTIMA TOCADA de esa tupla en `pending` —que es la que
-	// acaba de cerrar el barrido, porque cerrarla refrescó su `updated_at`— y solo
-	// si su sobre está VACÍO. Ese segundo guard es lo que impide el accidente de
-	// verdad: rellenar con el texto de la ventana de ahora un job viejo que se
-	// quedó sin componer.
-	//
-	// El motivo de no llevar id es el contrato de SourceComposer, que recibe una
-	// WindowKey (el compositor no lee `intake_jobs` y por tanto no conoce ids). Si
-	// algún día ese contrato se amplía, este método debería estrecharse a `id` y
-	// perder los dos ORDER BY.
-	//
-	// false SIN error significa «no había dónde escribir» (la fila ya tenía sobre, o
-	// la ventana no está en `pending`): es un no-op, no un fallo.
-	//
-	// ⚠️ DESDE T8.40 NO TIENE LLAMANTE DE PRODUCCIÓN EN EL ÁRBOL NUEVO (D-F7-9,
-	// D-F8-13): la ventana se cierra con su sobre (CloseWithSourceText) y el job de
-	// re-análisis nace con el suyo (ReanalysisRequest.SourceText). Su único llamante
-	// es el `ComposeAtFlush` del compositor de `conversacion/runtime`, que tampoco
-	// tiene ya quien lo llame. Los dos SE CONSERVAN A PROPÓSITO, con sus tests
-	// (decisión de Jhoan, 2026-10-10); qué se hace con ellos se decide después.
-	PutSourceText(ctx context.Context, k WindowKey, env SourceText) (bool, error)
 	// CloseWithSourceText cierra la ventana `seen` Y le guarda su sobre en UNA SOLA
 	// SENTENCIA, y solo si la ventana no cambió desde que se leyó. Devuelve true si
 	// ESTA llamada fue la que la cerró.
@@ -252,19 +224,23 @@ type JobStore interface {
 	//     escribe tal cual. Vacío entero (SourceText.Empty) es el hilo sin mensajes:
 	//     cierra igual y deja las tres columnas a NULL, que es una forma legítima de
 	//     la fila en la 0072. A MEDIAS —ni lo uno ni lo otro— es error, y se rechaza
-	//     ANTES de tocar la base: no se escribe nada y la ventana sigue viva.
+	//     ANTES de tocar la base: no se escribe nada y la ventana sigue viva. Un sobre
+	//     a medias dejaría una fila INDESCIFRABLE, y eso no se puede deshacer leyendo:
+	//     no hay copia de la DEK en ningún otro sitio.
 	//
 	//  4. Con `seen.Key` incompleta (WindowKey.Valid) o `seen.ID` vacío devuelve el
 	//     error `intake: ventana incompleta al cerrar con el literal` y no escribe
-	//     nada. La clave y el id se miran ANTES que el sobre, como en PutSourceText.
-	//     El sobre a medias lleva el texto de cada implementación: en Postgres, el
-	//     mismo de PutSourceText (`intake: sobre del literal incompleto (enc=%d dek=%d
-	//     kek_id=%t): son las tres o ninguna`); en memoria, el de su gemelo.
+	//     nada. La clave y el id se miran ANTES que el sobre: con las dos cosas mal, el
+	//     error es el de la ventana. El sobre a medias lleva el texto de cada
+	//     implementación, que dice QUÉ falta sin citar el contenido: en Postgres,
+	//     `intake: sobre del literal incompleto (enc=%d dek=%d kek_id=%t): son las tres
+	//     o ninguna`; en memoria, el de su gemelo.
 	//
 	//  5. NO TOCA NINGUNA OTRA FILA: ni la ventana de otra tupla, ni la de otro
-	//     tenant, ni las otras `pending` de la MISMA tupla. Identifica por id, que es
-	//     lo que PutSourceText no puede hacer (ver su comentario): quien la llama es
-	//     el barrido, que sí leyó la fila.
+	//     tenant, ni las otras `pending` de la MISMA tupla —que puede tener VARIAS a
+	//     lo largo del día: el índice único de la 0072 es PARCIAL y solo cubre
+	//     `aggregating`—. Por eso identifica por id y no por la tupla: quien la llama
+	//     es el barrido, que sí leyó la fila.
 	CloseWithSourceText(ctx context.Context, seen OpenJob, env SourceText) (bool, error)
 }
 

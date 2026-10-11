@@ -236,7 +236,6 @@ func TestCableado_TheCaptureConsumersShareTheBootObjects(t *testing.T) {
 		{"el store de artefactos de la etapa match", inner(t, field(t, c.intakePipeline, "match"), "store"), c.intakeJobStore},
 		{"el store de artefactos de la etapa draft", inner(t, field(t, c.intakePipeline, "draft"), "store"), c.intakeJobStore},
 		{"la cola del agregador (intake.JobStore)", field(t, c.intakeAggregator, "jobs"), c.intakeJobStore},
-		{"la cola del compositor (flowruntime.SourceTextWriter)", field(t, c.intakeComposer, "jobs"), c.intakeJobStore},
 		{"el hilo del compositor (flowruntime.ThreadReader)", field(t, c.intakeComposer, "thread"), c.eventStore},
 		{"los derechos del agregador (entitlements.Resolver)", field(t, c.intakeAggregator, "ents"), c.entResolver},
 		{"el store de intenciones del pool (intakeahead.ConfigStore)", field(t, c.intakeAhead, "cfg"), c.intentStore},

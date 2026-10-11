@@ -4,7 +4,7 @@
 // Tres suites, una por puerta de la tabla:
 //
 //   - ContratoQueue sobre intake.JobStore (la COLA: abrir o ampliar la ventana, cerrarla,
-//     listar las vivas, escribir el sobre del literal, y cerrarla con su sobre de una vez). En la spec de F7 se llamaba
+//     listar las vivas, y cerrarla con su sobre de una vez). En la spec de F7 se llamaba
 //     `ContratoCola`.
 //   - ContratoMachine sobre intake.PipelineStore (la MÁQUINA: los dos reclamos y las cinco
 //     transiciones). En la spec de F7, `ContratoMaquina`.
@@ -27,9 +27,9 @@
 // Un fichero por tema; los de casos y de apoyo terminan en _contrato.go:
 //   - contrato.go: la entrada. Row, los tres Montajes, las tres suites y sus tablas de casos.
 //   - fixtures_contrato.go: las siembras, la marca de estado (la fila ENTERA) y sus aserciones.
-//   - queue_contrato.go, queue_put_contrato.go y queue_key_contrato.go (la clave de ventana
-//     incompleta): los casos de la cola.
-//   - queue_close_contrato.go: los de su quinta operación, CloseWithSourceText.
+//   - queue_contrato.go y queue_key_contrato.go (la clave de ventana incompleta): los casos
+//     de la cola.
+//   - queue_close_contrato.go: los de su cuarta operación, CloseWithSourceText.
 //   - machine_contrato.go y machine_transitions_contrato.go: los de la máquina.
 //   - reanalysis_contrato.go: los del segundo productor.
 //
@@ -89,7 +89,8 @@ type Row struct {
 // caso: ContratoQueue llama a nuevo una vez por caso. Todos los campos son obligatorios.
 //
 // Casi todo estado que la cola puede producir se alcanza por el propio puerto; Seed está para
-// el que no (queue_put_contrato.go: las marcas cruzadas de dos ventanas cerradas).
+// el que no (queue_close_contrato.go: una fila ya cerrada con la marca que se leyó, y una
+// `pending` vieja de la misma tupla).
 type QueueMontaje struct {
 	// Store es la implementación bajo prueba. Llega con la tabla VACÍA: ListAggregating no
 	// filtra por tenant, y una ventana viva de otro caso saldría en su lista.
@@ -278,14 +279,6 @@ func queueCases() []contractCase[QueueMontaje] {
 		{"ListAggregating_EmptyTable_NothingAndNoError", caseListEmpty},
 		{"ListAggregating_OnlyLiveWindows_OldestFirstWithBothAnchors", caseListLiveWindows},
 		{"ListAggregating_Limit_CutsTheTail_NonPositiveIsEmpty", caseListLimit},
-		// PutSourceText (queue_put_contrato.go).
-		{"PutSourceText_ClosedWindow_WritesTheThreeOnce", casePutOnce},
-		{"PutSourceText_SeveralClosedWindows_OnlyTheMostRecentOne", casePutPicksTheLatestPending},
-		{"PutSourceText_CrossedMarks_LatestUpdateWins_CreationBreaksTies", casePutCrossedMarks},
-		{"PutSourceText_NoClosedWindow_FalseAndNothingTouched", casePutWithoutPending},
-		{"PutSourceText_IncompleteEnvelope_ErrorAndNothingWritten", casePutIncompleteEnvelope},
-		// La clave de ventana incompleta (queue_key_contrato.go).
-		{"PutSourceText_IncompleteKey_ErrorBeforeTheEnvelopeAndNothingWritten", casePutIncompleteKey},
 		// CloseWithSourceText (queue_close_contrato.go).
 		{"CloseWithSourceText_UnchangedLiveWindow_ClosesAndWritesTheThreeOnce", caseCloseWithTextOnce},
 		{"CloseWithSourceText_MessageArrivedAfterTheRead_FalseAndUntouchedUntilReread", caseCloseWithTextStaleRead},

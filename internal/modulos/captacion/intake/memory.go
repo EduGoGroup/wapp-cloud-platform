@@ -57,10 +57,6 @@ type Counters struct {
 	// Reads cuenta las llamadas a ListAggregating. 🔴 Si esto crece durante un
 	// Observe, D-044.26 está rota.
 	Reads int
-	// PutSourceText cuenta las escrituras del sobre del literal (T1.4). Es la otra
-	// mitad del mismo presupuesto: el literal se compone AL FLUSH, así que este
-	// contador NUNCA debe crecer durante un Observe.
-	PutSourceText int
 	// CloseWithSourceText cuenta las llamadas a CloseWithSourceText (D-F7-9, D-F8-13): el
 	// cierre con su sobre, en una sola sentencia. Cuenta LLAMADAS, como los demás: las que
 	// cierran, las que no encuentran la ventana como se leyó y las rechazadas. Tampoco debe
@@ -69,7 +65,7 @@ type Counters struct {
 }
 
 // MemoryStore implementa JobStore en memoria, con la MISMA semántica que la
-// implementación Postgres en las SEIS cosas que muerden:
+// implementación Postgres en las CINCO cosas que muerden:
 //
 //  1. como mucho UNA ventana viva por tupla (el índice único PARCIAL de la 0072);
 //  2. `MessageTS` se fija SOLO al abrir, nunca al ampliar, y `UpdatedAt` se mueve en
@@ -77,11 +73,9 @@ type Counters struct {
 //     T1.8-1 es el ancla del SILENCIO — si el doble dejara de moverlo, la ventana
 //     híbrida se probaría contra un reloj congelado);
 //  3. `CloseWindow` es idempotente por el guard de estado;
-//  4. `PutSourceText` escribe en la ÚLTIMA ventana `pending` de la tupla y solo si
-//     su sobre estaba vacío (T1.4 — la subconsulta y el guard de putSourceTextSQL);
-//  5. una clave de ventana incompleta (WindowKey.Valid) se RECHAZA en las cuatro escrituras, con
+//  4. una clave de ventana incompleta (WindowKey.Valid) se RECHAZA en las tres escrituras, con
 //     el mismo texto que Postgres y sin tocar ninguna fila;
-//  6. `CloseWithSourceText` cierra y escribe el sobre de UNA vez, por id, y solo si la fila
+//  5. `CloseWithSourceText` cierra y escribe el sobre de UNA vez, por id, y solo si la fila
 //     sigue `aggregating` con el `UpdatedAt` que se leyó (D-F7-9, D-F8-13 — las tres guardas
 //     de closeWithSourceTextSQL).
 //
@@ -89,7 +83,7 @@ type Counters struct {
 // clave y abría la ventana, de modo que un test en memoria daba por buena una llamada que en
 // producción es un error.
 //
-// Si alguna de las seis divergiera, los tests dejarían de probar lo que creen que
+// Si alguna de las cinco divergiera, los tests dejarían de probar lo que creen que
 // prueban — que es exactamente el riesgo de todo doble en memoria.
 type MemoryStore struct {
 	mu   sync.Mutex
@@ -100,10 +94,6 @@ type MemoryStore struct {
 	// failOpen, cuando no es nil, hace fallar OpenOrAppend. Es el seam para probar
 	// que un fallo del sink NO tumba el turno del cliente (INV-10).
 	failOpen error
-	// failPut, cuando no es nil, hace fallar PutSourceText. Es el seam para probar
-	// que un fallo del compositor NO revierte el cierre de la ventana (T1.4): el job
-	// se queda en `pending` con el sobre vacío, que es una forma legítima en la 0072.
-	failPut error
 	// failCloseWithText, cuando no es nil, hace fallar CloseWithSourceText. Es el seam para
 	// probar que un fallo de la base al cerrar con el sobre deja la ventana VIVA y entera: al
 	// ser una sola sentencia no hay medio cierre, y la recoge el siguiente barrido.
@@ -132,17 +122,9 @@ func (m *MemoryStore) FailOpenWith(err error) {
 	m.failOpen = err
 }
 
-// FailPutWith hace que PutSourceText devuelva `err` en las siguientes llamadas
-// (nil para volver a la normalidad).
-func (m *MemoryStore) FailPutWith(err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.failPut = err
-}
-
 // FailCloseWithSourceTextWith hace que CloseWithSourceText devuelva `err` en las
-// siguientes llamadas (nil para volver a la normalidad). Como en FailPutWith, simula
-// la base: la clave y el id se miran antes, y el sobre después.
+// siguientes llamadas (nil para volver a la normalidad). Simula la base: la clave y
+// el id se miran antes, y el sobre después.
 func (m *MemoryStore) FailCloseWithSourceTextWith(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -189,7 +171,7 @@ func (m *MemoryStore) Jobs() []Job {
 
 // Seed mete una fila TAL CUAL y devuelve su id. Es el gancho de siembra del Montaje de
 // intakehelpertest.ContratoQueue: deja montar el estado que la cola no produce por su
-// puerto (dos `pending` de la misma tupla con las marcas cruzadas). Lo que venga a
+// puerto (una fila ya cerrada con la marca que se leyó). Lo que venga a
 // cero se rellena como lo haría la tabla: ID con el siguiente de la secuencia, Status
 // con `pending`, CreatedAt con el reloj y UpdatedAt con CreatedAt. La fila se copia.
 //
@@ -288,61 +270,10 @@ func (m *MemoryStore) CloseWindow(_ context.Context, k WindowKey) (bool, error) 
 	return true, nil
 }
 
-// lastPendingLocked devuelve la ÚLTIMA ventana cerrada de la tupla: la de
-// `UpdatedAt` más reciente entre las `pending` y, a igualdad, la de `CreatedAt` más
-// reciente. Es el equivalente en memoria de la subconsulta de putSourceTextSQL
-// (`ORDER BY updated_at DESC, created_at DESC LIMIT 1`), y replicarla importa — con
-// varias ventanas cerradas de la misma tupla, un doble que eligiera la primera
-// probaría lo contrario de lo que hace Postgres.
-//
-// ✎ DIVERGENCIA CON EL VIEJO, a propósito: el gemelo viejo solo miraba `UpdatedAt`,
-// y con dos `pending` de la misma marca se quedaba con la creada ANTES, al revés que
-// la segunda clave del SQL. Lo fija el caso
-// PutSourceText_CrossedMarks_LatestUpdateWins_CreationBreaksTies de
-// intakehelpertest.ContratoQueue.
-func (m *MemoryStore) lastPendingLocked(k WindowKey) *Job {
-	var out *Job
-	for _, j := range m.jobs {
-		if j.Key != k || j.Status != StatusPending {
-			continue
-		}
-		if out == nil || j.UpdatedAt.After(out.UpdatedAt) ||
-			(j.UpdatedAt.Equal(out.UpdatedAt) && j.CreatedAt.After(out.CreatedAt)) {
-			out = j
-		}
-	}
-	return out
-}
-
-// PutSourceText implementa JobStore con la MISMA semántica que Postgres: la última
-// ventana cerrada de la tupla, y solo si su sobre estaba vacío. Y con su mismo orden
-// de rechazos: la clave, el fallo de la base (aquí, el inyectado) y el sobre.
-func (m *MemoryStore) PutSourceText(_ context.Context, k WindowKey, env SourceText) (bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cnt.PutSourceText++
-	if !k.Valid() {
-		return false, fmt.Errorf("intake: clave de ventana incompleta al guardar el literal")
-	}
-	if m.failPut != nil {
-		return false, m.failPut
-	}
-	if !env.Complete() {
-		return false, errIncompleteEnvelope
-	}
-	j := m.lastPendingLocked(k)
-	if j == nil || len(j.SourceText.Enc) > 0 {
-		return false, nil
-	}
-	j.SourceText = env
-	j.UpdatedAt = m.now()
-	return true, nil
-}
-
 // CloseWithSourceText implementa JobStore con la MISMA semántica que Postgres: cierra
 // la fila de id `seen.ID` y le escribe el sobre solo si sigue `aggregating` y su
-// `UpdatedAt` es exactamente `seen.LastActivity` (D-F7-9, D-F8-13). Y con el orden de
-// rechazos de PutSourceText: la clave y el id, el fallo de la base (aquí, el inyectado
+// `UpdatedAt` es exactamente `seen.LastActivity` (D-F7-9, D-F8-13). Y con su mismo orden
+// de rechazos: la clave y el id, el fallo de la base (aquí, el inyectado
 // con FailCloseWithSourceTextWith) y el sobre a medias (errIncompleteEnvelope). La
 // llamada cuenta siempre en Counters.CloseWithSourceText.
 func (m *MemoryStore) CloseWithSourceText(_ context.Context, seen OpenJob, env SourceText) (bool, error) {

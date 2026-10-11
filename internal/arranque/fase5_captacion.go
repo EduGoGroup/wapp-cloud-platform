@@ -97,14 +97,14 @@ func (faseCaptacion) ejecutar(_ context.Context, c *contenedor) error {
 	// 🔴 ES EL MISMO OBJETO que consume `/reanalyze`: dos compositores serían dos
 	// `source_text` que divergen en el primer rótulo que cambie.
 	//
-	// 🔀 F8 · conmutar(conversacion): el compositor es el de conversacion/runtime y escribe por
-	// LA cola (c.intakeJobStore, la única): su puerto SourceTextWriter nombra el WindowKey y el
-	// SourceText de la captación nueva. De F7 a F8 escribía por una segunda instancia vieja
-	// (D-F7-1) y el re-análisis lo recibía detrás de composerBridge; hoy lo recibe tal cual, y
-	// sigue siendo este mismo objeto y no otro (T-5). ⚠️ Desde T8.40 ese puerto de escritura
-	// solo lo ejercería ComposeAtFlush, que ya no tiene llamante de producción: el agregador y
-	// el re-análisis usan Compose, que no escribe (D-F7-9, D-F8-13).
-	c.intakeComposer = flowruntime.NewSourceTextComposer(c.log, c.eventStore, c.intakeJobStore, c.flowDeps.cipher)
+	// 🔀 F8 · conmutar(conversacion): el compositor es el de conversacion/runtime y nombra el
+	// WindowKey y el SourceText de la captación nueva. De F7 a F8 escribía por una segunda
+	// instancia vieja de la cola (D-F7-1) y el re-análisis lo recibía detrás de composerBridge;
+	// hoy lo recibe tal cual, y sigue siendo este mismo objeto y no otro (T-5). 🔴 NO recibe la
+	// cola: el agregador y el re-análisis usan Compose, que compone y cifra SIN escribir, y el
+	// sobre lo guarda quien cierra o abre el job (D-F7-9, D-F8-13). El puerto de escritura que
+	// tuvo se borró en T8.41 (D-35).
+	c.intakeComposer = flowruntime.NewSourceTextComposer(c.log, c.eventStore, c.flowDeps.cipher)
 
 	if err := construirSelectorDeVia(c); err != nil {
 		return err
@@ -384,13 +384,11 @@ func construirPuertasDelDueno(c *contenedor) error {
 	//                       compositores serían dos `source_text` que divergen en el
 	//                       primer rótulo que cambie. Desde F8 es el de
 	//                       conversacion/runtime y entra TAL CUAL: nombra el WindowKey
-	//                       nuevo (composerBridge murió; T-3, T-5). Desde F8-06b ni el
-	//                       agregador ni esta puerta usan ComposeAtFlush sino Compose,
-	//                       que compone y cifra SIN escribir: el agregador cierra con
-	//                       el sobre (D-F8-13) y esta puerta, desde T8.40, compone
-	//                       ANTES de abrir y el job de re-análisis nace con su sobre
-	//                       (D-F7-9). ComposeAtFlush se queda sin llamante de producción
-	//                       y se conserva a propósito (Jhoan, 2026-10-10);
+	//                       nuevo (composerBridge murió; T-3, T-5). Desde F8-06b el
+	//                       agregador y esta puerta usan Compose, que compone y cifra
+	//                       SIN escribir: el agregador cierra con el sobre (D-F8-13) y
+	//                       esta puerta, desde T8.40, compone ANTES de abrir y el job
+	//                       de re-análisis nace con su sobre (D-F7-9);
 	//   · entResolver     → el MISMO resolver CACHEADO que gatea el resto del carril.
 	//                       Un segundo sería una segunda caché y una segunda verdad
 	//                       sobre el plan del tenant;

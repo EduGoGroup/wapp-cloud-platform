@@ -43,7 +43,7 @@ const featureIntakeAggregation = entitlements.FeatureLLMIntake
 //     le añade las referencias si ya existía. Lleva la Key, el MessageTS y las
 //     referencias [WaMessageID, MediaRefs...] en ese orden. NUNCA el Text.
 //   - CERO lecturas de `intake_jobs` (ni ListAggregating ni CloseWindow ni
-//     PutSourceText), CERO lecturas de `tenant_settings`, cero cripto y cero red. El
+//     CloseWithSourceText), CERO lecturas de `tenant_settings`, cero cripto y cero red. El
 //     cierre —también el adelantado por intent— lo ejecuta el barrido, nunca Observe.
 //   - COMO MUCHO 1 pregunta al resolver de derechos (que cachea con TTL).
 //

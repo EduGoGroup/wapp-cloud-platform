@@ -188,7 +188,7 @@ func (faseAlmacenes) ejecutar(ctx context.Context, c *contenedor) error {
 	c.degradationNotifier = degradation.NewNotifier(c.degradationStore, 0)
 	// LA COLA DEL PIPELINE DE CAPTACIÓN (Plan 044 · Ola 1, migración 0072). Sin
 	// cipher a propósito, y no es un olvido NI CADUCÓ CON T1.4: lo que llega a
-	// PutSourceText son bytes YA cifrados por el compositor. Un store sin cipher no
+	// CloseWithSourceText son bytes YA cifrados por el compositor. Un store sin cipher no
 	// puede escribir literal aunque alguien se lo pida, y eso es lo que sostiene
 	// D-044.26 por construcción.
 	//
@@ -199,9 +199,9 @@ func (faseAlmacenes) ejecutar(ctx context.Context, c *contenedor) error {
 	// 🔀 F7 · conmutar(captacion): es la cola de internal/modulos/captacion/intake.
 	//
 	// 🔀 F8 · conmutar(conversacion): y sirve también el TERCER puerto, la cola en línea con el
-	// mensaje (`JobStore`), que consumen el agregador y el compositor: son ya los de
-	// conversacion/runtime y nombran los tipos de ESTA cola. La segunda instancia vieja que iba
-	// aquí debajo para ellos (legacyIntakeJobs, D-F7-1) murió con bridge_captacion.go.
+	// mensaje (`JobStore`), que consume el agregador: es ya el de conversacion/runtime y nombra
+	// los tipos de ESTA cola (el compositor ya no la recibe: no escribe). La segunda instancia
+	// vieja que iba aquí debajo (legacyIntakeJobs, D-F7-1) murió con bridge_captacion.go.
 	c.intakeJobStore = intake.NewPostgres(c.db)
 	// El almacén del EVENTO conversacional (Plan 043 · Ola 1) reusa el MISMO cipher
 	// que los contactos y los datos del comprador: el historial del evento guarda

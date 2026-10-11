@@ -23,9 +23,9 @@ func aggregatorSameEnvelope(a, b intake.SourceText) bool {
 func (r *aggregatorRig) requireClosingBudget(t *testing.T, withEnvelope, plain int) {
 	t.Helper()
 	got := r.jobs.Counters()
-	if got.CloseWithSourceText != withEnvelope || got.Close != plain || got.PutSourceText != 0 {
-		t.Errorf("presupuesto = (cierres con sobre %d, cierres sin sobre %d, PutSourceText %d), quería (%d, %d, 0)",
-			got.CloseWithSourceText, got.Close, got.PutSourceText, withEnvelope, plain)
+	if got.CloseWithSourceText != withEnvelope || got.Close != plain {
+		t.Errorf("presupuesto = (cierres con sobre %d, cierres sin sobre %d), quería (%d, %d)",
+			got.CloseWithSourceText, got.Close, withEnvelope, plain)
 	}
 }
 
@@ -66,8 +66,8 @@ func TestSweep_ComposesOncePerWindowItClosed(t *testing.T) {
 // sigue `aggregating` y nadie ha cerrado nada; y el cierre es UNA llamada que lleva el sobre. No
 // existe el instante «`pending` sin sobre» en que el worker reclamaba el job (D-F7-9).
 //
-// Mata: «volver al orden viejo» (CloseWindow y después componer + PutSourceText: la fila ya estaría
-// `pending` durante Compose) y «escribir el sobre por otra vía» (PutSourceText, con o sin cierre).
+// Mata: «volver al orden viejo» (CloseWindow y después componer: la fila ya estaría `pending`
+// durante Compose).
 func TestSweep_TheEnvelopeTravelsWithTheClose(t *testing.T) {
 	rig := newAggregatorRig()
 	agg := rig.aggregator(WithSourceComposer(rig.composer))
@@ -79,7 +79,7 @@ func TestSweep_TheEnvelopeTravelsWithTheClose(t *testing.T) {
 	rig.composer.during = func(intake.WindowKey) {
 		during = rig.jobs.Jobs()[0]
 		cnt := rig.jobs.Counters()
-		closesSoFar = cnt.Close + cnt.CloseWithSourceText + cnt.PutSourceText
+		closesSoFar = cnt.Close + cnt.CloseWithSourceText
 	}
 	rig.jobs.ResetCounters()
 

@@ -105,7 +105,7 @@ import (
 //     sí mismo como si fuera el cliente—. Cómo se consigue, dicho por sitios:
 //     • `source_refs` se construye SOLO en IntakeAggregator.Observe (aggregator.go), y
 //     `Observe` recibe un ENTRANTE. Esta bienvenida no pasa por ahí: no se la ofrece.
-//     • `source_text` lo compone ComposeAtFlush leyendo el HILO del evento
+//     • `source_text` lo compone SourceTextComposer.Compose leyendo el HILO del evento
 //     (conversation_event_messages). Esta bienvenida NO se persiste en el hilo, ni
 //     con `entry_kind='message_out_of_turn'` (que sería el único sitio admisible si
 //     quisiéramos trazabilidad, thread.go): el enunciado dice «ni rotulada».

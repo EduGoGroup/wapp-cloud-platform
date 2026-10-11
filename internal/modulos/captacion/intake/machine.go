@@ -41,7 +41,7 @@ import (
 // el guard de estado ES la exclusión mutua, no hay lectura previa que se pueda
 // quedar rancia entre el SELECT y el UPDATE, y una transición que llega tarde
 // afecta 0 filas y devuelve `false` SIN error — que es la misma convención que ya
-// usan `CloseWindow` y `PutSourceText` en este paquete.
+// usan `CloseWindow` y `CloseWithSourceText` en este paquete.
 //
 // # 🔴 INV-13: LA ÚNICA EXCEPCIÓN AL «NADA SE BORRA»
 //

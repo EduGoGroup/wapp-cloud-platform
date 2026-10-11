@@ -245,8 +245,8 @@ func TestPostgres_OpenReanalysis_EmptyEnvelope_SendsThreeNulls(t *testing.T) {
 }
 
 // TestPostgres_OpenReanalysis_HalfEnvelope_SaysWhatIsMissing: el sobre a medias se rechaza antes
-// de tocar la base, con el mismo texto que PutSourceText y CloseWithSourceText: dice QUÉ falta sin
-// citar el contenido. No se abre ningún job.
+// de tocar la base, con el mismo texto que CloseWithSourceText: dice QUÉ falta sin citar el
+// contenido. No se abre ningún job.
 func TestPostgres_OpenReanalysis_HalfEnvelope_SaysWhatIsMissing(t *testing.T) {
 	cases := map[string]SourceText{
 		"intake: sobre del literal incompleto (enc=0 dek=3 kek_id=true): son las tres o ninguna":  {DEK: []byte("dek"), KEKID: "k1"},

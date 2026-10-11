@@ -9,13 +9,12 @@ import (
 	"time"
 )
 
-// Cuatro de las cinco sentencias de la cola (la quinta, la de CloseWithSourceText, está con sus
+// Tres de las cuatro sentencias de la cola (la cuarta, la de CloseWithSourceText, está con sus
 // tests en postgres_close_test.go), escritas APARTE y byte a byte (sangría y saltos de línea
 // incluidos): son las del paquete viejo, y un cambio en el SQL de producción tiene que romper
 // aquí. 🔴 Sin Postgres, este texto es lo ÚNICO que custodia las guardas que viven en SQL (el
-// predicado del `ON CONFLICT`, el `status = 'aggregating'` del cierre, la subconsulta y el
-// `IS NULL` del sobre): su conducta la prueba intakehelpertest.ContratoQueue contra Postgres
-// real, en los procesos de F9 (hallazgo 63).
+// predicado del `ON CONFLICT` y el `status = 'aggregating'` del cierre): su conducta la prueba
+// intakehelpertest.ContratoQueue contra Postgres real, en los procesos de F9 (hallazgo 63).
 const (
 	wantOpenOrAppendSQL = `
 INSERT INTO public.intake_jobs
@@ -31,21 +30,6 @@ UPDATE public.intake_jobs
    SET status = 'pending', updated_at = now()
  WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3 AND event_id = $4::uuid
    AND status = 'aggregating'
-`
-	wantPutSourceTextSQL = `
-UPDATE public.intake_jobs AS j
-   SET source_text_enc    = $5,
-       source_text_dek    = $6,
-       source_text_kek_id = $7,
-       updated_at         = now()
- WHERE j.id = (
-        SELECT id
-          FROM public.intake_jobs
-         WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3 AND event_id = $4::uuid
-           AND status = 'pending'
-         ORDER BY updated_at DESC, created_at DESC
-         LIMIT 1)
-   AND j.source_text_enc IS NULL
 `
 	wantListAggregatingSQL = `
 SELECT id::text, tenant_id, session_id, contact_id, event_id::text,
@@ -77,7 +61,7 @@ func TestNewPostgres_DoesNotQuery(t *testing.T) {
 }
 
 // TestPostgres_Queue_NilReceiverOrNilDB_IsANoOp: un *Postgres nil, o uno sin base, no tiene dónde
-// escribir: las cinco operaciones de la cola son un no-op sin error y sin panic.
+// escribir: las cuatro operaciones de la cola son un no-op sin error y sin panic.
 func TestPostgres_Queue_NilReceiverOrNilDB_IsANoOp(t *testing.T) {
 	ctx := context.Background()
 	for name, p := range map[string]*Postgres{"nil receiver": nil, "nil db": NewPostgres(nil)} {
@@ -87,9 +71,6 @@ func TestPostgres_Queue_NilReceiverOrNilDB_IsANoOp(t *testing.T) {
 			}
 			if ok, err := p.CloseWindow(ctx, pgKey); ok || err != nil {
 				t.Errorf("CloseWindow = (%v, %v), quería (false, nil)", ok, err)
-			}
-			if ok, err := p.PutSourceText(ctx, pgKey, SourceText{Enc: []byte("e"), DEK: []byte("d"), KEKID: "k"}); ok || err != nil {
-				t.Errorf("PutSourceText = (%v, %v), quería (false, nil)", ok, err)
 			}
 			if got, err := p.ListAggregating(ctx, 10); got != nil || err != nil {
 				t.Errorf("ListAggregating = (%v, %v), quería (nil, nil)", got, err)
@@ -102,11 +83,10 @@ func TestPostgres_Queue_NilReceiverOrNilDB_IsANoOp(t *testing.T) {
 }
 
 // TestPostgres_IncompleteKey_RejectedBeforeTheDatabase: una clave a medias no es «una ventana
-// rara», es un INSERT que revienta: las tres escrituras por tupla la rechazan en Go, cada una con
-// su texto, sin mandar nada a la base. (La cuarta, CloseWithSourceText, en postgres_close_test.go.)
+// rara», es un INSERT que revienta: las dos escrituras por tupla la rechazan en Go, cada una con
+// su texto, sin mandar nada a la base. (La tercera, CloseWithSourceText, en postgres_close_test.go.)
 func TestPostgres_IncompleteKey_RejectedBeforeTheDatabase(t *testing.T) {
 	ctx := context.Background()
-	env := SourceText{Enc: []byte("e"), DEK: []byte("d"), KEKID: "k"}
 	for name, k := range incompleteKeys() {
 		t.Run(name, func(t *testing.T) {
 			store, fake := newFakePostgres(t)
@@ -117,10 +97,6 @@ func TestPostgres_IncompleteKey_RejectedBeforeTheDatabase(t *testing.T) {
 			ok, err := store.CloseWindow(ctx, k)
 			if ok || err == nil || err.Error() != "intake: clave de ventana incompleta al cerrar" {
 				t.Errorf("CloseWindow = (%v, %v), quería (false, el rechazo de la clave)", ok, err)
-			}
-			ok, err = store.PutSourceText(ctx, k, env)
-			if ok || err == nil || err.Error() != "intake: clave de ventana incompleta al guardar el literal" {
-				t.Errorf("PutSourceText = (%v, %v), quería (false, el rechazo de la clave)", ok, err)
 			}
 			fake.requireUntouched(t)
 		})
@@ -211,65 +187,6 @@ func TestPostgres_CloseWindow_Failures_AreWrapped(t *testing.T) {
 		requireWrapped(t, err, errFakeBoom, prefix)
 		if ok {
 			t.Errorf("CloseWindow con error devolvió true (%q)", prefix)
-		}
-	}
-}
-
-// TestPostgres_PutSourceText_IncompleteEnvelope_SaysWhatIsMissing: el sobre a medias se rechaza
-// antes de tocar la base, y el error dice QUÉ falta sin citar el contenido.
-func TestPostgres_PutSourceText_IncompleteEnvelope_SaysWhatIsMissing(t *testing.T) {
-	cases := map[string]SourceText{
-		"intake: sobre del literal incompleto (enc=0 dek=0 kek_id=false): son las tres o ninguna": {},
-		"intake: sobre del literal incompleto (enc=0 dek=3 kek_id=true): son las tres o ninguna":  {DEK: []byte("dek"), KEKID: "k1"},
-		"intake: sobre del literal incompleto (enc=7 dek=0 kek_id=true): son las tres o ninguna":  {Enc: []byte("secreto"), KEKID: "k1"},
-		"intake: sobre del literal incompleto (enc=7 dek=3 kek_id=false): son las tres o ninguna": {Enc: []byte("secreto"), DEK: []byte("dek")},
-	}
-	for want, env := range cases {
-		store, fake := newFakePostgres(t)
-		ok, err := store.PutSourceText(context.Background(), pgKey, env)
-		if ok || err == nil || err.Error() != want {
-			t.Errorf("PutSourceText = (%v, %v), quería (false, %q)", ok, err, want)
-		}
-		fake.requireUntouched(t)
-	}
-}
-
-// TestPostgres_PutSourceText_WritesTheThreeInOneStatement: UNA sentencia, la literal, con la
-// tupla y las TRES piezas del sobre tal cual llegan (ya cifradas: el store no tiene cipher);
-// true si afectó una fila y (false, nil) si no había dónde escribir.
-func TestPostgres_PutSourceText_WritesTheThreeInOneStatement(t *testing.T) {
-	env := SourceText{Enc: []byte("enc-bytes"), DEK: []byte("dek-bytes"), KEKID: "k1"}
-	for affected, want := range map[int64]bool{0: false, 1: true} {
-		store, fake := newFakePostgres(t)
-		fake.script(fakeReply{affected: affected})
-		ok, err := store.PutSourceText(context.Background(), pgKey, env)
-		if err != nil || ok != want {
-			t.Errorf("PutSourceText con %d filas afectadas = (%v, %v), quería (%v, nil)", affected, ok, err, want)
-		}
-		stmt := fake.requireOnly(t, fakeExec)
-		requireSQL(t, stmt, wantPutSourceTextSQL)
-		wantArgs := []driver.Value{pgKey.TenantID, pgKey.SessionID, pgKey.ContactID, pgKey.EventID, env.Enc, env.DEK, env.KEKID}
-		if !reflect.DeepEqual(stmt.args, wantArgs) {
-			t.Errorf("argumentos = %#v, quería %#v", stmt.args, wantArgs)
-		}
-	}
-}
-
-// TestPostgres_PutSourceText_Failures_AreWrapped: el fallo de la sentencia y el de contar las
-// filas salen envueltos, cada uno con su prefijo.
-func TestPostgres_PutSourceText_Failures_AreWrapped(t *testing.T) {
-	env := SourceText{Enc: []byte("e"), DEK: []byte("d"), KEKID: "k"}
-	cases := map[string]fakeReply{
-		"intake: guardar el literal de la ventana: ":  {err: errFakeBoom},
-		"intake: contar filas del literal guardado: ": {affected: 1, affectedErr: errFakeBoom},
-	}
-	for prefix, reply := range cases {
-		store, fake := newFakePostgres(t)
-		fake.script(reply)
-		ok, err := store.PutSourceText(context.Background(), pgKey, env)
-		requireWrapped(t, err, errFakeBoom, prefix)
-		if ok {
-			t.Errorf("PutSourceText con error devolvió true (%q)", prefix)
 		}
 	}
 }

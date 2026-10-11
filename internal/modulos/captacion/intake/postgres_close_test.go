@@ -7,11 +7,11 @@ import (
 	"time"
 )
 
-// Los tests de (*Postgres).CloseWithSourceText, la quinta operación de la cola (D-F7-9, D-F8-13),
+// Los tests de (*Postgres).CloseWithSourceText, la cuarta operación de la cola (D-F7-9, D-F8-13),
 // sobre el driver de mentira de postgres_fakedb_test.go. Van aparte de postgres_test.go por
 // tamaño (E-13); el no-op del receptor nil está allí, con el de sus hermanas.
 
-// wantCloseWithSourceTextSQL es la sentencia, escrita APARTE y byte a byte como las cuatro de
+// wantCloseWithSourceTextSQL es la sentencia, escrita APARTE y byte a byte como las tres de
 // postgres_test.go. 🔴 Sus tres guardas viven en SQL y este texto es lo único que las custodia sin
 // Postgres: el `id` (una fila y solo una, no la tupla), el `status = 'aggregating'` (idempotente)
 // y el `updated_at = $2` (solo se cierra lo que se leyó). Su conducta la prueba la suite de la
@@ -106,8 +106,7 @@ func TestPostgres_CloseWithSourceText_EmptyEnvelope_SendsThreeNulls(t *testing.T
 }
 
 // TestPostgres_CloseWithSourceText_HalfEnvelope_SaysWhatIsMissing: el sobre a medias se rechaza
-// antes de tocar la base, con el mismo texto que PutSourceText: dice QUÉ falta sin citar el
-// contenido.
+// antes de tocar la base, y el error dice QUÉ falta sin citar el contenido.
 func TestPostgres_CloseWithSourceText_HalfEnvelope_SaysWhatIsMissing(t *testing.T) {
 	cases := map[string]SourceText{
 		"intake: sobre del literal incompleto (enc=0 dek=3 kek_id=true): son las tres o ninguna":  {DEK: []byte("dek"), KEKID: "k1"},

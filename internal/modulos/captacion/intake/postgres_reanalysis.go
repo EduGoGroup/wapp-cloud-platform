@@ -139,7 +139,7 @@ RETURNING id::text
 //
 // Se rechaza antes de tocar la base, y en este orden: (1) la petición incompleta
 // (`!Valid()`), con su texto; (2) el sobre A MEDIAS, con el mismo texto que
-// PutSourceText y CloseWithSourceText. El sobre va completo o vacío entero; vacío es el
+// CloseWithSourceText. El sobre va completo o vacío entero; vacío es el
 // hilo sin mensajes y el job nace con las tres columnas a NULL.
 //
 // NO es idempotente y no puede serlo: dos re-análisis del mismo pedido son dos actos
