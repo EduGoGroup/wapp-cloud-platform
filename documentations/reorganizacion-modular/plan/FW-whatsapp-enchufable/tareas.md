@@ -29,7 +29,7 @@ Para cuando: [`diseno.md`](diseno.md) sin «sin medir» y el ADR en borrador. **
 Entrada: TW.3 aprobado; D-FW-1 y D-FW-2 decididas. Para cuando: definición de hecho 1–4 ([`reglas.md`](reglas.md) §4).
 ✎ FW-02: el gate del Edge que vale es **`make ci-docker`**; `make ci-local` falla en la Mac por el lint del sistema, sin este cambio (hallazgo 14).
 
-- [x] **TW.4 · La frontera** · Edge · dep. TW.3 · cumple RW.1.b, RW.1.c · `94269e0` (`edge/wapp-edge-agent`, rama `feat/fw-02-whatsapp-falso`, PR #12 de ese repo **abierto, en revisión**)
+- [x] **TW.4 · La frontera** · Edge · dep. TW.3 · cumple RW.1.b, RW.1.c · `94269e0` (`edge/wapp-edge-agent`, rama `feat/fw-02-whatsapp-falso`, PR #12 de ese repo **integrado**)
   - **Hecho cuando**: lo listado como «estorba al falso» ya no importa `whatsmeow`; un candado de imports lo vigila; el
     comentario de `control/diag/inyector.go` ya no contradice al ADR-0041 (D-FW-6); con la palanca baja, el gate del Edge rc=0
 - [x] **TW.5 · El falso: arranque y entrada** · Edge · dep. TW.4 · cumple RW.1.a, RW.2.a, RW.3.a, RW.3.b, RW.3.d · `94e29be` (`edge/wapp-edge-agent`, mismo PR #12; ✎ va en el mismo commit que TW.6: la escucha falsa recibe y envía en el mismo tipo)

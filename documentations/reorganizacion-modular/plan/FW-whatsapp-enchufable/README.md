@@ -1,7 +1,7 @@
 # FW · WhatsApp enchufable — el Edge real conversa sin WhatsApp
 
 > **Estado**: 🟡 **bloque B (FW-02) hecho el 2026-10-11: el transporte falso está escrito en el Edge, PR #12 de
-> `wapp-edge-agent` y PR #77 de este repo, los dos abiertos, en revisión.** Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
+> `wapp-edge-agent` y PR #77 de este repo, los dos integrados. Siguiente sesión: FW-03.** Bloque A (FW-01), PR #76 integrado. D-FW-1, 2, 4, 6, 7 y 8
 > decididas y **ADR-0049 aprobado** (vigente; sin commitear en la raíz de wApp). Falta de Jhoan: D-FW-5 (es de FW-03) (spec escrita el 2026-10-11, por decisión de Jhoan al cerrar F8; resuelve la deuda **D-38** de
 > [`deuda.md`](../../../deuda.md)). Medida sobre `edge/wapp-edge-agent` @ `38e5f91` (rama `main`; su rama por defecto es `dev`).
 > **Forma**: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Spec **corta a propósito**; lo que faltaba por
