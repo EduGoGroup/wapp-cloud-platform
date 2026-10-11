@@ -477,6 +477,24 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
 - **Veredicto**: se deja. Lo primero, cuando toque, es confirmar el orden real de las dos escrituras. Arreglarlo pide una
   regla (qué se hace con el mensaje tardío), no un parche. Después del relevo de F10.
 
+### D-38 · 🟡 No hay prueba de integración con el Edge REAL sin WhatsApp
+
+> Abierta el 2026-10-10 por decisión de Jhoan tras F8-06b: **decidir antes de F10-03** (la prueba en UAT).
+> **No investigada**: del inyector solo se leyó la cabecera.
+
+- **Qué hay hoy**: los procesos de `test/procesos` prueban el Cloud entero (binario real, Postgres real) contra un **Edge
+  falso** que habla el contrato real de CloudLink e inyecta los entrantes. WhatsApp ya no hace falta para eso.
+- **Qué falta**: una prueba con los **dos binarios reales** (Cloud y `wapp-edge-agent`). El Edge falso no ejercita el
+  código del Edge (su cola SQLite cifrada, su lease, su envío). Hoy, probar el Edge real exige una sesión de WhatsApp
+  viva, y las de local y del VPS están caducadas.
+- **La decisión, en una línea**: hay que modificar **`wapp-edge-agent`** —convertir su inyector de entrantes de
+  diagnóstico (`internal/adapters/control/diag/inyector.go`, hoy temporal y tras una palanca) en una fuente de mensajes
+  permanente, al lado de WhatsApp— **para poder correr** una conversación completa Cloud + Edge real sin WhatsApp.
+- **Las dos salidas**: (a) hacerlo, en una sesión propia en el repo del Edge, antes de F10-03; (b) no hacerlo y renovar
+  una sesión de WhatsApp para la prueba en UAT.
+- **Sin medir**: cuánto trabajo es (a), qué ruta expone hoy el inyector y si funciona.
+- **Veredicto**: pendiente de Jhoan. Se le pregunta en F10-01, antes de fijar la fecha de F10-03.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes

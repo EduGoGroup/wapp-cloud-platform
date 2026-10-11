@@ -36,6 +36,7 @@
 > 🟡 **Para decidir, no para esta sesión.** El Edge real (`wapp-edge-agent`) trae un inyector de entrantes de diagnóstico
 > (`internal/adapters/control/diag/inyector.go`), nacido para medir un p99 y pensado para borrarse. Una prueba de
 > integración con el **Edge real** y sin WhatsApp pasaría por ahí. No está decidido ni diseñado: es de otro repo.
+> ✎ Deuda **D-38** de `deuda.md`: se decide antes de F10-03, y lo recuerda la ficha de F10-01.
 
 ## Antes de pegar el prompt (Jhoan)
 

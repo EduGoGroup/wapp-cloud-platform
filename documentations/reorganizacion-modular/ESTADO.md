@@ -429,7 +429,9 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
   ✎ 2026-10-10 (Jhoan, tras la sesión): PR #69 **integrado** (merge `2902ec40`, sin squash). Del repaso de pendientes salen
   las deudas D-35 (se borra, T8.41), D-36 y D-37, y tres tareas nuevas (T8.41–T8.43); y **F8-07 se parte en tres**:
   **F8-07a** (T8.41–T8.43), **F8-07b** (T8.36–T8.37: `ci-docker` y arranque real) y **F8-07** (T8.38). El siguiente paso
-  es **F8-07a**.
+  es **F8-07a**. Además: `make ci-docker` corrido fuera de sesión sobre `dev` @ `49e09b3c` → **rc=0** (239 `ok`, lint
+  `0 issues.`), el primero desde F8-01; F8-07b lo repite. Y deuda **D-38**: prueba con el Edge real sin WhatsApp, a decidir
+  antes de F10-03 (lo recuerdan las fichas de F10-01 y F10-03).
 
 **F8-06 · F8, la cara HTTP y conmutar, T8.13 y T8.29–T8.35 (2026-10-10, 💻, rama `reorg/f8-06-cara-http-y-conmutar` desde `origin/dev` @ `724f3035`) — HECHA: F8 conmutada, pendiente de cierre.**
 

@@ -16,6 +16,7 @@
 - [ ] La sesión anterior (F10-02) cerró con sus tres cosas y está empujada a `dev`.
 - [ ] Las decisiones de la fila «Decisiones» están rellenas en [`../DECISIONES.md`](../DECISIONES.md) §6.
 - [ ] Acceso SSH a UAT y la ventana acordada (D-F10-1).
+- [ ] ✎ 2026-10-10 · **Decidida la deuda D-38** ([`deuda.md`](../../../deuda.md)): o el Edge real ya admite mensajes inyectados (hubo que modificar `wapp-edge-agent`), o hay una sesión de WhatsApp viva para la prueba. Sin una de las dos, esta sesión no puede recorrer una conversación con el Edge real.
 - [ ] Arrancar: `cd /Volumes/Projects/source/wApp/cloud/wapp-cloud-platform && claude`.
 
 ## Prompt
