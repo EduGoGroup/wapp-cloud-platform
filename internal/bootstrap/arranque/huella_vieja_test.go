@@ -4,10 +4,12 @@ package arranque
 // viejo (F0 · T0.14, decisión D-F0-2), y es de test: no cambia producción ni lo que corre en
 // UAT, y muere con este paquete en F10.
 //
-// Mide la huella de EJECUCIÓN de este arranque (rutas por listener, rpc, familias wapp_* de
-// /metrics, en los dos perfiles) y la compara con la dorada
-// internal/arranque/testdata/huella.json. Con `-args -actualizar` la REESCRIBE: es el único
-// que puede hacerlo (R0.5.g). El candado del arranque nuevo (internal/arranque/huella_test.go)
+// Mide la huella de este arranque —la de EJECUCIÓN (rutas por listener, rpc, familias wapp_*
+// de /metrics, en los dos perfiles) y, desde F10 · T10.2, la ESTÁTICA (sus sentencias `go` y
+// los hooks de métricas que cablea)— y la compara con la dorada
+// internal/arranque/testdata/huella-vieja.golden. Con `-args -actualizar` la REESCRIBE: es
+// el único que puede hacerlo (R0.5.g), y solo mientras este paquete exista: cuando el relevo
+// lo borre (T10.10), la dorada queda congelada para siempre. El candado del arranque nuevo (internal/arranque/huella_test.go)
 // arma el mismo contenedor, compara con la misma dorada y no la escribe nunca.
 //
 // Si alguien cambia este arranque (un arreglo «hecho dos veces», 05 §9.1), este test falla
@@ -21,11 +23,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -39,27 +43,49 @@ import (
 )
 
 // actualizar reescribe la dorada con la huella de ESTE arranque en vez de compararla.
-var actualizar = flag.Bool("actualizar", false, "reescribe internal/arranque/testdata/huella.json con la huella del arranque viejo")
+var actualizar = flag.Bool("actualizar", false, "reescribe internal/arranque/testdata/huella-vieja.golden con la huella del arranque viejo")
 
 const (
 	// raizDelRepo es la raíz del módulo vista desde este paquete.
 	raizDelRepo = "../../.."
 	// doradaDeHuella es la dorada, que vive con el arranque nuevo (diseno.md §6.4).
-	doradaDeHuella = "../../arranque/testdata/huella.json"
+	doradaDeHuella = "../../arranque/testdata/huella-vieja.golden"
+	// staticProfile es el perfil de la dorada que guarda la parte estática.
+	staticProfile = "estatica"
 )
 
-// TestHuellaVieja mide la huella de ejecución del arranque viejo y la compara con la dorada
-// (o la reescribe con -actualizar).
+// TestHuellaVieja mide la huella del arranque viejo (ejecución y estática) y la compara con
+// la dorada (o la reescribe con -actualizar).
 func TestHuellaVieja(t *testing.T) {
-	hs := huellasDeEjecucion(t)
+	hs := append(huellasDeEjecucion(t), staticFootprint(t))
 	if *actualizar {
-		if err := huellatest.Escribir(doradaDeHuella, hs); err != nil {
+		if err := huellatest.WriteGolden(doradaDeHuella, hs); err != nil {
 			t.Fatalf("huella: escribiendo la dorada: %v", err)
 		}
 		t.Logf("huella: dorada reescrita en %s (%d perfiles)", doradaDeHuella, len(hs))
 		return
 	}
 	compararConLaDorada(t, hs)
+}
+
+// staticFootprint es la parte estática de ESTE arranque: sus sentencias `go` y los hooks de
+// *metrics.Metrics que cablea (los métodos, leídos por reflect: uno nuevo entra solo).
+func staticFootprint(t *testing.T) huellatest.Huella {
+	t.Helper()
+	tipo := reflect.TypeFor[*metrics.Metrics]()
+	metodos := make([]string, 0, tipo.NumMethod())
+	for i := range tipo.NumMethod() {
+		metodos = append(metodos, tipo.Method(i).Name)
+	}
+	gs, err := huellatest.Goroutines(".")
+	if err != nil {
+		t.Fatalf("huella: Goroutines: %v", err)
+	}
+	hooks, err := huellatest.Hooks(".", metodos)
+	if err != nil {
+		t.Fatalf("huella: Hooks: %v", err)
+	}
+	return huellatest.Huella{Perfil: staticProfile, Goroutines: gs, Hooks: hooks}
 }
 
 // ─── Contenedor de huella (diseno.md §6.3) ───────────────────────────────────────────────
@@ -221,7 +247,7 @@ func candidatosDeHuella(t *testing.T) []string {
 	for _, c := range cand {
 		vistos[c] = true
 	}
-	dorada, err := huellatest.Leer(doradaDeHuella)
+	dorada, err := huellatest.ReadGolden(doradaDeHuella)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("huella: leyendo la dorada: %v", err)
 	}
@@ -279,7 +305,22 @@ func huellasDeEjecucion(t *testing.T) []huellatest.Huella {
 // compararConLaDorada falla con una línea por diferencia, nombrando el perfil.
 func compararConLaDorada(t *testing.T, tiene []huellatest.Huella) {
 	t.Helper()
-	quiere, err := huellatest.Leer(doradaDeHuella)
+	for _, linea := range differencesFromGolden(t, tiene) {
+		t.Errorf("huella %s", linea)
+	}
+	for _, h := range tiene {
+		t.Logf("huella [%s]: :8100=%d :8103=%d rpc=%d metricas=%d goroutines=%d hooks=%d", h.Perfil,
+			len(h.Rutas[":8100"]), len(h.Rutas[":8103"]), len(h.RPC[":8101"])+len(h.RPC[":8102"]), len(h.Metricas),
+			len(h.Goroutines), len(h.Hooks))
+	}
+}
+
+// differencesFromGolden devuelve una línea por diferencia entre la dorada y tiene, cada una
+// con su perfil delante («[minimo] :8103 falta GET /x»); vacía si casan. Un perfil de la
+// dorada que tiene no trae, o al revés, también es una diferencia.
+func differencesFromGolden(t *testing.T, tiene []huellatest.Huella) []string {
+	t.Helper()
+	quiere, err := huellatest.ReadGolden(doradaDeHuella)
 	if err != nil {
 		t.Fatalf("huella: leyendo la dorada %s: %v (solo TestHuellaVieja -args -actualizar la escribe)", doradaDeHuella, err)
 	}
@@ -287,19 +328,19 @@ func compararConLaDorada(t *testing.T, tiene []huellatest.Huella) {
 	for _, h := range quiere {
 		porPerfil[h.Perfil] = h
 	}
+	lineas := []string{}
 	if len(quiere) != len(tiene) {
-		t.Errorf("huella: la dorada tiene %d perfiles y este arranque %d", len(quiere), len(tiene))
+		lineas = append(lineas, fmt.Sprintf("la dorada tiene %d perfiles y este arranque %d", len(quiere), len(tiene)))
 	}
 	for _, h := range tiene {
 		q, ok := porPerfil[h.Perfil]
 		if !ok {
-			t.Errorf("huella: el perfil %q no está en la dorada", h.Perfil)
+			lineas = append(lineas, fmt.Sprintf("[%s] el perfil no está en la dorada", h.Perfil))
 			continue
 		}
 		for _, linea := range huellatest.Diferencia(q, h) {
-			t.Errorf("huella [%s]: %s", h.Perfil, linea)
+			lineas = append(lineas, fmt.Sprintf("[%s] %s", h.Perfil, linea))
 		}
-		t.Logf("huella [%s]: :8100=%d :8103=%d rpc=%d metricas=%d", h.Perfil,
-			len(h.Rutas[":8100"]), len(h.Rutas[":8103"]), len(h.RPC[":8101"])+len(h.RPC[":8102"]), len(h.Metricas))
 	}
+	return lineas
 }
