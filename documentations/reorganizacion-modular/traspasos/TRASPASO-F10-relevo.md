@@ -10,7 +10,8 @@
 > | 3 | Capturas de referencia (`cmd/prompts`, `cmd/casebank`) | F10-02 (T10.1) | escrita el 2026-10-11 |
 > | 4 | Preparación de la prueba en UAT y SHA a desplegar | F10-02 (T10.3) | escrita el 2026-10-11; el SHA de `dev` lo fija F10-03 |
 > | 5 | El cambio de binario en UAT, la prueba en local y el veredicto | F10-03 (T10.4–T10.6) | escrita el 2026-10-11; **sin ventana de 24 h** (Jhoan); veredicto: **«sigue»** |
-> | 6 | Cierre del relevo | F10-04 y F10-05 | pendiente |
+> | 6 | El relevo en el repo | F10-04 (T10.7–T10.13, T10.23) | escrita el 2026-10-11; PR #82 **abierto, en revisión**; T10.14 va en F10-04b |
+> | 7 | Cierre del relevo (UAT desde el commit del relevo) | F10-05 | pendiente |
 
 ## 1 · Verdad de campo antes del relevo (T10.1)
 
@@ -392,3 +393,72 @@ viejo para corregirse (D-FW-3), que además sigue en `main` y en el historial.
 - Lo de §5.7 queda **sin ver**, no dado por bueno: si F10-04 o F10-05 pasan por UAT, la conversación con el WhatsApp
   falso y una inferencia real son lo primero que mirar.
 - PR #81 integrado. **Siguiente sesión: F10-04.**
+
+## 6 · El relevo en el repo (T10.7–T10.13 y T10.23)
+
+Sesión F10-04, **2026-10-11**, rama `reorg/f10-04-relevo` partida de `dev` @ `ddf8045d`. **PR #82 abierto, en
+revisión.** Por decisión de Jhoan en la sesión, T10.14 (la documentación del repo) sale a un PR propio, F10-04b.
+
+### 6.1 · Los commits
+
+| Tarea | Commit | Qué |
+|---|---|---|
+| T10.7 | `3d638ed9` | `cmd/server` llama a `arranque.Ejecutar`; `cmd/casebank` y `cmd/prompts`, a los paquetes nuevos |
+| T10.8 | `0e9eaa5c` | fuera `cmd/server-modular` y `WAPP_PROCESOS_BINARIO` |
+| T10.10 | `ae4c0291` | fuera `internal/bootstrap`; la huella, solo contra la dorada |
+| T10.9 | `db5657b4` | fuera `internal/publicapi` y el estrangulador (TX.25) |
+| T10.11 | `ad58d59f` | fuera los 26 directorios viejos restantes |
+| T10.12 | `a0c6564d` | fuera `internal/pendiente`; `no_pending_test.go` |
+| T10.13 | `90655d3d` | fuera la integración vieja |
+| T10.23 | `0157d3f0` | las supresiones de lint |
+
+T10.10 va antes que T10.9, al revés que en `arquitectura.md` §3: hallazgo 15 del README de la fase.
+
+### 6.2 · Las capturas de §3, comparadas (T10.7)
+
+`go run ./cmd/prompts -volcar <dir>` y `-comprobar <dir>`: rc=0 los dos, la misma salida, y los mismos cuatro hashes
+(`ca8e3ac4057f711d`, `fb98b400dc782a8d`, `a9dd7abf7f3d2089`, `c0983edf55593897`). `go run ./cmd/casebank`: rc=1 y
+`casebank: falta -tenant: un caso sin dueño no se puede consentir ni reutilizar`. Como avisaba §3.2, esta captura no ve
+la divergencia V11: comparar con un caso real pide una base con datos y **no se hizo**.
+
+### 6.3 · El gate del bloque C (`reglas.md` §4), sobre `0157d3f0`
+
+| Comprobación | Resultado |
+|---|---|
+| `make toolchain` | `TOOLCHAIN_RC=0` · `TOOLCHAIN=OK` (go1.26.5, golangci-lint v2.12.2) |
+| `GOWORK=off make ci-local`, rc leído del log | **`GATE_RC=0`** · 179 paquetes `ok` · 0 `FAIL` · 0 `--- SKIP` · lint `0 issues.` |
+| Cobertura (informe, no bloquea) | `FICHEROS_EVALUADOS=418` · `POR_DEBAJO=7` |
+| `ls -d internal/*/` | `apipublica arranque candados modulos nucleo platform` (seis: hallazgo 22) |
+| `ls internal/arranque/bridge_*.go \| wc -l` | 0 |
+| `grep -rn 'pendiente.Implementar' --include='*.go' . \| wc -l` | 0 |
+| `GOWORK=off go test -v ./...` | rc=0 · 0 `--- SKIP` · 13.406 `--- PASS` |
+| `grep -rn WAPP_PROCESOS_BINARIO --include='*.go' --include=Makefile . \| wc -l` | 0 |
+| `go list -deps ./cmd/server \| grep -c 'internal/bootstrap\|internal/publicapi'` | 0 |
+| `Puentes` y `Conmutados` en `internal/modulos/fronteras_test.go` | vacía, y los 8 módulos; ahora los fija `TestRelayTable` |
+
+El mismo `make ci-local` se corrió tras cada commit: `GATE_RC=0` en los ocho. El de T10.9 dio `GATE_RC=2` en su primera
+versión, por tres candados del árbol viejo que leían `internal/publicapi`; el commit se rehízo antes de empujar.
+
+### 6.4 · Los procesos, contra el único binario
+
+Con Docker, sobre `0157d3f0`. Regla de conteo: `--- PASS` como cadena en todo el log, sub-tests incluidos.
+
+| Comando | Resultado |
+|---|---|
+| `make test-procesos` | `RC=0 · PASS=1305 FAIL=0 SKIP=0` |
+| `make test-procesos-edge-real` (Edge real `wapp-edge-agent` @ `5d6f660`, WhatsApp falso) | `RC=0 · PASS=3 FAIL=0 SKIP=0` |
+
+Eran 1.302 en §5.6. La diferencia: un caso menos en el test de entrada del arnés (el del binario mal elegido) y cuatro
+tests nuevos, el del techo del pool en P0 y los tres del colector.
+
+### 6.5 · Lo que NO se hizo ni se vio
+
+- **Nada en UAT.** Sigue corriendo `cmd/server-modular` @ `e82b6e92`, un directorio que este PR borra. Desplegar desde
+  el commit del relevo es T10.16 (F10-05); D-F10-2 lo pide antes del 2026-10-18.
+- **Todo lo de §5.7 sigue sin ver**: la conversación con el WhatsApp falso en UAT y una inferencia real con Ollama.
+- `make ci-docker`; `CUENTA=3 make test-procesos` (T10.15); el job `integration` de `ci.yml`, que ahora corre los
+  procesos y del que solo se validó la sintaxis.
+- T10.14, la documentación del repo: F10-04b.
+- La aprobación de Jhoan de las 45 supresiones de lint que quedan (`deuda.md` D-31).
+
+PR #82 abierto, en revisión. Pendiente de fusionarlo; después, **F10-04b** (T10.14) y **F10-05**.
