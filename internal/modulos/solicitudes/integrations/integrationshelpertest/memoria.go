@@ -14,11 +14,9 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/integrations"
 )
 
-// Memoria es una implementación en memoria de integrations.Store, segura para concurrencia. Es
-// NUEVA: no tiene fichero viejo —el paquete viejo no tenía doble (es uno de los doce de 05 E-6)—;
-// su base es el `fakeStore` de internal/integrations/worker_test.go:35-190, que solo vivía en ese
-// test. Pensada para tests unitarios sin BD (los del worker, los del gate y los del encolador), y
-// cumple la misma suite que integrations.Postgres (Contrato).
+// Memoria es una implementación en memoria de integrations.Store, segura para concurrencia. Pensada
+// para tests unitarios sin BD (los del worker, los del gate y los del encolador), y cumple la misma
+// suite que integrations.Postgres (Contrato).
 //
 // 🔴 GUARDA EL SECRETO EN CLARO, y por eso vive aquí y no en producción: no cifra, no tiene sobre
 // ni KEK. Lo que el adaptador hace con el cifrador no se puede ver con este doble.

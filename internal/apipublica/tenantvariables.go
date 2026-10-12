@@ -1,6 +1,3 @@
-// Porta internal/publicapi/tenantvariables.go @ ed60c24 (197 líneas) y su registro
-// (internal/publicapi/publicapi.go @ ed60c24, registerTenantVariables, líneas 855-885).
-//
 // tenantvariables.go — LAS VARIABLES DE EMPRESA DEL TENANT (Plan 041, D-041.1; mapa §2.7, G11 y
 // G12): GET y PUT de /api/v1/tenant-variables. El dominio vive en
 // internal/modulos/solicitudes/tenantvars; aquí solo se abre la puerta HTTP.

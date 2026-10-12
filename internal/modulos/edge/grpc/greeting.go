@@ -1,5 +1,5 @@
-// Porta internal/gateway/grpc/greeting.go @ 3a2fd80 (el aviso de sesión pasiva: el
-// literal 🔒, el puerto propio del saludo y su emisor, que cuelga del job del latido).
+// El aviso de sesión pasiva: el literal 🔒, el puerto propio del saludo y su emisor,
+// que cuelga del job del latido.
 //
 // Nombres (E-11), viejo → nuevo: avisoSesionPasivaID → passiveSessionNoticeID;
 // avisoSesionPasivaV1 → passiveSessionNoticeV1; commandIDDe → commandIDOf.

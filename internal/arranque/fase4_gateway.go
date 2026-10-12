@@ -1,6 +1,6 @@
-// Copia de internal/bootstrap/arranque/fase4_gateway.go @ 80807ba (F0 · 05 §6). Desde F3 (T3.28,
-// conmutar(edge)) construye el gateway NUEVO (internal/modulos/edge/grpc), el ÚNICO del proceso,
-// que recibe los servicios de internal/modulos/acceso directamente, sin adaptador.
+// Desde F3 (T3.28, conmutar(edge)) construye el gateway NUEVO (internal/modulos/edge/grpc), el
+// ÚNICO del proceso, que recibe los servicios de internal/modulos/acceso directamente, sin
+// adaptador.
 package arranque
 
 import (

@@ -1,5 +1,4 @@
-// Porta internal/reanalisis/reanalisis.go @ 56097aa (E-13: el material,
-// `reanalisis.go:657-772` del viejo).
+// El material (trozo de reanalisis.go, partido por E-13).
 
 package reanalisis
 

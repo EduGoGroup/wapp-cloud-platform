@@ -26,7 +26,7 @@ const (
 )
 
 // p9HashVersion es la forma de la versión de entidad del catálogo: 12 hex del sha256 del JSON
-// normalizado (entityVersion, internal/publicapi/intents.go). No es la `version` del cuerpo.
+// normalizado (intentsEntityVersion, internal/apipublica/intents.go). No es la `version` del cuerpo.
 var p9HashVersion = regexp.MustCompile(`^[0-9a-f]{12}$`)
 
 // p9FiltersPayload es el cuerpo del kind «filters» (D-046.2): la foto de TODAS las sesiones de la

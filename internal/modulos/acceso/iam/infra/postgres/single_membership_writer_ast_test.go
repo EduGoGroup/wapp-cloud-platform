@@ -1,14 +1,10 @@
 package iampostgres_test
 
 // single_membership_writer_ast_test.go — EL CANDADO DE «UNA SOLA EMPRESA POR USUARIO» (Plan 047 ·
-// Ola 1.0 · T1.0-2; endurecido en Ola 5 · T5.2). Porta el candado de invariante
-// internal/iam/infra/postgres/membresia_unica_ast_test.go @ 9a77307 (D-F2-1, diseño F2 §6).
+// Ola 1.0 · T1.0-2; endurecido en Ola 5 · T5.2; D-F2-1, diseño F2 §6).
 //
 // El criterio de T1.0-2 pedía UN solo sitio que insertara en public.tenant_members, «o dos, con
-// justificación escrita». Mientras convivan los dos árboles (hasta F10) son DOS, y esta es la
-// justificación: el GrantTenantAccess viejo (internal/iam/infra/postgres/memberships.go, lo que
-// corre en UAT) y su reconstrucción en este paquete. Los dos son el mismo caso de uso; cuando
-// muera el viejo, la lista se queda en uno.
+// justificación escrita». Es UNO: GrantTenantAccess, en memberships.go de este paquete.
 //
 // 🔴 LO QUE VIGILA, y por qué no basta un test de conducta. Un segundo INSERT escrito en otro
 // sitio no da error: da un usuario con dos filas en tenant_members que nadie decidió darle. El

@@ -17,9 +17,8 @@ import (
 )
 
 // La IDA del puente: una revisión de una solicitud que escribe la dueña (PUT …/items, POST …/approve) se
-// encola en webhook_outbox y el worker la entrega firmada al CRM falso. Re-expresa
-// internal/flujos/runtime/webhook_sink_integration_test.go (el gate), payload_purge_integration_test.go
-// (la purga) y crmpush/push_test.go + contrato_ast_test.go (los campos), sobre lo RECIBIDO por el doble.
+// encola en webhook_outbox y el worker la entrega firmada al CRM falso. Cubre el gate, la purga del
+// payload y los campos del contrato, sobre lo RECIBIDO por el doble.
 
 const (
 	// p6Quote es la cotización que la dueña manda al aprobar: el cliente la recibe byte a byte.
@@ -257,10 +256,10 @@ func p6SchemaRequired(t *testing.T) []string {
 	return schema.Required
 }
 
-// pushContractFields es el candado de internal/integrations/crmpush/contrato_ast_test.go vuelto
-// aserción sobre lo RECIBIDO: `revision_no` y `lifecycle_status` no son constantes —cada entrega lleva
-// el número que la base le dio a SU revisión y el estado real de la solicitud en ese momento—, y el
-// resto del documento es el de la solicitud, con el contacto opaco y sin un dato del canal.
+// pushContractFields es el contrato del push vuelto aserción sobre lo RECIBIDO: `revision_no` y
+// `lifecycle_status` no son constantes —cada entrega lleva el número que la base le dio a SU revisión
+// y el estado real de la solicitud en ese momento—, y el resto del documento es el de la solicitud,
+// con el contacto opaco y sin un dato del canal.
 func (w *p6World) pushContractFields(t *testing.T) {
 	revisions := p9Scalar(t, w.sc.DB, `SELECT max(revision_no) FILTER (WHERE kind = 'corrected')::text || '|' ||
 		max(revision_no) FILTER (WHERE kind = 'approved')::text FROM public.intake_revisions WHERE intake_id = $1::uuid`, w.approved)

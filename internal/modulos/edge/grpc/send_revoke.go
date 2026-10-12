@@ -1,5 +1,5 @@
-// Porta internal/gateway/grpc/send.go @ c851591 (la familia de la revocación:
-// RevokeLease, RevokeTenant, RestoreTenant). Trozo de send.go, partido por E-13.
+// La familia de la revocación: RevokeLease, RevokeTenant, RestoreTenant. Trozo
+// de send.go, partido por E-13.
 
 package grpc
 

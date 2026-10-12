@@ -20,8 +20,9 @@ import (
 // POST /api/v1/flows y el disparo por POST /api/v1/triggers. Este fichero no siembra nada por SQL.
 
 // Los textos de este recorrido. Son conducta observable (lo que recibe una persona en su WhatsApp),
-// copiados literales de la transcripción del carrito (internal/flujos/modules/cart/testdata,
-// cart_v1_transcript.golden.txt) y medidos contra el binario viejo.
+// copiados literales de la transcripción del carrito
+// (internal/modulos/conversacion/modules/cart/testdata, cart_v1_transcript.golden.txt) y medidos
+// contra el binario viejo.
 const (
 	cartCategories  = "🛒 Elige una categoría:\n1) Bebidas\n2) Postres"
 	cartBadOption   = "Opción no válida. Responde con el número de una de las opciones.\n\n" + cartCategories
@@ -41,7 +42,7 @@ const (
 	// cartPn es el número del contacto que hace el pedido.
 	cartPn = "573001110070"
 	// cartEndNode es el centinela que el motor deja en flow_state.current_node cuando el flujo
-	// terminó (internal/flujos/model: el fin de flujo declarado por el módulo).
+	// terminó (internal/modulos/conversacion/model: el fin de flujo declarado por el módulo).
 	cartEndNode = "__wapp_flow_end__"
 	// cartLine es la línea del pedido tal como queda en JSONB (claves en el orden de Postgres), y
 	// cartClosedPayload el payload de `cart_closed` y de la solicitud: las líneas y el total.
@@ -56,7 +57,7 @@ const (
 	cartReplyEvery = 2100 * time.Millisecond
 
 	// cartMsgUnresolved es la línea WARN con la que el motor dice que una consulta al modelo no se
-	// resolvió (internal/bootstrap/arranque/fase7_flujos.go, observaConsultas).
+	// resolvió (internal/arranque/fase7_flujos.go, observaConsultas).
 	cartMsgUnresolved = "flujos: consulta NO resuelta"
 
 	// Las tres series de la racha de auto-respuestas en /metrics: el gauge de la racha viva más larga

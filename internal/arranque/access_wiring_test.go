@@ -26,7 +26,7 @@ import (
 )
 
 // Rutas de import de los paquetes VIEJOS de acceso. oldIAMImportPath es un prefijo: cubre
-// internal/iam y todos sus subpaquetes.
+// el árbol viejo de IAM y todos sus subpaquetes.
 const (
 	oldIAMImportPath           = "github.com/EduGoGroup/wapp-cloud-platform/internal/iam"
 	oldEntitlementsImportPath  = "github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
@@ -48,7 +48,7 @@ func isOldAccessPath(path string) bool {
 // su consumidor sin tocar ningún campo del contenedor. Hasta F3 había una excepción con lista
 // blanca de símbolos, bridge_iam.go (el adaptador hacia el gateway viejo); murió con él en
 // conmutar(edge), así que ya no hay ninguna: ni un fichero de producción de internal/arranque
-// importa internal/iam, internal/entitlements o internal/platformadmin. (Los _test.go los cubre
+// importa el IAM, los entitlements o el platformadmin viejos. (Los _test.go los cubre
 // la regla 3 de internal/modulos/fronteras_test.go, con acceso en Conmutados.)
 func TestBootWiring_AccessNoFileImportsOldPackages(t *testing.T) {
 	fset, files := astDelArranque(t)

@@ -1,6 +1,5 @@
-// Porta internal/gateway/grpc/connect.go @ cbc5736 (el reparto de cada frame: qué se resuelve
-// en la goroutine del bucle Recv y qué se suelta al carril). Trozo de connect.go, partido
-// por E-13.
+// El reparto de cada frame: qué se resuelve en la goroutine del bucle Recv y qué se suelta al
+// carril. Trozo de connect.go, partido por E-13.
 //
 // Aquí viven route y lo que cuelga solo de él: el job del latido (submitHeartbeat), la
 // puerta única al carril (submitJob) y la apertura del entrante sellado (decodeIncoming).
@@ -340,11 +339,5 @@ func (s *Server) decodeIncoming(msg *cloudlinkv1.IncomingMessage) bool {
 	// COMPILAR, así que su borrado no es una decisión que se tome aquí — es el
 	// realineo que el proto obliga (D-044.31, la ventana de 4 s se disuelve y P1 pasa
 	// a pull).
-	//
-	// ⚠️ EL RETIRO NO ESTÁ COMPLETO Y ESO NO ES DE ESTA TAREA. `internal/flujos/
-	// runtime` (buildSignal, observeForAggregation) sigue leyendo el campo muerto y
-	// hoy no compila; quien lo cierra —y quien construye el PULL que lo sustituye— es
-	// T1.6-4. Se retira aquí y solo aquí porque es la línea que impedía compilar ESTE
-	// paquete, no por ampliar el alcance.
 	return true
 }

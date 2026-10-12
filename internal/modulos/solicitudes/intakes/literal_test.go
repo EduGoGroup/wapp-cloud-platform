@@ -11,10 +11,9 @@ import (
 )
 
 // Las salidas esperadas de este fichero y de literal_merge_test.go son LITERALES
-// calculados con el fichero viejo (internal/intakes/literal.go @ 64c181a): el
-// candado de fronteras impide importarlo desde aquí, así que la equivalencia
-// viejo ↔ nuevo se fija con lo que el viejo devolvió para este mismo corpus. Las
-// runas invisibles van con su escape numérico, nunca pegadas en el fuente.
+// congelados, calculados con la implementación anterior a la reconstrucción para
+// este mismo corpus; no se regeneran. Las runas invisibles van con su escape
+// numérico, nunca pegadas en el fuente.
 
 // Runas del corpus adversario, como texto ya decodificado.
 const (

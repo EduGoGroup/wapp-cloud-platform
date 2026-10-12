@@ -1,6 +1,3 @@
-// Porta internal/publicapi/catalogimport.go @ 724f3035 (324 líneas, entero) y el registro de I14
-// (internal/publicapi/publicapi.go @ 724f3035, registerCatalogImport, líneas 1059-1104).
-//
 // catalogimport.go — LA PUERTA JSON DEL IMPORT DE CATÁLOGO (Plan 041 · Ola 3 · T3.3, D-041.6;
 // mapa §2.9, I14): POST /api/v1/catalog/import. El dueño sube el documento de catálogo del
 // contrato y, según el modo, ve qué cambiaría o lo aplica. Sus hermanas son la planilla

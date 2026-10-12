@@ -1,7 +1,6 @@
-// Porta internal/gateway/grpc/inference.go @ ec236b3 (el vocabulario de la inferencia:
-// InferRequest, InferError, motivos, clases, centinelas y los dos plazos). Trozo de
-// inference.go, partido por E-13: el despacho vive en inference_dispatch.go y la
-// espera del resultado en inference_result.go.
+// El vocabulario de la inferencia: InferRequest, InferError, motivos, clases,
+// centinelas y los dos plazos. Partido por E-13: el despacho vive en
+// inference_dispatch.go y la espera del resultado en inference_result.go.
 
 package grpc
 
@@ -19,7 +18,7 @@ import (
 // cable: empuja un InferenceRequest por el stream CloudLink del tenant y espera
 // el InferenceResult correlacionado por command_id. Nada de este fichero sabe qué
 // es un prompt, un catálogo o una intención — eso vive en el adaptador
-// (internal/llmvia/local), que es quien consume Infer.
+// (inferencia/llmvia/local), que es quien consume Infer.
 //
 // Partido en tres por tamaño (E-13): aquí el VOCABULARIO (qué se pide, con qué
 // palabras falla); en inference_dispatch.go, por qué stream sale; en
@@ -72,7 +71,7 @@ import (
 //
 // 🔴 ESTÁ EXPORTADA PORQUE EL LLAMANTE TIENE QUE RESERVARLA DE SU PROPIO PLAZO, y
 // eso no se puede hacer sin conocer el número. Quien deriva su Timeout del deadline
-// que le dieron (internal/llmvia/local) resta un margen que debe cubrir ESTE, o el
+// que le dieron (inferencia/llmvia/local) resta un margen que debe cubrir ESTE, o el
 // timer de awaitInference vencería DESPUÉS del ctx del llamante y el veredicto lo
 // emitiría un `ctx.Done()` —sin motivo, sin aviso— en vez del Edge, que es quien
 // sabe qué pasó. Es la misma aritmética que el MargenSocket del Edge, vista desde

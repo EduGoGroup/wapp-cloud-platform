@@ -1,7 +1,7 @@
 package iampostgres_test
 
 // redeem_order_ast_test.go — EL CANDADO DEL ORDEN DE LOS PASOS DEL CANJE (Plan 047 · Ola A ·
-// T-A5). Porta internal/iam/infra/postgres/canje_orden_ast_test.go @ 9a77307 (D-F2-1, R-P5).
+// T-A5; D-F2-1, R-P5).
 //
 // 🔴 POR QUÉ ESTE TEST TUVO QUE EXISTIR, Y ES UN HALLAZGO, NO UNA PRECAUCIÓN. El criterio de T-A5
 // pide que un canje rechazado por «ya eres miembro de otra empresa» deje la invitación SIN

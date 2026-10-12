@@ -9,11 +9,10 @@
 // (repository_memory_test.go) y store.PostgresRepository en los procesos de F9, con el arnés de
 // testcontainers (test/procesos/flowstore_contrato_test.go).
 //
-// Nuevo: no tiene fichero viejo. Los casos salen del contrato de los puertos y de los 18 tests
-// viejos de internal/flujos/store, leídos y NO portados (05 E-8). De ellos quedan FUERA los que no
-// son del puerto sino del esquema (la forma de las columnas en information_schema, los CHECK
-// `>= 0`, los backfills y el full-replay de las migraciones, el NULL crudo de una columna) y el
-// render del motor sobre tenant_content, que es de `content`.
+// Los casos salen del contrato de los puertos. Quedan FUERA los que no son del puerto sino del
+// esquema (la forma de las columnas en information_schema, los CHECK `>= 0`, los backfills y el
+// full-replay de las migraciones, el NULL crudo de una columna) y el render del motor sobre
+// tenant_content, que es de `content`.
 //
 // Un fichero por tema; los de casos y de apoyo terminan en _contrato.go:
 //   - contrato.go: la entrada. Port, Montaje, Contrato y la tabla de casos.

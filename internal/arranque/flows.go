@@ -1,9 +1,8 @@
-// Copia de internal/bootstrap/arranque/flows.go @ 80807ba (F0 · 05 §6). El resolver de contactos
-// es desde F1 (T1.16, conmutar(nucleo)) el de internal/nucleo/contact.
+// El resolver de contactos es desde F1 (T1.16, conmutar(nucleo)) el de internal/nucleo/contact.
 //
 // 🔀 F8 · conmutar(conversacion) (T8.32): va SIN adaptador. El runtime nuevo pide el
 // contact.Resolver del núcleo, así que contactBridge (bridge_contact.go, vivo de F1 a F8) murió y
-// este fichero ya no importa internal/flujos/contact.
+// este fichero ya no importa el paquete viejo de contactos.
 package arranque
 
 import (

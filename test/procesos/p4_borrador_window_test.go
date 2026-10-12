@@ -11,11 +11,10 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 )
 
-// Las reglas de la VENTANA de captación que solo fijaban los tests viejos de integración de
-// internal/intake (postgres_, machine_, retry_ y despertar_integration_test.go) y que se ven desde la
-// puerta: las anclas de la ventana, la base de fechas, la segunda ventana sobre el mismo evento y el
-// alcance por empresa del flanco a READY. Servidor y base propios, para no mezclar sus jobs con los
-// del recorrido de p4_borrador_test.go.
+// Las reglas de la VENTANA de captación que se ven desde la puerta: las anclas de la ventana, la
+// base de fechas, la segunda ventana sobre el mismo evento y el alcance por empresa del flanco a
+// READY. Servidor y base propios, para no mezclar sus jobs con los del recorrido de
+// p4_borrador_test.go.
 
 const (
 	// p4AnchorPn es el contacto cuyos mensajes traen la hora del cliente FIJADA, y p4WakePn y
@@ -25,8 +24,8 @@ const (
 	p4OtherTenantPn = "573004450003"
 
 	// p4AnchorDate es la fecha del primer mensaje (un lunes) y p4AnchorDelivery el «miércoles de la
-	// semana que viene» contado desde ella. Van escritas a mano, como en
-	// internal/intake/stages/p4_test.go: recalcularlas aquí pasaría con la aritmética equivocada.
+	// semana que viene» contado desde ella. Van escritas a mano: recalcularlas aquí pasaría con la
+	// aritmética equivocada.
 	p4AnchorDate     = "2026-07-13"
 	p4AnchorDelivery = "2026-07-22"
 )

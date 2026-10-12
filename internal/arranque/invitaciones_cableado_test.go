@@ -1,5 +1,4 @@
-// Copia de internal/bootstrap/arranque/invitaciones_cableado_test.go @ 80807ba (F0 · 05 §6), retargeteada
-// en F2 (T2.31, conmutar(acceso)): las invitaciones las sirve la cara NUEVA (apipublica).
+// Desde F2 (T2.31, conmutar(acceso)) las invitaciones las sirve la cara NUEVA (apipublica).
 package arranque
 
 // invitaciones_cableado_test.go — QUE LA PUERTA DE INVITACIONES ESTÉ ENCHUFADA

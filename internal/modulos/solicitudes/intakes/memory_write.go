@@ -1,4 +1,4 @@
-// Porta internal/intakes/memory.go @ 64c181a (las escrituras).
+// Las escrituras de MemoryStore.
 //
 // Regla común a todas las de aquí: lo que se RECHAZA no escribe NADA —ni cabecera, ni
 // líneas, ni revisión, ni evento—, y ninguna toca otra solicitud ni otro tenant. La

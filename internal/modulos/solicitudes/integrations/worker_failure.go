@@ -1,6 +1,6 @@
-// Porta internal/integrations/worker.go @ 36d5a04 (trozo de worker.go, E-13): qué
-// pasa cuando una entrega falla —backoff o dead—, el claim perdido y la parada
-// (D-F6-7). Solo se movieron declaraciones; el contrato está en Run (worker.go).
+// Trozo de worker.go (E-13): qué pasa cuando una entrega falla —backoff o
+// dead—, el claim perdido y la parada (D-F6-7). Solo se movieron declaraciones;
+// el contrato está en Run (worker.go).
 
 package integrations
 

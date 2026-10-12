@@ -39,7 +39,7 @@ const (
 	draftPlan = planTenantPorDefecto
 
 	// draftCatalogRef es la ref de `tenant_content` de la que el pipeline lee el catálogo
-	// (internal/intake/catalogo: RefCatalogo).
+	// (internal/modulos/catalogo/indice: RefCatalogo).
 	draftCatalogRef = "catalogo"
 
 	// draftFlowID es el flujo del escenario y draftKeyword la palabra que abre su evento.
@@ -71,9 +71,9 @@ const (
 )
 
 // draftCatalog es el catálogo del escenario, en el contrato de POST /api/v1/catalog/import: la carta
-// del caso Ámbar (`fusCatalogoDeFusion`, internal/intake/pipeline/guion_ambar_test.go) —la torta de
-// chocolate se vende por presentaciones, la de vainilla y los tequeños a precio fijo— más tres
-// artículos de SKU adversario (separador repetido, espacio U+00A0, dígitos no ASCII).
+// del caso Ámbar —la torta de chocolate se vende por presentaciones, la de vainilla y los tequeños
+// a precio fijo— más tres artículos de SKU adversario (separador repetido, espacio U+00A0, dígitos
+// no ASCII).
 func draftCatalog() map[string]any {
 	item := func(code, sku, label string, price float64) map[string]any {
 		return map[string]any{"code": code, "sku": sku, "label": label, "price": price}

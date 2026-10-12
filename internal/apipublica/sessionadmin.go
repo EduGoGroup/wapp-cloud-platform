@@ -1,8 +1,3 @@
-// Porta internal/flujos/admin/sessions.go @ 115a4ba (SessionProfileStore, ProfilePusher,
-// SessionStatusStore, SetSessionProfileHandler, SetSessionStatusHandler, pushProfileBestEffort y
-// sus textos), sobre el fleet del módulo edge NUEVO. El writeJSON de internal/flujos/admin
-// (handlers.go @ 115a4ba) es, byte a byte, el writeJSON de response.go: se reutiliza ese.
-//
 // sessionadmin.go — EL PERFIL Y EL ESTADO DE UNA SESIÓN, POR ADMINISTRACIÓN (mapa §2.4, D3 y D4;
 // §3, J16 y J17). Decisión D-FX-2: los dos handlers se portan aquí desde flujos/admin y se
 // EXPORTAN, porque los sirven dos listeners: la cara pública (:8103), donde MountSessions
@@ -14,7 +9,8 @@
 // {"error": …} del resto de la cara: es lo observable del handler viejo y se conserva.
 //
 // En el rojo solo existían los puertos y las dos constructoras; el empuje best-effort
-// (pushProfileBestEffort) y los cuerpos de petición y respuesta nacieron con el verde.
+// (pushProfileBestEffort) y los cuerpos de petición y respuesta nacieron con el verde. El
+// writeJSON que usan es el de response.go.
 
 package apipublica
 

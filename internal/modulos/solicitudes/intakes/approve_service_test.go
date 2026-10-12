@@ -16,8 +16,9 @@ import (
 //   · el ORDEN de las operaciones y qué deja cada fallo parcial;
 //   · las precondiciones, en su orden, cortan ANTES de escribir nada.
 //
-// Los dobles y la siembra están en service_test.go. Los literales salen del fichero viejo
-// (internal/intakes/approve.go @ 64c181a) sobre esta misma escena.
+// Los dobles y la siembra están en service_test.go. Los literales son valores congelados,
+// calculados con la implementación anterior a la reconstrucción sobre esta misma escena; no se
+// regeneran.
 
 // svcOwnerQuote es el texto que escribe el dueño. Lleva acentos, emoji, un salto de línea y
 // espacios en los dos extremos a propósito: «byte a byte» solo se demuestra con un texto que un

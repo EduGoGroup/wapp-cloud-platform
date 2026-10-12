@@ -14,9 +14,8 @@ import (
 //nolint:gosec // G101: token de prueba fijo, no una credencial.
 const fixedToken = "WAPP-INV-0123456789abcdef0123456789abcdef"
 
-// oldRuleDigest es la regla del viejo (internal/iam/domain/invitation.go @ 9a77307) escrita a
-// mano: SHA-256 de strings.ToUpper(strings.TrimSpace(x)). Es el oráculo de equivalencia; no se
-// importa el paquete viejo.
+// oldRuleDigest es la regla de la implementación anterior a la reconstrucción, escrita a mano:
+// SHA-256 de strings.ToUpper(strings.TrimSpace(x)). Es el oráculo de equivalencia.
 func oldRuleDigest(x string) []byte {
 	sum := sha256.Sum256([]byte(strings.ToUpper(strings.TrimSpace(x))))
 	return sum[:]

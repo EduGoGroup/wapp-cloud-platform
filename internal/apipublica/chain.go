@@ -1,6 +1,3 @@
-// Porta internal/publicapi/publicapi.go @ 9a77307 (protect y protectRead, líneas 1126-1144) e
-// internal/publicapi/accesslog.go @ 9a77307 (accessLog, anotarTenant, respuestaObservada).
-//
 // chain.go — LA CADENA DE CADA RUTA DE LA CARA NUEVA. En la spec FX era `cadena.go` y `Comun`
 // (05 E-11: nombres en inglés; la correspondencia se anota en tareas.md de FX).
 //
@@ -63,8 +60,7 @@ import (
 //   - R (lectura): la misma cadena SIN AuditMiddleware: los mismos 401 y 403, y CERO registros
 //     también en el camino feliz (una lectura no tiene efecto que registrar).
 //   - A (Authenticate a secas) y — (pública): solo las de autenticación (auth.go), que dicen
-//     la suya; NO llevan access-log, como en el arranque viejo (internal/bootstrap/arranque/
-//     http.go:81-171, que las registraba fuera de publicapi).
+//     la suya; NO llevan access-log.
 //
 // El access-log de W y R va POR FUERA de Authenticate para ver también el 401 (REQ-050.19:
 // «toda petición deja rastro»). Deja UNA línea por petición en Log:

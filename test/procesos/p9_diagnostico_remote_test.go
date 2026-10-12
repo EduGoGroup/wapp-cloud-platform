@@ -18,7 +18,7 @@ import (
 
 const (
 	// p9DiagTTL es el plazo de un diagnóstico cuando el entorno no fija WAPP_DIAGNOSTICS_BUNDLE_TTL
-	// (el arnés no la pone): 30 minutos (defaultDiagnosticsTTL, internal/publicapi).
+	// (el arnés no la pone): 30 minutos (defaultDiagnosticsTTL, internal/apipublica).
 	p9DiagTTL = 30 * time.Minute
 	// p9DiagRow cuenta las filas de diagnostics_bundles de un command_id.
 	p9DiagRow = `SELECT count(*)::text FROM public.diagnostics_bundles WHERE command_id = $1`

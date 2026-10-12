@@ -1,5 +1,4 @@
-// Copia de internal/bootstrap/arranque/quotetext_cableado_test.go @ 80807ba (F0 · 05 §6). Reajustado
-// en F6 (T6.25, conmutar(solicitudes), reglas.md T-6): el generador es el de
+// Reajustado en F6 (T6.25, conmutar(solicitudes), reglas.md T-6): el generador es el de
 // internal/modulos/solicitudes (NewService, WithSeed) y QuoteSuggestions va en las deps de la cara
 // NUEVA (apipublica.IntakeReportsDeps), que es la que sirve G7.
 package arranque

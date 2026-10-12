@@ -16,8 +16,8 @@ import (
 // servidora de la doble llave (ADR-0007) y no se «mejoran» al portar.
 //
 // Deuda D-9 (reglas.md T-9, decisión D-F3-4): este paquete LEE y ESCRIBE una
-// tabla que no es suya, public.tenants, que es de platform, sin API interna
-// por medio. Se copia literal y se deja anotado; no se arregla aquí.
+// tabla que no es suya, public.tenants, que es del módulo acceso, sin API
+// interna por medio. Se copia literal y se deja anotado; no se arregla aquí.
 type PostgresRepository struct {
 	db *sql.DB
 }
@@ -102,8 +102,8 @@ func (r *PostgresRepository) Get(ctx context.Context, tenantID, edgeID string) (
 // producción) se trata como no revocado, mismo criterio que Get con
 // found=false: la ausencia de estado no es un "sí". revoked_at NULL es
 // «activo»; cualquier instante, «revocado». Otro fallo vuelve envuelto como
-// "lease: consultar revocación del tenant: …", con false. Lee una tabla de
-// platform (D-9).
+// "lease: consultar revocación del tenant: …", con false. Lee una tabla del
+// módulo acceso (D-9).
 func (r *PostgresRepository) TenantRevoked(ctx context.Context, tenantID string) (bool, error) {
 	var revokedAt sql.NullTime
 	err := r.db.QueryRowContext(ctx, `
@@ -120,9 +120,9 @@ func (r *PostgresRepository) TenantRevoked(ctx context.Context, tenantID string)
 
 // MarkTenantRevoked implementa Repository: fija tenants.revoked_at = now().
 // Pegajoso hasta RestoreTenant; NO toca ninguna fila de leases (D-055.2: los
-// dos sujetos de corte son independientes). Escribe una tabla de platform
-// (D-9, D-F3-4: se copia literal). Un fallo vuelve envuelto como "lease: marcar
-// tenant revocado: …".
+// dos sujetos de corte son independientes). Escribe una tabla del módulo
+// acceso (D-9, D-F3-4: se copia literal). Un fallo vuelve envuelto como
+// "lease: marcar tenant revocado: …".
 func (r *PostgresRepository) MarkTenantRevoked(ctx context.Context, tenantID string) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE public.tenants SET revoked_at = now(), updated_at = now() WHERE id = $1
@@ -134,8 +134,8 @@ func (r *PostgresRepository) MarkTenantRevoked(ctx context.Context, tenantID str
 }
 
 // RestoreTenant implementa Repository: fija tenants.revoked_at = NULL. Escribe
-// una tabla de platform (D-9, D-F3-4). Un fallo vuelve envuelto como "lease:
-// restaurar tenant: …".
+// una tabla del módulo acceso (D-9, D-F3-4). Un fallo vuelve envuelto como
+// "lease: restaurar tenant: …".
 func (r *PostgresRepository) RestoreTenant(ctx context.Context, tenantID string) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE public.tenants SET revoked_at = NULL, updated_at = now() WHERE id = $1

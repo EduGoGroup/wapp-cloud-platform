@@ -1,7 +1,3 @@
-// Porta internal/publicapi/intakes.go @ ed60c24 (1073 líneas: invalidTransitionResponse,
-// setIntakeStatusRequest y setIntakeStatusHandler, líneas 225-238 y 369-420; el descarte por
-// lotes, líneas 422-520).
-//
 // intakes_status.go — LAS DOS PUERTAS QUE MUEVEN EL ESTADO DE UNA SOLICITUD: G3, el cambio de
 // estado del ciclo de vida (POST /api/v1/intakes/{id}/status), y G8, el descarte manual por
 // lotes (POST /api/v1/intakes/discard). Es un trozo de intakes.go partido por tema (05 E-13).

@@ -25,7 +25,7 @@ var _ degradation.Store = (*degradation.Postgres)(nil)
 // Las dos sentencias, byte a byte, escritas aquí a mano y NO copiadas de una constante de
 // producción: si alguien toca el SQL del adaptador, este fichero lo dice. Los espacios en blanco
 // (el salto inicial, la tabulación de sangría, los espacios de alineación, el final sin salto)
-// son los del literal del paquete viejo, internal/degradation/postgres.go @ ebf4eb7.
+// son los del literal de la implementación anterior a la reconstrucción.
 const (
 	// Save: el dedupe. created_at y last_seen_at salen del mismo $6; el DO UPDATE solo toca
 	// occurrences y last_seen_at.

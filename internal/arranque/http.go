@@ -1,7 +1,6 @@
-// Copia de internal/bootstrap/arranque/http.go @ 80807ba (F0 · 05 §6), con una desviación: el
-// :8103 no lo sirve el publicapi viejo sino la cara única, internal/apipublica, que monta las
-// 73 rutas (caraNueva, mudanzas.go). Va sola, sin nada detrás: lo que ella no registra recibe el
-// 404 de ruta inexistente de su propio ServeMux (F10 · T10.9 · FX TX.25).
+// El :8103 lo sirve la cara única, internal/apipublica, que monta las 73 rutas (caraNueva,
+// mudanzas.go). Va sola, sin nada detrás: lo que ella no registra recibe el 404 de ruta inexistente
+// de su propio ServeMux (F10 · T10.9 · FX TX.25).
 package arranque
 
 import (

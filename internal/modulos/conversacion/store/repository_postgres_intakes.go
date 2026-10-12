@@ -48,7 +48,7 @@ const intakeItemCols = 6
 // isUUID dice si `s` puede estar en una columna de tipo `uuid`. Se pregunta ANTES de
 // consultar para no depender del 22P02 de Postgres: es un predicado, no un error, y
 // como predicado lo puede leer el linter y el que venga detrás. Gemelo del `isUUID` de
-// internal/intakes, que existe por lo mismo.
+// solicitudes/intakes, que existe por lo mismo.
 func isUUID(s string) bool {
 	_, err := uuid.Parse(s)
 	return err == nil

@@ -116,10 +116,8 @@ const FeatureLLMIntake = "llm_intake"
 //
 // ⚠️ ESTO INVIERTE D-044.6, que exigía `api_llm` para tener `llm_intake`. Esta constante en un
 // gate del agregador, del productor del hilo, del compositor o de un endpoint de captación es un
-// DEFECTO. Lo vigilan, en el código viejo, internal/flujos/runtime/via_local_sin_api_llm_test.go
-// (por esta clave no se pregunta ni una vez en el carril) e
-// internal/publicapi/tenantllm_gate_via_test.go (tener la capacidad NO abre la vía); sus gemelos
-// nuevos nacen con los módulos que los consumen.
+// DEFECTO: por esta clave no se pregunta ni una vez en el carril, y tener la capacidad NO abre la
+// vía.
 const FeatureAPILLM = "api_llm"
 
 // FeatureMultiCompany es el derecho a que UNA MISMA PERSONA pertenezca a MÁS DE UNA empresa (Plan

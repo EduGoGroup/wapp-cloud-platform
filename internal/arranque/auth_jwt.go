@@ -1,4 +1,4 @@
-// Parte de internal/arranque/auth.go (copia de internal/bootstrap/arranque/auth.go @ 80807ba), T2.34: los JWT del plano de usuario (ES256, su clave y su JWKS).
+// Los JWT del plano de usuario (ES256, su clave y su JWKS).
 package arranque
 
 import (

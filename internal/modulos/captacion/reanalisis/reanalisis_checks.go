@@ -1,5 +1,4 @@
-// Porta internal/reanalisis/reanalisis.go @ 56097aa (E-13: los escalones de lectura
-// 1–8, `reanalisis.go:455-655` del viejo).
+// Los escalones de lectura 1–8 (trozo de reanalisis.go, partido por E-13).
 
 package reanalisis
 

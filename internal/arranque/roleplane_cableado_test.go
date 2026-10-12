@@ -1,5 +1,4 @@
-// Copia de internal/bootstrap/arranque/roleplane_cableado_test.go @ 80807ba (F0 · 05 §6), retargeteada
-// en F2 (T2.31, conmutar(acceso)): el plano de roles lo sirve la cara NUEVA (apipublica).
+// Desde F2 (T2.31, conmutar(acceso)) el plano de roles lo sirve la cara NUEVA (apipublica).
 package arranque
 
 // roleplane_cableado_test.go — QUE LA PUERTA AL PLANO DE ROLES ESTÉ ENCHUFADA

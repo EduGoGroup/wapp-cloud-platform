@@ -1,5 +1,4 @@
-// Porta internal/flujos/events/store.go @ 9d5a4b6 (trozo: rescatables y listado del dueño; ver el
-// reparto en store.go).
+// Rescatables y listado del dueño (trozo de store.go: ver allí el reparto).
 //
 // Lo que este trozo lleva en el verde, además de sus cuatro exportados: LA consulta de rescatables
 // del sistema (D-043.15), en piezas con nombre —el origen con sus dos LEFT JOIN (la vista

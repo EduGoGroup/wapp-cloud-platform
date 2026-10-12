@@ -1,8 +1,3 @@
-// Porta internal/publicapi/integrations.go @ ed60c24 (493 líneas: de aquí salen las líneas 1-261
-// y 376-493; las 263-374, la lectura y la validación del cuerpo del PUT, van en
-// integrations_validate.go por 05 E-13) y su registro (internal/publicapi/publicapi.go @
-// ed60c24, registerIntegrations, líneas 887-934).
-//
 // integrations.go — LA CONFIGURACIÓN DEL PUENTE CRM (Plan 042 · T5.1 y T5.2, design §5; mapa
 // §2.7, G13–G16): GET / PUT / DELETE de /api/v1/integrations, más el
 // GET /api/v1/integrations/outbox que enseña cómo va la cola. El dominio vive en
@@ -18,7 +13,8 @@
 // pieza (el de la firma del puente); no tiene nada que ver con las llaves del Edge.
 //
 // En el rojo solo existían el puerto, IntegrationsDeps y MountIntegrations; los handlers y sus
-// auxiliares nacieron con el verde (05 E-4, P6).
+// auxiliares nacieron con el verde (05 E-4, P6). La lectura y la validación del cuerpo del PUT
+// van en integrations_validate.go (05 E-13).
 
 package apipublica
 

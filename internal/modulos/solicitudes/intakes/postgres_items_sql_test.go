@@ -10,22 +10,22 @@ import (
 // (E-13). Las sentencias que son de otro fichero (total, relectura de líneas y de revisiones) se
 // dejan pasar aquí: las afirma su test.
 
-// wantLockEditableSQL es el bloqueo de la cabecera (internal/intakes/postgres.go:1358).
+// wantLockEditableSQL es el bloqueo de la cabecera.
 const wantLockEditableSQL = `SELECT status FROM public.intakes WHERE tenant_id = $1 AND id = $2 FOR UPDATE`
 
-// wantDeleteClientItemsSQL es el borrado de las líneas de cliente (internal/intakes/postgres.go:1418).
+// wantDeleteClientItemsSQL es el borrado de las líneas de cliente.
 const wantDeleteClientItemsSQL = `
 		DELETE FROM public.intake_items
 		WHERE intake_id = $1 AND left(sku, 1) <> $2
 	`
 
-// wantInsertItemSQL es el INSERT de una línea (internal/intakes/postgres.go:1429).
+// wantInsertItemSQL es el INSERT de una línea.
 const wantInsertItemSQL = `
 			INSERT INTO public.intake_items (intake_id, sku, label, customization, qty, unit_price)
 			VALUES ($1, $2, $3, $4, $5, $6)
 		`
 
-// wantLastRevisionSQL es la lectura de la última revisión (internal/intakes/postgres.go:1391).
+// wantLastRevisionSQL es la lectura de la última revisión.
 const wantLastRevisionSQL = `
 			SELECT revision_no, kind
 			FROM public.intake_revisions
@@ -34,14 +34,14 @@ const wantLastRevisionSQL = `
 			LIMIT 1
 		`
 
-// wantRepriceItemSQL es el cambio de precio de una línea (internal/intakes/postgres.go:1508).
+// wantRepriceItemSQL es el cambio de precio de una línea.
 const wantRepriceItemSQL = `
 			UPDATE public.intake_items
 			SET label = $3, unit_price = $4
 			WHERE intake_id = $1 AND sku = $2 AND left(sku, 1) <> $5
 		`
 
-// wantRemoveItemSQL es la retirada de una línea (internal/intakes/postgres.go:1517).
+// wantRemoveItemSQL es la retirada de una línea.
 const wantRemoveItemSQL = `
 			DELETE FROM public.intake_items
 			WHERE intake_id = $1 AND sku = $2 AND left(sku, 1) <> $3

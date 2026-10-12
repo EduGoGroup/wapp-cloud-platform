@@ -1,5 +1,4 @@
-// Porta internal/flujos/events/store.go @ 9d5a4b6 (trozo: el filtro y la página del listado del
-// dueño; ver el reparto en store.go).
+// El filtro y la página del listado del dueño (trozo de store.go: ver allí el reparto).
 //
 // Es puro —ni base, ni reloj— y nace VERDE con su test: lo usan el adaptador Postgres
 // (store_list.go) y el doble en memoria (eventshelpertest), que tienen que normalizar igual.

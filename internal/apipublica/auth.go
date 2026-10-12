@@ -1,7 +1,3 @@
-// Porta internal/bootstrap/arranque/http.go @ 9a77307 (líneas 80-171: el registro de A1–A7 que
-// el arranque viejo hacía fuera de publicapi) e internal/iam/transport/http/auth.go @ 9a77307
-// (Register, líneas 49-50).
-//
 // auth.go — LAS SIETE RUTAS DE AUTENTICACIÓN Y EMPRESA (mapa §2.1, A1–A7). En la spec FX era
 // `autenticacion.go`, `DepsAutenticacion` y `MontarAutenticacion` (05 E-11).
 //

@@ -8,11 +8,10 @@ import (
 	"testing"
 )
 
-// Las salidas esperadas de este fichero son LITERALES calculados con el fichero
-// viejo (internal/intakes/status.go @ 64c181a): el candado de fronteras impide
-// importarlo desde aquí, así que la equivalencia viejo ↔ nuevo se fija con lo que
-// el viejo devolvió para este mismo corpus. Las claves van escritas a mano, no
-// con las constantes, para que el test no se mueva con lo que vigila.
+// Las salidas esperadas de este fichero son LITERALES congelados, calculados con la
+// implementación anterior a la reconstrucción para este mismo corpus; no se
+// regeneran. Las claves van escritas a mano, no con las constantes, para que el
+// test no se mueva con lo que vigila.
 
 // lifecycleKeys son las doce claves que el fichero reconoce: los once estados y el
 // alias legado `closed`.

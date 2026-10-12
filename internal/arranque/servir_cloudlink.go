@@ -1,5 +1,5 @@
-// Nace con D-F3-13 (hallazgo 81 de F3). No es copia de internal/bootstrap/arranque: el arranque
-// viejo no tiene esta espera y conserva la suya (GracefulStop con el plazo entero).
+// Nace con D-F3-13 (hallazgo 81 de F3): el arranque anterior a la reconstrucción no tenía esta
+// espera, sino un GracefulStop con el plazo entero.
 package arranque
 
 import (

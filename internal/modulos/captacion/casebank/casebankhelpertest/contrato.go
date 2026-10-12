@@ -6,15 +6,12 @@
 // (memory_test.go) y casebank.Postgres en los procesos de F9, con el arnés de
 // testcontainers.
 //
-// Nuevo: no tiene fichero viejo. Los casos salen del contrato de casebank.Store y
-// de los tests de integración viejos; casos leídos de
-// internal/casebank/postgres_integration_test.go, no portados. De sus cinco
-// tests, tres son del puerto (TestElCheckDelConsentimientoEsLaRedDeAbajo —aquí
-// por el store y no con un INSERT crudo—, TestElCheckAceptaLaFilaConsentida y
-// TestExiste_DistingueTenantYTexto); TestElDefaultDeConsentedRECHAZAALDescuidado
-// es del esquema (un INSERT que ni menciona la columna: el puerto no puede
-// emitirlo) y TestSembrarElCasoAmbar_EsIdempotenteContraPostgres es del servicio
-// (seed_test.go lo afirma con el doble).
+// Los casos salen del contrato de casebank.Store: el CHECK del consentimiento
+// como red de abajo —aquí por el store y no con un INSERT crudo—, el CHECK que
+// acepta la fila consentida y Exists, que distingue tenant y texto. Que el
+// DEFAULT de consented rechace al descuidado es del esquema (un INSERT que ni
+// menciona la columna: el puerto no puede emitirlo) y la idempotencia de la
+// siembra del caso Ambar es del servicio (seed_test.go la afirma con el doble).
 package casebankhelpertest
 
 import (

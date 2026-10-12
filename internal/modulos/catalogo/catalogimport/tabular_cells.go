@@ -1,4 +1,4 @@
-// Porta internal/catalogimport/tabular.go @ 3c74b80 (la mini-sintaxis de las celdas múltiples y el precio, líneas 338-459 y 583-609; partido de tabular.go por E-13)
+// La mini-sintaxis de las celdas múltiples y el precio (partido de tabular.go por E-13).
 
 package catalogimport
 

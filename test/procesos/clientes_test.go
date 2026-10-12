@@ -30,8 +30,8 @@ const (
 
 	// prefijoTenantLLM es el prefijo de las rutas que guardan la configuración LLM del tenant:
 	// la única puerta por la que un test podría pedir la vía `api`, que llamaría a un proveedor
-	// real (internal/llmvia/llmvia.go no admite BaseURL, así que no hay forma de redirigirla a
-	// un doble).
+	// real (internal/modulos/inferencia/llmvia/llmvia.go no admite BaseURL, así que no hay forma
+	// de redirigirla a un doble).
 	prefijoTenantLLM = "/api/v1/tenant-llm"
 	// viaAPI es el valor del campo `via` que el cliente se niega a enviar.
 	viaAPI = "api"

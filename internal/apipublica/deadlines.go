@@ -1,6 +1,3 @@
-// Porta internal/publicapi/publicapi.go @ 115a4ba (defaultDiagnosticsTTL, defaultDBTimeout, dbCtx,
-// margenDeEscritura, SendBudgetFrom, sendCtx y dbTimedOut504, líneas 287-428).
-//
 // deadlines.go — LOS PLAZOS DE LA CARA: el de cada lectura a BD, el presupuesto de una petición
 // de envío y la traducción del plazo vencido a 504. En la spec FX era `plazos.go` (05 E-11).
 //

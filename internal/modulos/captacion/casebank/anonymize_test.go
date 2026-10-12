@@ -8,8 +8,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/casebank"
 )
 
-// anonymize_test.go — las promesas del barrido de PII de T5.3. Reglas leídas de
-// internal/casebank/anonimizar_test.go (13 tests), no portadas. El corpus
+// anonymize_test.go — las promesas del barrido de PII de T5.3. El corpus
 // adversario y la equivalencia con el viejo van en anonymize_corpus_test.go.
 //
 // 🔴 EL PAR QUE HACE QUE ESTO NO SEA DECORADO: los tests de abajo van SIEMPRE en

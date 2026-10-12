@@ -1,6 +1,3 @@
-// Porta internal/diagnostics/diagnostics.go @ 8896f13 (líneas 99-203: MemoryStore, que pasa a
-// este paquete por D-F3-1 y se llama Memoria).
-
 package diagnosticshelpertest
 
 import (

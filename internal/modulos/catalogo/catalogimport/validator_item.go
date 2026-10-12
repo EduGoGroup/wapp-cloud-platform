@@ -1,4 +1,4 @@
-// Porta internal/catalogimport/validator.go @ 3c74b80 (el artículo y sus campos v2, líneas 493-744; partido de validator.go por E-13)
+// El artículo y sus campos v2 (partido de validator.go por E-13).
 
 package catalogimport
 

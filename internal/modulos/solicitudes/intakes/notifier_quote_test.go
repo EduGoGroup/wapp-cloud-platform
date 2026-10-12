@@ -1,8 +1,8 @@
 package intakes
 
 // La cotización del DUEÑO (Plan 044 · T4.3/T4.4, D-044.49): QuoteText compone, SendQuote y
-// SendQuestion entregan tal cual. Vectores calculados con internal/intakes/notifier.go @ 64c181a.
-// Dobles en notifier_test.go.
+// SendQuestion entregan tal cual. Vectores congelados, calculados con la implementación anterior a
+// la reconstrucción. Dobles en notifier_test.go.
 
 import (
 	"context"

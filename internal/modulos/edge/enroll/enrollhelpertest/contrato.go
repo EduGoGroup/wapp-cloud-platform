@@ -9,9 +9,6 @@
 //
 // Las suites las corren las dos implementaciones de cada puerto: los dobles en unitario
 // (memoria_test.go) y los adaptadores Postgres en los procesos de F9 (sesión F3-05).
-//
-// Los casos salen de plan/F3-edge/diseno.md §2 y de los tests viejos de internal/gateway/enroll
-// @ 8896f13 (TestEnrollEdge_*, TestIntegration_ConsumeIsAtomic), leídos, no portados.
 package enrollhelpertest
 
 import (

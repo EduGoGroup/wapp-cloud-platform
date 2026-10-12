@@ -8,9 +8,9 @@ import (
 )
 
 // El CORPUS DE NORMALIZACIÓN de ConfigResolver: qué texto casa qué keyword. Es la tabla de
-// equivalencia viejo ↔ nuevo: la columna want NO se dedujo del contrato, es lo que contesta el
-// ConfigResolver de internal/flujos/trigger @ c0c0c03 a cada fila (se pasó el corpus entero por
-// él, con un programa suelto que no vive en el repo). Si una fila se pone en rojo, el resolver
+// equivalencia viejo ↔ nuevo: la columna want NO se dedujo del contrato, es lo que contestó a
+// cada fila el ConfigResolver anterior a la reconstrucción (se pasó el corpus entero por él,
+// con un programa suelto que no vive en el repo). Si una fila se pone en rojo, el resolver
 // nuevo dejó de normalizar como el que corre en UAT.
 //
 // Lleva casos ADVERSARIOS a propósito (hallazgo 40 de F1): separadores repetidos, dígitos no

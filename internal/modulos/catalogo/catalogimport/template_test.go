@@ -9,8 +9,9 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/catalogimport"
 )
 
-// Los fixtures de testdata/ son la salida del paquete VIEJO (internal/catalogimport
-// @ 3c74b80), capturada una vez con un programa temporal que no se commitea:
+// Los fixtures de testdata/ son la salida de la implementación anterior a la
+// reconstrucción, capturada una vez con un programa temporal que no se
+// commitea:
 //
 //   - template.json: json.MarshalIndent(BuildTemplate(), "", "  ") más un salto de
 //     línea, que es exactamente lo que sirve GET /api/v1/catalog/import/template;

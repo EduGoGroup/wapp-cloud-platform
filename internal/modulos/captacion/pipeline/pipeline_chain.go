@@ -1,4 +1,4 @@
-// Porta internal/intake/pipeline/pipeline.go @ 56097aa (la cadena de un job: sobre, plaza y etapas)
+// La cadena de un job: sobre, plaza y etapas.
 
 package pipeline
 

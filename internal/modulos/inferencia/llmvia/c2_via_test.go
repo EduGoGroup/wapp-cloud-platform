@@ -1,6 +1,6 @@
 package llmvia_test
 
-// Porta internal/llmvia/c2_via_test.go @ ebf4eb7 (candado de invariante I-CP-3, D-F4-2).
+// Candado de invariante I-CP-3 (D-F4-2).
 
 import (
 	"go/ast"
@@ -41,9 +41,7 @@ import (
 //
 // # Qué árbol barre
 //
-// El de la reconstrucción modular: internal/{modulos,nucleo,arranque,apipublica}. El árbol
-// viejo lo sigue vigilando el candado viejo (internal/llmvia/c2_via_test.go), que excluye
-// este (D-F4-1). Desde F10, cuando el viejo muera, este barre todo internal/.
+// El de la reconstrucción modular: internal/{modulos,nucleo,arranque,apipublica}.
 //
 // # La lista de permitidos, y por qué cada uno
 //
@@ -78,14 +76,12 @@ var allowed = map[string]string{
 	"internal/modulos/inferencia/tenantllm/tenantllmhelpertest/memoria.go": "El DOBLE del almacén: aplica la misma regla de persistencia que " +
 		"el adaptador Postgres (las guardas de Upsert y la negativa de APIKey), o los tests que se apoyan en él verían otra cosa.",
 
-	// Entrada de TX.13 (F45-02), la que el comentario de arriba anunciaba: la misma que el candado
-	// viejo le da a internal/publicapi/tenantllm.go, con el mismo motivo.
+	// Entrada de TX.13 (F45-02), la que el comentario de arriba anunciaba.
 	"internal/apipublica/tenantllm.go": "El CONTRATO HTTP del PUT: qué campos exige cada vía (REQ-33: elegir local no exige nada) y " +
 		"cómo se traduce el cuerpo a los argumentos del store. Valida la petición; no decide quién ejecuta la inferencia.",
 
-	// Entrada de F7 (F7-03), la otra que el comentario de arriba anunciaba: la misma que el candado
-	// viejo le da a internal/reanalisis/reanalisis.go, con el mismo motivo. El fichero es
-	// reanalisis_checks.go y no reanalisis.go porque el nuevo se partió por tema (E-13, D-F7-6).
+	// Entrada de F7 (F7-03), la otra que el comentario de arriba anunciaba. El fichero es
+	// reanalisis_checks.go y no reanalisis.go porque el paquete se partió por tema (E-13, D-F7-6).
 	"internal/modulos/captacion/reanalisis/reanalisis_checks.go": "El CONTRATO HTTP del re-análisis (§8.1): resuelve la vía EFECTIVA de la petición y " +
 		"decide QUÉ EXIGE cada una —`api` pide `api_llm` y credencial, `local` no pide nada—. No construye " +
 		"provider ni llama al modelo: la vía viaja al job como DATO y la selección la sigue haciendo el Selector.",

@@ -21,15 +21,16 @@ import (
 
 const (
 	// p9MsgOrphan es la línea WARN con la que el gateway dice que un DiagnosticsBundle no casó con
-	// ninguna solicitud pendiente (internal/gateway/grpc/diagnostics.go, storeDiagnosticsBundle): un
-	// command_id que nadie pidió, uno ya contestado, uno vencido, o uno de otra sesión u otra empresa.
+	// ninguna solicitud pendiente (internal/modulos/edge/grpc/diagnostics.go, storeDiagnosticsBundle):
+	// un command_id que nadie pidió, uno ya contestado, uno vencido, o uno de otra sesión u otra
+	// empresa.
 	p9MsgOrphan = "diagnóstico: bundle sin solicitud pendiente; ignorado"
 	// p9MsgSendFailed es la línea ERROR que deja cada 502 de la API pública (writeSendError,
-	// internal/publicapi/messages.go): aquí, el diagnóstico pedido a una sesión offline.
+	// internal/apipublica/messages.go): aquí, el diagnóstico pedido a una sesión offline.
 	p9MsgSendFailed = "envío por la API pública fallido"
 
 	// Las tres acciones que auditan las rutas de P9: el permiso de la ruta es el `action` de
-	// audit_events (protect, internal/publicapi/publicapi.go).
+	// audit_events (protect, internal/apipublica/chain.go).
 	p9ActDiag    = "diagnostics.request"
 	p9ActIntents = "intents.write"
 	p9ActProfile = "sessions.write"

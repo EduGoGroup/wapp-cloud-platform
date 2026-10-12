@@ -1,8 +1,3 @@
-// Porta internal/publicapi/flows.go @ 5ba7f419 (248 líneas, entero) y el registro de I1–I4 e
-// I11–I13 (internal/publicapi/publicapi.go @ 5ba7f419, Register, líneas 446-461 y 484-496), con
-// el puerto FlowStore y los campos Flows, Modules, Starter, Triggers y TriggersDurableFlow de
-// publicapi.Deps (líneas 53-61, 70-75 y 150-158).
-//
 // flows.go — LOS FLUJOS Y SUS REGLAS DE DISPARO POR LA API PÚBLICA (mapa §2.9, filas I1–I4 e
 // I11–I13): publicar una definición, listarlas, leer una, arrancar una conversación, y el CRUD de
 // las reglas que deciden qué flujo arranca con qué palabra.

@@ -32,8 +32,7 @@ const (
 var p7TemplateSKUs = []string{"TORTA-CHOC", "TORTA-UNICORNIO", "TEQUENOS-15", "REFRESCO-15L", "COMBO-FIESTA"}
 
 // p7DocFirst es el primer catálogo de la ref estricta y p7DocNext el que se sube después: el café
-// sube de precio, el té queda igual, el jugo desaparece y entra el agua (los documentos de
-// internal/publicapi/catalogimport_test.go: `catalogoVigente` y `docNuevo`).
+// sube de precio, el té queda igual, el jugo desaparece y entra el agua.
 func p7DocFirst() []byte {
 	return p7Doc(p7Cat("1", "Bebidas", p7Item("1", "CAFE", "Café", "2.5"), p7Item("2", "TE", "Té", "2"), p7Item("3", "JUGO", "Jugo", "3")))
 }
@@ -391,10 +390,9 @@ func (w *p7World) wantRejected(t *testing.T, r respuesta, tc p7Rejection) {
 	}
 }
 
-// p7NineDefects es UN documento con nueve defectos distintos repartidos por dos categorías
-// (`docConNueveDefectos`, internal/catalogimport/validator_test.go): precio como texto, artículo sin
-// nombre, código repetido, sku repetido, sku reservado, subcategoría inexistente, variantes y
-// componentes a la vez, componente que no existe y artículo sin precio.
+// p7NineDefects es UN documento con nueve defectos distintos repartidos por dos categorías: precio
+// como texto, artículo sin nombre, código repetido, sku repetido, sku reservado, subcategoría
+// inexistente, variantes y componentes a la vez, componente que no existe y artículo sin precio.
 const p7NineDefects = `{
   "format": "wapp.catalog_import",
   "version": 1,

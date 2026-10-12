@@ -1,6 +1,3 @@
-// Porta internal/ingest/dedupe.go @ 8896f13 (MemoryDeduper, que pasa a este paquete por D-F3-1
-// y se llama Memoria).
-
 package ingesthelpertest
 
 import (

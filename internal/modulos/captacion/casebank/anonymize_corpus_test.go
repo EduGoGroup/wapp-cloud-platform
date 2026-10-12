@@ -12,7 +12,7 @@ import (
 // la equivalencia viejo ↔ nuevo.
 //
 // Los valores esperados NO están deducidos del contrato: son lo que devolvió el
-// paquete VIEJO (internal/casebank @ 8d875ab) al ejecutarlo sobre estas mismas
+// paquete VIEJO, anterior a la reconstrucción, al ejecutarlo sobre estas mismas
 // entradas, con la misma lista de nombres. Este paquete no puede importar el
 // viejo (candado de fronteras, 05 E-8), así que se fijan a mano. Quien cambie una
 // fila está cambiando la conducta respecto al viejo, y lo tiene que decir.

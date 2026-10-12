@@ -1,6 +1,3 @@
-// Porta internal/receipts/memory.go @ 8896f13 (MemoryStore, que pasa a este paquete por D-F3-1
-// y se llama Memoria).
-
 package receiptshelpertest
 
 import (

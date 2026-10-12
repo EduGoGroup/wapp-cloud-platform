@@ -1,12 +1,12 @@
-// Copia de internal/bootstrap/arranque/reanalisis_cableado_test.go @ 80807ba (F0 · 05 §6). Desde F6
-// (T6.24, conmutar(solicitudes)) el c.intakeService cuya PushRevisionByID llama la clausura es el
-// Service de internal/modulos/solicitudes. Y desde F7 (T7.23–T7.24, conmutar(captacion)) el
-// re-análisis y la etapa draft son los de internal/modulos/captacion: el texto que este test busca
-// cambió con E-11 (`reanalisis.NewService`, `stages.WithCRMPush`; hallazgo 28 de F7) y el campo
-// `Reanalysis` se exige en las deps de la cara NUEVA (apipublica.ReanalyzeDeps), la única que hay
-// desde F8 (conmutar(conversacion)): el arranque ya no importa publicapi. Desde F8 también el
-// compositor que recibe reanalisis.NewService es c.intakeComposer a secas (murió composerBridge);
-// eso lo afirma captacion_cableado_test.go, este test no mira ese argumento.
+// Desde F6 (T6.24, conmutar(solicitudes)) el c.intakeService cuya PushRevisionByID llama la
+// clausura es el Service de internal/modulos/solicitudes. Y desde F7 (T7.23–T7.24,
+// conmutar(captacion)) el re-análisis y la etapa draft son los de internal/modulos/captacion: el
+// texto que este test busca cambió con E-11 (`reanalisis.NewService`, `stages.WithCRMPush`;
+// hallazgo 28 de F7) y el campo `Reanalysis` se exige en las deps de la cara NUEVA
+// (apipublica.ReanalyzeDeps), la única que hay desde F8 (conmutar(conversacion)): el arranque ya no
+// importa publicapi. Desde F8 también el compositor que recibe reanalisis.NewService es
+// c.intakeComposer a secas (murió composerBridge); eso lo afirma captacion_cableado_test.go, este
+// test no mira ese argumento.
 package arranque
 
 // reanalisis_cableado_test.go — QUE EL RE-ANÁLISIS ESTÉ ENCHUFADO (Plan 044 · Ola 4 ·

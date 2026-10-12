@@ -12,11 +12,12 @@ import (
 )
 
 // La VUELTA del puente: POST /api/v1/integrations/callback, sin JWT, autenticado por la firma HMAC del
-// cuerpo crudo. Re-expresa internal/publicapi/crmcallback_e2e_integration_test.go (la cadena entera:
-// firma → gate → schema → UPDATE → aviso al cliente por el Edge) e internal/intakes/crm_integration_test.go
-// (los dos instantes que se mueven por separado, el no-op, el aislamiento por empresa).
+// cuerpo crudo. Recorre la cadena entera (firma → gate → schema → UPDATE → aviso al cliente por el
+// Edge) y el reflejo en la solicitud (los dos instantes que se mueven por separado, el no-op, el
+// aislamiento por empresa).
 
-// Los avisos que el cliente recibe por cada estado del CRM (internal/intakes/notifier.go).
+// Los avisos que el cliente recibe por cada estado del CRM
+// (internal/modulos/solicitudes/intakes/notifier_templates.go).
 const (
 	p6TextPaid      = "Recibimos tu pago. ¡Gracias! Ya estamos con tu pedido."
 	p6TextPreparing = "Tu pedido ya se está preparando. Te avisamos apenas salga."

@@ -1,6 +1,6 @@
-// Copia de internal/bootstrap/arranque/flow_options_cableadas_test.go @ 80807ba (F0 · 05 §6). Desde F8 (T8.32,
-// conmutar(conversacion)) el `flowruntime` que se vigila es internal/modulos/conversacion/runtime, que conserva el
-// alias, y la lista de requeridas son TODAS las opciones que el arranque pasa a flowruntime.New (eran tres).
+// Desde F8 (T8.32, conmutar(conversacion)) el `flowruntime` que se vigila es internal/modulos/conversacion/runtime, que
+// conserva el alias, y la lista de requeridas son TODAS las opciones que el arranque pasa a flowruntime.New (eran
+// tres).
 package arranque
 
 import (

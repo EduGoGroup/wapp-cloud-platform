@@ -6,7 +6,7 @@
 //
 // Los siete módulos de D-5 (plan/DECISIONES.md; correspondencia viejo→nuevo en 04 §4):
 //
-//   - acceso: identidad y gobierno multi-empresa (internal/iam + platformadmin + entitlements).
+//   - acceso: identidad y gobierno multi-empresa (iam + platformadmin + entitlements).
 //   - edge: el túnel con cada Edge y lo que sube por él (gateway, diagnostics, inferstats,
 //     receipts, ingest, filtercfg).
 //   - conversacion: el Motor de Flujos y el turno acotado (flujos, turnoacotado).

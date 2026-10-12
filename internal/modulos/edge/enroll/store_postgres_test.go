@@ -18,8 +18,8 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll/enrollhelpertest"
 )
 
-// Las dos sentencias, byte a byte, escritas aquí a mano (los literales de
-// internal/gateway/enroll/store_postgres.go @ 8896f13, con su sangría).
+// Las dos sentencias, byte a byte, escritas aquí a mano (los literales del
+// paquete anterior a la reconstrucción, con su sangría).
 const (
 	sqlCreateCode = "\n" +
 		"\t\tINSERT INTO public.enrollment_codes (code, tenant_id, expires_at)\n" +

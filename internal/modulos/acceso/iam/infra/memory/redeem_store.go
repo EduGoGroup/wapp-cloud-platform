@@ -1,6 +1,6 @@
-// Nuevo: el gemelo en memoria de out.InvitationRedeemRepo (diseño F2 §2, tareas T2.9). El viejo
-// no tenía: reproduce internal/iam/infra/postgres/canje.go @ 9a77307 y la parte de
-// GrantTenantAccess (memberships.go) que el canje recorre.
+// El gemelo en memoria de out.InvitationRedeemRepo (diseño F2 §2, tareas T2.9): reproduce el
+// canje del adaptador de Postgres (iam/infra/postgres/canje.go) y la parte de GrantTenantAccess
+// (memberships.go) que el canje recorre.
 
 package memory
 

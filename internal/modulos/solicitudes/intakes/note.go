@@ -3,12 +3,12 @@
 // un solo límite para las DOS ranuras —la indicación de línea
 // (intake_items.customization) y la del pedido (intakes.customer_note)—.
 //
-// Nació en el módulo del carrito (internal/flujos/modules/cart) y vive ahora junto
-// a la solicitud porque no es una pantalla: es el contrato de contenido de dos
-// columnas, y las escriben DOS puertas —el carrito y el pipeline LLM del Plan 044—.
-// Las dos llaman a ESTA función —está exportada por eso—, no copian la regla: dos
-// entradas, una regla. Si el número o el saneo divergieran entre las dos puertas,
-// la columna tendría dos contratos y ninguno sería verdad.
+// Nació en el módulo del carrito y vive ahora junto a la solicitud porque no es una
+// pantalla: es el contrato de contenido de dos columnas, y las escriben DOS puertas
+// —el carrito y el pipeline LLM del Plan 044—. Las dos llaman a ESTA función —está
+// exportada por eso—, no copian la regla: dos entradas, una regla. Si el número o
+// el saneo divergieran entre las dos puertas, la columna tendría dos contratos y
+// ninguno sería verdad.
 
 package intakes
 

@@ -1,4 +1,3 @@
-// Copia de internal/bootstrap/arranque/orquestador.go @ 80807ba (F0 · 05 §6): cableaba paquetes VIEJOS.
 // Package arranque construye el proceso de la Plataforma Cloud: los ~60 objetos del
 // monolito modular, en el orden exacto en que se necesitan, y los cuatro listeners.
 //
@@ -16,7 +15,7 @@
 // fases respetan la secuencia original de los constructores que pueden fallar. Un
 // arranque con las credenciales de R2 mal puestas y el emisor JWT mal configurado a la
 // vez sigue muriendo por donde moría antes.
-// 🔀 F8 · conmutar(conversacion): ya no cablea ninguno; desde F8 el arranque nuevo es todo módulos nuevos.
+// 🔀 F8 · conmutar(conversacion): ya no cablea ningún paquete viejo; desde F8 el arranque nuevo es todo módulos nuevos.
 package arranque
 
 import (

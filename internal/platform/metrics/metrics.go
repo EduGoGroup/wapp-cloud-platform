@@ -183,8 +183,8 @@ func (s *statusRecorder) WriteHeader(code int) {
 // escribirlo: con el mismo handler, `SetWriteDeadline` devuelve nil sirviendo directo y
 // «feature not supported» detrás de InstrumentHTTP. Lo cubre
 // TestInstrumentHTTP_NoRompeElResponseController (metrics_responsecontroller_test.go);
-// quien lo quite verá morir ese test y el de la ruta que depende de él
-// (internal/publicapi/plazoescritura_test.go).
+// quien lo quite verá morir ese test y dejará sin plazo a la ruta que depende de él
+// (internal/apipublica/writedeadline.go).
 //
 // El envoltorio gemelo de httpapi.AuditMiddleware (audit_mw.go) NO lo tiene: no hace
 // falta hoy —la única ruta con plazo extendido es una LECTURA y no atraviesa la
@@ -326,7 +326,7 @@ func (m *Metrics) LLMDegradacion(origen, via, reason string) {
 // vocabulario correcto por construcción — quien la llama no tiene forma de
 // pasar la columna equivocada sin nombrar mal la variable a propósito. Ver la
 // COLISIÓN DE VOCABULARIO documentada en
-// internal/flujos/runtime/event_effects.go.
+// internal/modulos/conversacion/runtime/event_effects.go.
 //
 // `reason` es la TERCERA etiqueta desde el Plan 053 · Ola 4 · T4.1 y solo la
 // puebla `event_escaped`: sus tres emisores mezclaban «el flujo terminó solo»,
@@ -442,7 +442,7 @@ func (m *Metrics) SetFlowAutoreplyStreakMaxSource(fn func() int) {
 // y el scrape sigue sirviendo las demás series (un despliegue sin base no debe
 // quedarse sin /metrics).
 //
-// DOBLE LLAMADA: el llamante previsto es UNO SOLO (internal/bootstrap, justo
+// DOBLE LLAMADA: el llamante previsto es UNO SOLO (internal/arranque, justo
 // después de abrir la base). Aun así, una segunda llamada NO revienta: el
 // AlreadyRegisteredError del registry se trata como "ya estaba" y se ignora, de
 // forma que un cable duplicado por descuido no tumba el arranque de la

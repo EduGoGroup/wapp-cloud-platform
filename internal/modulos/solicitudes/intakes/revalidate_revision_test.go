@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Vectores calculados con el fichero viejo (internal/intakes/revalidate.go @ 64c181a).
+// Vectores congelados, calculados con la implementación anterior a la reconstrucción; no se regeneran.
 
 // TestRevalidatedRevision_IsASystemRevalidatedRevision: la revisión que escriben los stores es
 // `revalidated`, de `system`, con el payload v1 y el texto mandado tal cual; ni número ni fecha.

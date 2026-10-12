@@ -104,8 +104,8 @@ func TestMetricsPublisher_SpeaksTheDomainLanguage(t *testing.T) {
 	}
 }
 
-// Los vectores de los dos cálculos puros salen del fichero viejo
-// (internal/intakes/metricas.go @ 64c181a), casos adversarios incluidos.
+// Los vectores de los dos cálculos puros son valores congelados, calculados con la implementación
+// anterior a la reconstrucción, casos adversarios incluidos; no se regeneran.
 
 // twoLines son las dos líneas de cliente de la escena del test viejo.
 func twoLines() []Item {

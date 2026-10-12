@@ -20,9 +20,9 @@ import (
 // Los instantes son del reloj del CLIENTE y están fijados: ni un time.Now() en los
 // tests de este paquete.
 //
-// Los valores esperados se comprobaron además contra el paquete viejo
-// (internal/intake/anclaje @ 8d875ab) con estos mismos casos: es la equivalencia
-// viejo ↔ nuevo, fijada a mano porque el paquete nuevo no importa el viejo.
+// Los valores esperados se comprobaron además contra el paquete viejo, anterior
+// a la reconstrucción, con estos mismos casos: es la equivalencia viejo ↔ nuevo,
+// fijada a mano porque el paquete nuevo no importa el viejo.
 // ════════════════════════════════════════════════════════════════════════════
 
 // at builds an instant of 2026-07-13, the day of the request.

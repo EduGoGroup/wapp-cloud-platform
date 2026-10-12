@@ -186,8 +186,7 @@ func TestPostgres_InsertRevision_EvidenceIsLiteralToo(t *testing.T) {
 	}
 }
 
-// wantInsertRevisionSQL es el INSERT numerador: el texto del viejo (internal/intakes/postgres.go:746) seguido de su
-// proyección (:461).
+// wantInsertRevisionSQL es el INSERT numerador seguido de su proyección.
 const wantInsertRevisionSQL = `
 	INSERT INTO public.intake_revisions
 		(intake_id, revision_no, kind, payload, rendered_text, created_by,

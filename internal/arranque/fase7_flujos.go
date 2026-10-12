@@ -1,6 +1,5 @@
-// Copia de internal/bootstrap/arranque/fase7_flujos.go @ 80807ba (F0 · 05 §6). Nació cableando
-// paquetes VIEJOS: edge cambió en F3 (T3.28), los objetos de solicitudes en F6 (T6.24) y el pool que
-// pide las clasificaciones en F7 (T7.23).
+// Edge cambió en F3 (T3.28), los objetos de solicitudes en F6 (T6.24) y el pool que pide las
+// clasificaciones en F7 (T7.23).
 //
 // 🔀 F8 · conmutar(conversacion) (T8.33): TODO lo que construye esta fase es de
 // internal/modulos/conversacion —registro de módulos, engine, comprobador de flujo durable,

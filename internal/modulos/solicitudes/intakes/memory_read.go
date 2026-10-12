@@ -1,5 +1,4 @@
-// Porta internal/intakes/memory.go @ 64c181a (las lecturas) y el método
-// (*MemoryStore).ApprovedRenderedTexts de internal/intakes/aprobadas.go @ 64c181a.
+// Las lecturas de MemoryStore, ApprovedRenderedTexts incluida.
 
 package intakes
 

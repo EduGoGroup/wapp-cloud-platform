@@ -1,10 +1,8 @@
-// Porta internal/publicapi/limits.go @ 115a4ba (tooLargeBody, tooLargeMessage, tooLarge,
-// writeTooLarge). errorBody, que en la cara vieja vivía en este fichero, nació en response.go
-// (T-15).
-//
 // limits.go concentra la FORMA de una sola respuesta: el 413 de los techos de
 // cuerpo de la API pública (Plan 041 · A5, REQ-16). Nace en verde y sin rojo: no exporta nada
 // (05 E-4, P6). Sus consumidores llegan con las áreas de F6–F8; hasta entonces lo usa solo su test.
+//
+// errorBody, que en la cara vieja vivía en este fichero, nació en response.go (T-15).
 //
 // El rojo A5 decía que el 413 «no nombra la cifra», y la razón por la que estuvo
 // abierto es que los techos no son uno: la config de intents, las variables de

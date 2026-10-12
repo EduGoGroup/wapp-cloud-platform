@@ -6,10 +6,9 @@
 // apipublica.PostgresEventTelemetryStore en los procesos de F9, con el arnés de testcontainers
 // (test/procesos/eventstelemetry_contrato_test.go).
 //
-// Nuevo: no tiene fichero viejo. Los casos salen del contrato de EventTelemetryReader y de los
-// tests viejos, leídos y NO portados (05 E-8): internal/publicapi/eventstelemetry_integration_test.go
-// (el guion bajo escapado, el tenant y el orden con keyset). El EXPLAIN de
-// eventstelemetry_internal_test.go no es del puerto: es del índice de la migración 0056.
+// Los casos salen del contrato de EventTelemetryReader: el guion bajo escapado, el tenant y el
+// orden con keyset. El plan de ejecución (EXPLAIN) no es del puerto, sino del índice de la
+// migración 0056, y por eso no tiene caso aquí.
 //
 // Dos ficheros de suite:
 //   - contrato.go: la entrada. Montaje, FlowEvent, Contrato, la tabla de casos, los auxiliares y

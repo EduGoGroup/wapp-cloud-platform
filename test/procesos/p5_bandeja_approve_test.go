@@ -191,9 +191,9 @@ func p5SetDepositTemplate(t *testing.T, db *sql.DB, tenant, template string) {
 	}
 }
 
-// TestP5_AprobarDosVecesUnSoloEfecto es 🔴 INV-1 como conducta (R9.6.c; el candado que pasa a
-// aserción es internal/intakes/inv1_aprobar_ast_test.go): la aprobación tiene una sola puerta —el
-// POST de la dueña— y un solo efecto. En su propio servidor, con una empresa CON plantilla de seña:
+// TestP5_AprobarDosVecesUnSoloEfecto es 🔴 INV-1 como conducta (R9.6.c): la aprobación tiene una
+// sola puerta —el POST de la dueña— y un solo efecto. En su propio servidor, con una empresa CON
+// plantilla de seña:
 //
 //   - nadie_aprueba_solo: un borrador con sus líneas guardadas sigue `pending_approval` y el cliente no
 //     ha recibido nada mientras la dueña no aprueba.

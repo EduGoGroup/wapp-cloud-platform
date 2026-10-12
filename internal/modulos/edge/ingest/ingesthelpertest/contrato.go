@@ -7,10 +7,6 @@
 //
 // La suite la corren las dos implementaciones: Memoria en unitario (memoria_test.go) e
 // ingest.PostgresDeduper en los procesos de F9, con el arnés de testcontainers (F3-05).
-//
-// Nuevo: no tiene fichero viejo. Los casos salen de plan/F3-edge/diseno.md §2 y de los tests
-// viejos de internal/ingest @ 8896f13 (TestMemoryDeduper_PrimerAvistamientoLuegoDuplicado,
-// TestPostgresDeduper_SeenIdempotente), leídos, no portados.
 package ingesthelpertest
 
 import (

@@ -1,6 +1,5 @@
-// Porta internal/platformadmin/signup.go @ 9a77307: el alta pública POST /api/v1/signup, la ÚNICA
-// ruta sin autenticar del plano de plataforma. Recibe el puerto AccessRequestStore, no el
-// *Repository (D-F2-3).
+// El alta pública POST /api/v1/signup, la ÚNICA ruta sin autenticar del plano de plataforma.
+// Recibe el puerto AccessRequestStore, no el *Repository (D-F2-3).
 
 package platformadmin
 

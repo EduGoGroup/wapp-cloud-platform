@@ -16,9 +16,9 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
 )
 
-// El texto del recordatorio de este fichero es un LITERAL calculado con el fichero
-// viejo (internal/intakes/deposit.go @ 64c181a) para esta misma solicitud, esta
-// plantilla y este reloj: el candado de fronteras impide importarlo desde aquí.
+// El texto del recordatorio de este fichero es un LITERAL congelado, calculado
+// con la implementación anterior a la reconstrucción para esta misma solicitud,
+// esta plantilla y este reloj; no se regenera.
 
 const (
 	depositTenant  = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"

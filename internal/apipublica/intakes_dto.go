@@ -1,7 +1,3 @@
-// Porta internal/publicapi/intakes.go @ ed60c24 (1073 líneas: intakeDTO e intakeItemDTO, líneas
-// 59-115; intakeDetailResponse e intakeRevisionDTO, líneas 127-223; toIntakeDetailResponse,
-// líneas 329-367; toIntakeDTO, líneas 938-963).
-//
 // intakes_dto.go — LAS PROYECCIONES AL WIRE DE UNA SOLICITUD: la cabecera, la línea, la revisión
 // y el detalle. Es un trozo de intakes.go partido por tema (05 E-13). Van aparte de los handlers
 // porque las comparten todos: la cabecera la responden G1, G2 y G3, y el detalle G2, G4, G5 y G6.

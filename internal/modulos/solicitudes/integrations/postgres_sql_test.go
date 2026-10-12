@@ -1,9 +1,9 @@
 package integrations_test
 
-// Las doce sentencias del adaptador, byte a byte (con su sangría): son las de
-// internal/integrations/postgres.go y outbox_stats.go @ 36d5a04, extraídas de esos ficheros por
-// un script y no a mano. El unitario del adaptador afirma que cada método emite la suya; lo que
-// HACEN contra una base lo prueba la suite de contrato en test/procesos.
+// Las doce sentencias del adaptador, byte a byte (con su sangría): valores congelados, extraídos
+// por un script, y no a mano, de la implementación anterior a la reconstrucción. El unitario del
+// adaptador afirma que cada método emite la suya; lo que HACEN contra una base lo prueba la suite
+// de contrato en test/procesos.
 
 const (
 	// enqueueSQL es la de EnqueueWebhook.

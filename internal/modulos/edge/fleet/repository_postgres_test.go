@@ -27,7 +27,7 @@ var (
 // Las sentencias del núcleo, byte a byte, escritas aquí a mano y NO copiadas de una constante de
 // producción: si alguien toca el SQL del adaptador, este fichero lo dice. Los espacios en blanco
 // (el salto inicial, las dos tabulaciones de sangría, la tabulación final) son los del literal
-// del paquete viejo, internal/gateway/fleet/repository_postgres.go @ 809345b.
+// del paquete viejo, anterior a la reconstrucción.
 const (
 	// MarkOnline: el INSERT no nombra `profile` (la sesión nace con el DEFAULT 'passive' del
 	// esquema) y el SET del ON CONFLICT tampoco: reconectar conserva el perfil.

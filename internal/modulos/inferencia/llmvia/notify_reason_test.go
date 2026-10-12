@@ -29,7 +29,7 @@ func (e *reasonError) Motivo() string { return e.reason }
 
 // TestReasonOf_TheWholeTable fija el mapeo error → motivo de notificación (R4.5.d), incluido
 // —y sobre todo— lo que NO notifica. Son las 8 filas de la tabla del diseño, recorridas con
-// los 17 casos del test viejo (internal/llmvia/notify_internal_test.go).
+// los 17 casos del test anterior a la reconstrucción.
 //
 // 🔴 LA MITAD IMPORTANTE SON LOS `false`. Un canal que avisa de más deja de leerse
 // (D-044.32), así que «esto no escribe fila» es una afirmación tan fuerte como su contraria

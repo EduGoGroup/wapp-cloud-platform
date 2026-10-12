@@ -1,5 +1,4 @@
-// Porta internal/gateway/grpc/connect.go @ cbc5736 (lo que el latido persiste y renueva).
-// Trozo de connect.go, partido por E-13.
+// Lo que el latido persiste y renueva. Trozo de connect.go, partido por E-13.
 //
 // Aquí vive lo que hace cada parte del job del latido, sin el reparto: quién llama a qué y
 // en qué orden lo decide submitHeartbeat (connect_route.go). Todo va por puertos —fleet,

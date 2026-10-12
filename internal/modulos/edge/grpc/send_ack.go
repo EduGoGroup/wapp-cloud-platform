@@ -1,6 +1,5 @@
-// Porta internal/gateway/grpc/send.go @ c851591 (la correlación de acuses:
-// deliverAck, clearAck, cancelSessionAcks, y la recepción de MessageReceipt). Trozo
-// de send.go, partido por E-13.
+// La correlación de acuses: deliverAck, clearAck, cancelSessionAcks, y la recepción
+// de MessageReceipt. Trozo de send.go, partido por E-13.
 
 package grpc
 

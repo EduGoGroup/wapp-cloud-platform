@@ -20,7 +20,7 @@ import (
 // Las seis sentencias, byte a byte, escritas aquí a mano y NO copiadas de una constante de
 // producción: si alguien toca el SQL del adaptador, este fichero lo dice. Los espacios en blanco
 // (el salto inicial, las dos tabulaciones de sangría, la tabulación final) son los del literal
-// del paquete viejo, internal/gateway/lease/repository_postgres.go @ 8896f13.
+// del paquete viejo, anterior a la reconstrucción.
 const (
 	// Upsert: el INSERT escribe `false` literal en revoked y el SET del ON CONFLICT no nombra
 	// esa columna. Es la guarda «Upsert no resucita» (R-L2, T-8).
@@ -46,7 +46,7 @@ const (
 		"\t\tFROM public.leases\n" +
 		"\t\tWHERE tenant_id = $1 AND edge_id = $2\n" +
 		"\t"
-	// Las tres del corte por tenant leen y escriben public.tenants, que es de platform (D-9).
+	// Las tres del corte por tenant leen y escriben public.tenants, que es del módulo acceso (D-9).
 	sqlTenantRevoked = "\n" +
 		"\t\tSELECT revoked_at FROM public.tenants WHERE id = $1\n" +
 		"\t"

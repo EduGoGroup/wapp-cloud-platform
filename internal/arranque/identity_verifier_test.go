@@ -1,5 +1,4 @@
-// Copia de internal/bootstrap/arranque/identity_verifier_test.go @ 80807ba (F0 · 05 §6). Desde F8
-// (conmutar(conversacion)) el arranque que este test ejercita no cablea ningún paquete viejo.
+// Desde F8 (conmutar(conversacion)) el arranque que este test ejercita no cablea ningún paquete viejo.
 package arranque
 
 import (

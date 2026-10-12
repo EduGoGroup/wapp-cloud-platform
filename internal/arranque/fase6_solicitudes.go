@@ -1,5 +1,4 @@
-// Copia de internal/bootstrap/arranque/fase6_solicitudes.go @ 80807ba (F0 · 05 §6): cableaba paquetes VIEJOS,
-// salvo acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)), que son
+// Acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)) son
 // internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador. Desde
 // F6 (T6.24, conmutar(solicitudes)) TODO lo que construye esta fase es de
 // internal/modulos/solicitudes: ya no cablea ningún paquete viejo.

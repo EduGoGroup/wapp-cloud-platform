@@ -1,7 +1,3 @@
-// Porta internal/publicapi/catalogimport.go @ 724f3035 (catalogImportResponse,
-// catalogImportTarget, finishCatalogImport, currentCatalog, parseCatalogBlob,
-// unreadableCurrentWarning y countItems).
-//
 // catalogimport_apply.go — trozo de catalogimport.go (05 E-13): EL TRAMO COMÚN de las dos
 // puertas del import de catálogo (I14, el JSON, e I15, la planilla), que empieza donde acaba la
 // diferencia entre ellas: con el documento ya validado. Aquí viven la respuesta, el diff contra

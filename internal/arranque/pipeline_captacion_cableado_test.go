@@ -1,7 +1,6 @@
-// Copia de internal/bootstrap/arranque/pipeline_captacion_cableado_test.go @ 80807ba (F0 · 05 §6). Desde F7
-// (T7.23, conmutar(captacion)) lo que vigila son los paquetes NUEVOS de internal/modulos/captacion y el índice de
-// internal/modulos/catalogo/indice, que conservan el nombre corto (T-6). Los textos que busca cambiaron con E-11
-// (hallazgo 28 de F7): ConAforo → WithCapacity, ConZonasDeEnvio → WithShippingZones, Despertar → Wake,
+// Desde F7 (T7.23, conmutar(captacion)) lo que vigila son los paquetes NUEVOS de internal/modulos/captacion y el
+// índice de internal/modulos/catalogo/indice, que conservan el nombre corto (T-6). Los textos que busca cambiaron con
+// E-11 (hallazgo 28 de F7): ConAforo → WithCapacity, ConZonasDeEnvio → WithShippingZones, Despertar → Wake,
 // catalogo.NewCache → indice.NewCache. Lo que afirma cada criterio no cambió. Que el `pipeline`, las `stages` y el
 // `indice` que se nombran sean los nuevos y no un alias de los viejos lo afirma captacion_cableado_test.go.
 package arranque

@@ -1,5 +1,4 @@
-// Copia de internal/bootstrap/arranque/contenedor.go @ 80807ba (F0 · 05 §6). Nació cableando
-// paquetes VIEJOS y cada conmutar(<módulo>) le cambió los suyos: acceso (F2, T2.31), edge (F3,
+// Cada conmutar(<módulo>) le cambió a este fichero sus paquetes: acceso (F2, T2.31), edge (F3,
 // T3.28), inferencia (F4, T4.24), solicitudes (F6, T6.24) y captación (F7, T7.23).
 //
 // 🔀 F8 · conmutar(conversacion) (T8.32): YA NO QUEDA NINGÚN PAQUETE VIEJO. El motor de flujos, sus

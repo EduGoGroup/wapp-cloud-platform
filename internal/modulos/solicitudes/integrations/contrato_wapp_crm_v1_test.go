@@ -3,10 +3,9 @@ package integrations_test
 // contrato_wapp_crm_v1_test.go valida que los ejemplos publicados de wapp-crm-v1 (Plan 042, T2.3)
 // no diverjan en silencio de sus JSON Schema (REQ-07).
 //
-// Porta la regla de internal/contracts/contract_examples_test.go @ 36d5a04: el paquete `contracts`
-// desaparece (05 §6, F6) y su validación pasa aquí. Es la excepción declarada a «un fichero, un
-// test» (D-F6-3): es el test de un contrato EXTERNO y no tiene fichero de producción homónimo.
-// docs/contracts/ no se toca: se lee desde aquí con otra ruta relativa.
+// Es la excepción declarada a «un fichero, un test» (D-F6-3): es el test de un contrato EXTERNO y
+// no tiene fichero de producción homónimo. docs/contracts/ no se toca: se lee desde aquí por ruta
+// relativa.
 
 import (
 	"encoding/json"

@@ -184,10 +184,10 @@ func TestDefaultProfile_OnlyTheEmptyBecomesPassive(t *testing.T) {
 	}
 }
 
-// oldRuleSelfPn es la regla del viejo escrita a mano (internal/gateway/fleet/fleet.go @ 809345b,
-// normalizeSelfPn → internal/flujos/contact.Normalize con phone_e164): recorrer las runas,
-// conservar solo los dígitos ASCII '0'..'9', y es inválido si no queda ninguno o si quedan más
-// de 15. Es el oráculo de equivalencia; el paquete viejo no se importa.
+// oldRuleSelfPn es la regla del viejo escrita a mano (normalizeSelfPn → contact.Normalize con
+// phone_e164): recorrer las runas, conservar solo los dígitos ASCII '0'..'9', y es inválido si
+// no queda ninguno o si quedan más de 15. Es el oráculo de equivalencia; el paquete viejo no se
+// importa.
 func oldRuleSelfPn(value string) (digits string, ok bool) {
 	digits = asciiDigits(value)
 	if digits == "" || len(digits) > 15 {

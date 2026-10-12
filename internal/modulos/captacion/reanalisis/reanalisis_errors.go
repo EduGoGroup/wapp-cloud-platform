@@ -1,5 +1,4 @@
-// Porta internal/reanalisis/reanalisis.go @ 56097aa (E-13: los desenlaces con nombre,
-// `reanalisis.go:139-233` del viejo).
+// Los desenlaces con nombre (trozo de reanalisis.go, partido por E-13).
 
 package reanalisis
 

@@ -1,6 +1,3 @@
-// Porta internal/publicapi/eventstelemetry.go @ ed60c24 (262 líneas: tipos, puerto, handler,
-// parseo del filtro, cursor y registerEventTelemetry).
-//
 // eventstelemetry.go — LA LECTURA DE LA TELEMETRÍA DE CICLO DE VIDA DEL EVENTO (Plan 043 · Ola 6
 // · T6.5, cierra MD-043.17; mapa §2.7, G18): GET /api/v1/events/telemetry. Lee las filas
 // `event_*` del outbox append-only public.flow_events. El adaptador SQL del puerto vive al lado,
@@ -31,8 +28,9 @@ import (
 //
 // EventKind es SIEMPRE payload->>'kind' (menu|cart|survey|media; vacío si el payload no lo
 // trae), JAMÁS la columna `kind` de la fila ("persist"|"event") —la colisión de vocabulario
-// documentada en internal/flujos/runtime/event_effects.go—. Este tipo no puede llevar la columna
-// equivocada por accidente: no hay un segundo campo `Kind` con el que confundirse.
+// documentada en internal/modulos/conversacion/runtime/event_effects.go—. Este tipo no puede
+// llevar la columna equivocada por accidente: no hay un segundo campo `Kind` con el que
+// confundirse.
 type EventTelemetryRow struct {
 	// ID es la columna id: la identidad técnica de la fila y el desempate del orden.
 	ID int64

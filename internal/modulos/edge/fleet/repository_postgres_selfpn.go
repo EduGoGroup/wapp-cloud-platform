@@ -177,8 +177,8 @@ func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, se
 // segundo testigo del mismo hecho, y dos testigos que pueden divergir son peores
 // que uno.
 //
-// 🔴 EL NUEVO SE APARTA DEL VIEJO: D-F3-12. El caso (3) no está en el viejo
-// (internal/gateway/fleet), que conserva el defecto. Con solo (1) y (2), una fila
+// 🔴 EL NUEVO SE APARTA DEL VIEJO: D-F3-12. El caso (3) no estaba en el
+// viejo, que tenía el defecto. Con solo (1) y (2), una fila
 // con el sobre A MEDIAS —self_pn_enc o self_pn_dek NULL o vacío— pero con su
 // self_pn_bidx y su self_pn_kek_id intactos quedaba ATRAPADA PARA SIEMPRE, y por
 // el mismo mecanismo que la de la KEK perdida: el bidx casa (el número no cambió)

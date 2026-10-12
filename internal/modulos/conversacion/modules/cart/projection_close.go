@@ -1,6 +1,3 @@
-// Porta internal/flujos/modules/cart/projection.go @ 9d5a4b6 (trozo «cierre»:
-// closeIntake y revisionLines; el viejo es un solo fichero y aquí nace partido, 05 E-13)
-
 // projection_close.go es la proyección de cart_closed: el cierre atómico de la
 // solicitud con sus líneas, la revisión que deja constancia de lo que el carrito armó,
 // la línea de envío y las tres anotaciones que el efecto se lleva de vuelta para el

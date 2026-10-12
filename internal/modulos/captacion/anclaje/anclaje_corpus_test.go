@@ -1,8 +1,8 @@
 package anclaje_test
 
 // Trozo de anclaje_test.go (E-13): el CORPUS ADVERSARIO de texto (hallazgo 40 de F6).
-// Los destinos esperados se fijaron ejecutando el paquete viejo
-// (internal/intake/anclaje @ 8d875ab) sobre estas mismas entradas.
+// Los destinos esperados se fijaron ejecutando el paquete viejo, anterior a la
+// reconstrucción, sobre estas mismas entradas.
 
 import (
 	"testing"

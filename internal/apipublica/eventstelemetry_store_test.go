@@ -19,9 +19,9 @@ import (
 )
 
 // telemetryQuery es la consulta de G18, LITERAL: la misma cadena, carácter a carácter, que
-// eventTelemetryQuery en la cara vieja (internal/publicapi/eventstelemetry_store.go). Está
-// escrita dos veces a propósito: quien toque la del adaptador tiene que tocar esta, y leer por
-// qué no debe (el predicado es el del índice parcial de la migración 0056).
+// eventTelemetryQuery en el adaptador (eventstelemetry_store.go). Está escrita dos veces a
+// propósito: quien toque la del adaptador tiene que tocar esta, y leer por qué no debe (el
+// predicado es el del índice parcial de la migración 0056).
 const telemetryQuery = `
 SELECT id, name, payload->>'kind' AS event_kind, payload, created_at
   FROM public.flow_events

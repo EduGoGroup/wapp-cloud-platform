@@ -3,13 +3,11 @@ package crmpush
 // contrato_test.go — R-12 SOBRE EL AST: LOS CAMPOS CLAVE DEL CONTRATO NO PUEDEN SER
 // CONSTANTES.
 //
-// Porta internal/integrations/crmpush/contrato_ast_test.go @ 36d5a04 (candado de
-// invariante, `05` §3.2: el AST está permitido aquí, E-7). Aquel nació a su vez como
-// internal/flujos/runtime/revision_no_ast_test.go y solo miraba `RevisionNo` dentro
-// del motor, porque ahí vivía el constructor del payload; cuando la regla pasó a
-// crmpush —que usan las DOS puertas— un candado que se quedara en el motor seguiría
-// vigilando un sitio VACÍO: verde sin mirar nada. Por eso barre los DOS directorios
-// y por eso exige encontrar sitios en cada uno.
+// Candado de invariante (`05` §3.2: el AST está permitido aquí, E-7). Nació mirando
+// solo `RevisionNo` dentro del motor, porque ahí vivía el constructor del payload;
+// cuando la regla pasó a crmpush —que usan las DOS puertas— un candado que se
+// quedara en el motor seguiría vigilando un sitio VACÍO: verde sin mirar nada. Por
+// eso barre los DOS directorios y por eso exige encontrar sitios en cada uno.
 //
 // La lista de directorios es la de la fase F6 y se re-toca en F8, cuando el motor
 // pase a `../../../conversacion/runtime` (diseno.md §6), con la guarda intacta.

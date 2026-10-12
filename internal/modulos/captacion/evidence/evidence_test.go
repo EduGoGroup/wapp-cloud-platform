@@ -6,8 +6,8 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/evidence"
 )
 
-// Los valores esperados de este fichero se fijaron EJECUTANDO el paquete viejo
-// (internal/evidence @ 8d875ab) sobre las mismas entradas: es la equivalencia
+// Los valores esperados de este fichero se fijaron EJECUTANDO el paquete viejo,
+// anterior a la reconstrucción, sobre las mismas entradas: es la equivalencia
 // viejo ↔ nuevo, escrita a mano porque el paquete nuevo no importa el viejo.
 
 func TestNormalize(t *testing.T) {

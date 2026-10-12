@@ -9,11 +9,10 @@ import (
 	"testing"
 )
 
-// Los textos y los defectos esperados de este fichero son LITERALES calculados con
-// el fichero viejo (internal/intakes/edit.go @ 64c181a): el candado de fronteras
-// impide importarlo desde aquí, así que la equivalencia viejo ↔ nuevo se fija con lo
-// que el viejo devolvió para este mismo corpus, casos adversarios incluidos. Las
-// runas invisibles van con su escape numérico, nunca pegadas en el fuente.
+// Los textos y los defectos esperados de este fichero son LITERALES congelados,
+// calculados con la implementación anterior a la reconstrucción para este mismo
+// corpus, casos adversarios incluidos; no se regeneran. Las runas invisibles van
+// con su escape numérico, nunca pegadas en el fuente.
 
 const (
 	editTenant = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"

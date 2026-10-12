@@ -95,7 +95,7 @@ var helperTestRoots = []string{"internal/modulos", "internal/nucleo"}
 //
 // Cada import prohibido da UNA violación por fichero (aunque se importe dos veces), y cada
 // símbolo prohibido del puerto, una por fichero. Fichero es la Ruta; Motivo empieza por
-// "R9.4.d: " y nombra la ruta del import relativa al módulo ("internal/flujos/contact") y,
+// "R9.4.d: " y nombra la ruta del import relativa al módulo ("internal/nucleo/contact") y,
 // si es un símbolo, "<nombre>.<símbolo>". La salida va ordenada por Fichero y, a igual
 // Fichero, por Motivo.
 func ProcessImports(modulo string, fuentes []Fuente) []Violacion {

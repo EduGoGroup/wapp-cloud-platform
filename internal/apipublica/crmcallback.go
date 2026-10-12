@@ -1,6 +1,3 @@
-// Porta internal/publicapi/crmcallback.go @ ed60c24 (310 líneas) y su registro
-// (internal/publicapi/publicapi.go @ ed60c24, registerCRMCallback, líneas 1035-1057).
-//
 // crmcallback.go — LA VUELTA DEL PUENTE CRM (Plan 042 · T4.2, D-042.5; mapa §2.7, G17):
 // POST /api/v1/integrations/callback, el verbo `intake.status` del contrato wapp-crm-v1. El
 // dominio vive en internal/modulos/solicitudes (integrations, integrations/sigv1 e intakes); aquí
@@ -216,9 +213,9 @@ type CRMCallbackDeps struct {
 //     diferencia es del gate, no de esta puerta, que le pregunta lo mismo que antes;
 //   - la ventana: el viejo aceptaba un timestamp a más de ~292 años en el FUTURO —el caso real
 //     es un puente que manda MILISEGUNDOS en vez de segundos—, porque la resta de instantes
-//     satura en el mínimo de time.Duration y su negación desborda y sigue siendo negativa
-//     (internal/publicapi/crmcallback.go:289-293). Un mensaje así no caducaba nunca. Aquí es
-//     401, que es lo que el contrato dice de todo lo que cae fuera de ±300 s.
+//     satura en el mínimo de time.Duration y su negación desborda y sigue siendo negativa. Un
+//     mensaje así no caducaba nunca. Aquí es 401, que es lo que el contrato dice de todo lo que
+//     cae fuera de ±300 s.
 //
 // Rarezas del viejo que se conservan: solo se decodifica el PRIMER valor JSON del cuerpo (lo que
 // venga detrás del objeto no se mira, aunque sí está cubierto por la firma); una clave repetida

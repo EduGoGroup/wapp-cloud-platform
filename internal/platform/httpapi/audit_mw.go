@@ -28,7 +28,7 @@ func SetAuditTargetTenant(ctx context.Context, targetTenantID string) {
 // Actor/Resource deben ser identidades OPACAS (ids), NUNCA email/número ni
 // contenido; Meta, contexto NO sensible.
 //
-// Se declara aquí, en platform, y internal/iam/ports/in lo re-exporta como ALIAS
+// Se declara aquí, en platform, e internal/modulos/acceso/iam/ports/in lo re-exporta como ALIAS
 // (`in.AuditInput = httpapi.AuditInput`, F0 · D-F0-3): es el MISMO tipo para el
 // IAM viejo y para los módulos nuevos, y httpapi deja de importar el dominio iam.
 type AuditInput struct {

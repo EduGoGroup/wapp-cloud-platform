@@ -1,5 +1,4 @@
-// Copia de internal/bootstrap/arranque/filters_config_test.go @ 80807ba (F0 · 05 §6). Desde F8
-// (conmutar(conversacion)) el arranque que este test ejercita no cablea ningún paquete viejo.
+// Desde F8 (conmutar(conversacion)) el arranque que este test ejercita no cablea ningún paquete viejo.
 package arranque
 
 import (
@@ -71,7 +70,7 @@ func mismosKinds(got, want []string) bool {
 // de perfiles, así que cualquier diferencia que no sea el kind "intents" es un bug.
 //
 // 🔴 POR QUÉ ESTE TEST EXISTE, Y POR QUÉ NO BASTABA EL QUE HABÍA. El test previo del
-// criterio (d) vivía en internal/gateway/grpc y le daba al Gateway un fakeProvider con
+// criterio (d) vivía con el Gateway y le daba un fakeProvider con
 // la lista de 3 o de 2 configs YA ESCRITA A MANO. Ese test prueba que el Gateway
 // entrega lo que le den —que está bien y sigue vivo— pero NO prueba nada sobre quién
 // aporta qué: gatear `filters` por entitlement, que es justo la regla 1 de T2.1 y la

@@ -1,4 +1,4 @@
-// Parte de internal/arranque/auth.go (copia de internal/bootstrap/arranque/auth.go @ 80807ba), T2.34: la pila de autenticación (authStack, M2M y delegación a identity, verificador JWKS).
+// La pila de autenticación (authStack, M2M y delegación a identity, verificador JWKS).
 package arranque
 
 import (

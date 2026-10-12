@@ -30,8 +30,8 @@ const (
 	crmFakeVectorBody = `{"a":1}`
 	crmFakeVectorSig  = "e7cb2746586f0edd39a883ee3c7cc21cf8802fa680b4cbff15640a525ade1f95"
 
-	// Vector de la huella, el de internal/integrations/crud_integration_test.go (calculado allí con
-	// `printf '%s' … | shasum -a 256`).
+	// Vector de la huella: valor congelado, calculado FUERA de Go con
+	// `printf '%s' … | shasum -a 256`.
 	crmFakeVectorPrintIn  = "secreto-de-firma-del-puente-jjx-2026"
 	crmFakeVectorPrintOut = "e5c47775"
 )

@@ -137,8 +137,7 @@ type Intakes interface {
 
 // Thread (antes `Hilo`) es el historial cifrado del evento, DESCIFRADO en el borde
 // (REQ-10c). Lo satisface `*events.Store`, que es quien tiene el FieldCipher. Sus tipos
-// (`events.ThreadEntry`) son los de `conversacion/events` (🔀 F8 · conmutar(conversacion):
-// de F7 a F8 fue un puente de import a `internal/flujos/events`; murió en T8.31).
+// (`events.ThreadEntry`) son los de `conversacion/events`.
 //
 // `AppendPastedMessage` añade el texto del dueño como UNA fila más del hilo, con
 // `origin='owner_pasted'`, y devuelve su `seq`; `ListPastedByOwner` devuelve, ya

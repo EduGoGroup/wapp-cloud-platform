@@ -2,8 +2,7 @@ package intakes_test
 
 // inv1_aprobar_test.go — INV-1 SOBRE EL AST: NINGÚN CAMINO AUTOMÁTICO APRUEBA NI PREGUNTA.
 //
-// Porta internal/intakes/inv1_aprobar_ast_test.go e internal/intakes/inv1_pedirinfo_ast_test.go
-// @ 5fd533e (candados de invariante, `05` §3.2: el AST está permitido aquí, E-7).
+// Candado de invariante (`05` §3.2: el AST está permitido aquí, E-7).
 //
 // INV-1 dice que el LLM jamás le responde al cliente y que nada se le manda sin que
 // el dueño lo mande. `Service.Approve` es el punto exacto donde eso se puede romper

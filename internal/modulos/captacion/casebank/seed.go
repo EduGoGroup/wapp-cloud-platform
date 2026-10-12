@@ -35,11 +35,11 @@ import "encoding/json"
 //
 // El fixture del caso Ambar de las etapas del pipeline tiene esta misma cadena
 // (`textoAmbar`, desde T2.2), y no se puede importar porque vive en un
-// `_test.go`. Y es, BYTE A BYTE, la de `internal/casebank/semilla.go`, que es la
-// que el CLI `cmd/casebank` siembra en UAT hasta F10 (D-F7-2). Ninguna de las dos
-// copias queda a la buena fe: `seed_test.go` fija la longitud y el sha256 del
-// texto y del `expected`, calculados sobre el viejo, así que el día que una
-// cambie sin la otra ese test se pone rojo.
+// `_test.go`. Y es, BYTE A BYTE, la del paquete anterior a la reconstrucción, que
+// es la que quedó sembrada en UAT (D-F7-2). Ninguna de las dos copias queda a la
+// buena fe: `seed_test.go` fija la longitud y el sha256 del texto y del
+// `expected`, calculados sobre el viejo, así que el día que una cambie sin la
+// otra ese test se pone rojo.
 //
 // # CÓMO SE SUSTITUYE POR EL TEXTO REAL EL DÍA QUE APAREZCA
 //

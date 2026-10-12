@@ -1,6 +1,3 @@
-// Porta internal/publicapi/entitlements.go @ 9a77307 (listEntitlementsHandler) y el registro de
-// C2 (internal/publicapi/publicapi.go @ 9a77307, línea 559).
-//
 // entitlements.go — LOS DERECHOS COMERCIALES DE LA EMPRESA DEL TOKEN (mapa §2.3, C2; ADR-0022,
 // Plan 040 · T2.2).
 

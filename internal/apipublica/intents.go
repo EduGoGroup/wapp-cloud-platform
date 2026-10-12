@@ -1,6 +1,3 @@
-// Porta internal/publicapi/intents.go @ 7ccb98e (192 líneas) y su registro
-// (internal/publicapi/publicapi.go @ 8fa81a3, líneas 563-575).
-//
 // intents.go — LA CONFIG DEL CLASIFICADOR DE INTENCIONES DEL TENANT (Plan 029 · T5, ADR-0020/
 // 0021/0022; mapa §2.5, E1 y E2): GET y PUT de /api/v1/intents. Es P1, el catálogo de
 // intenciones, que se edita por API y no por fichero como los prompts P2–P5. La persistencia

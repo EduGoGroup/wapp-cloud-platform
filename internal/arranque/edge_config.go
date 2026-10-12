@@ -1,4 +1,4 @@
-// Parte de internal/arranque/auth.go (copia de internal/bootstrap/arranque/auth.go @ 80807ba), T2.34: la cadena de configuración que se empuja al Edge al conectar.
+// La cadena de configuración que se empuja al Edge al conectar.
 package arranque
 
 import (

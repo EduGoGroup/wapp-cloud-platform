@@ -1,5 +1,4 @@
-// Porta internal/flujos/events/summary.go @ 9d5a4b6 (las dos salidas del resumen, Encode y Render,
-// viven en summary_render.go: 05 E-13).
+// Las dos salidas del resumen, Encode y Render, viven en summary_render.go (05 E-13).
 
 package events
 

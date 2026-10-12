@@ -1,4 +1,4 @@
-// Parte de internal/arranque/auth.go (copia de internal/bootstrap/arranque/auth.go @ 80807ba), T2.34: el canje de una invitación.
+// El canje de una invitación.
 package arranque
 
 import (

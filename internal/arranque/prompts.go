@@ -1,5 +1,4 @@
-// Copia de internal/bootstrap/arranque/prompts.go @ 80807ba (F0 · 05 §6). Desde F4 (T4.24,
-// conmutar(inferencia)) el cargador es el de internal/modulos/inferencia/prompts.
+// Desde F4 (T4.24, conmutar(inferencia)) el cargador es el de internal/modulos/inferencia/prompts.
 package arranque
 
 import (

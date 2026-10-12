@@ -30,7 +30,8 @@ const (
 	p4AheadPn      = "573004460003"
 
 	// p4AheadIntent es la intención que adelanta el cierre (IntentIntakeRequest,
-	// internal/flujos/runtime/aggregator.go) y p4AheadOtherIntent otra del mismo catálogo, que no.
+	// internal/modulos/conversacion/runtime/aggregator.go) y p4AheadOtherIntent otra del mismo
+	// catálogo, que no.
 	p4AheadIntent      = "intake_request"
 	p4AheadOtherIntent = "consulta_horario"
 

@@ -12,9 +12,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/casebank/casebankhelpertest"
 )
 
-// seed_test.go — la semilla del caso Ambar. Reglas leídas de los cuatro tests de
-// la semilla de internal/casebank/casebank_test.go y de
-// TestSembrarElCasoAmbar_EsIdempotenteContraPostgres, no portadas.
+// seed_test.go — la semilla del caso Ambar.
 
 func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
@@ -22,10 +20,10 @@ func sha256Hex(b []byte) string {
 }
 
 // TestAmbarCase_ByteForByteTheOldSeed es el candado de la copia: la longitud y el
-// sha256 del texto y del `expected` se calcularon ejecutando el paquete VIEJO
-// (internal/casebank/semilla.go @ 8d875ab), que este no puede importar. Es el caso
-// que `cmd/casebank` siembra en UAT: un byte distinto aquí y la siembra dejaría de
-// ser idempotente contra lo ya sembrado.
+// sha256 del texto y del `expected` se calcularon ejecutando el paquete VIEJO,
+// anterior a la reconstrucción; no se regeneran. Es el caso que `cmd/casebank`
+// siembra en UAT: un byte distinto aquí y la siembra dejaría de ser idempotente
+// contra lo ya sembrado.
 func TestAmbarCase_ByteForByteTheOldSeed(t *testing.T) {
 	cases := []struct {
 		name    string

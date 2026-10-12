@@ -1,4 +1,4 @@
-// Porta internal/llmvia/llmvia.go @ ebf4eb7 (la selección: For, Warm y PlazaDe; el turno acotado vive en llmvia_turno.go, E-13)
+// La selección: For, Warm y PlazaDe; el turno acotado vive en llmvia_turno.go (E-13).
 
 // Package llmvia es EL ÚNICO SITIO DEL REPO QUE PREGUNTA POR LA VÍA (Plan 044 ·
 // Ola 1.6 · T1.6-3; D-044.28, D-044.29, REQ-33, REQ-37, ADR-0044 §C2, ADR-0045;

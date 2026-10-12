@@ -1,6 +1,3 @@
-// Porta internal/publicapi/reanalyze.go @ 4f79bbf (268 líneas, entero) y el registro de H1
-// (internal/publicapi/publicapi.go @ 4f79bbf, registerIntakes, líneas 704-743).
-//
 // reanalyze.go — LA PUERTA HTTP DEL RE-ANÁLISIS (Plan 044 · Ola 4 · T4.6, D-044.15; contrato
 // completo en design §8.1; mapa §2.8, H1): POST /api/v1/intakes/{id}/reanalyze. El dueño pide
 // que la máquina vuelva a leer el pedido DESDE EL ORIGEN.

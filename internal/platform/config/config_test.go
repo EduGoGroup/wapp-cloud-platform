@@ -135,7 +135,7 @@ func TestLoad_GRPCAckTimeout(t *testing.T) {
 			t.Errorf("GRPCAckTimeout: got %v, want 8s", cfg.GRPCAckTimeout)
 		}
 		// INVARIANTE: por debajo del WriteTimeout del servidor HTTP (10s,
-		// internal/bootstrap/http.go). Si no, el 504 se genera con el deadline de
+		// internal/arranque/http.go). Si no, el 504 se genera con el deadline de
 		// escritura vencido y el cliente sigue viendo la conexión cerrada sin cuerpo.
 		if cfg.GRPCAckTimeout >= 10*time.Second {
 			t.Errorf("GRPCAckTimeout=%v >= WriteTimeout HTTP (10s): el 504 no llegaría a escribirse", cfg.GRPCAckTimeout)
@@ -248,7 +248,7 @@ func TestLoad_PublicAPIDBTimeout(t *testing.T) {
 			t.Errorf("PublicAPIDBTimeout: got %v, want 1.5s", cfg.PublicAPIDBTimeout)
 		}
 		// INVARIANTE (REQ-050.10, INV-050.6): lo que cuenta contra el WriteTimeout del
-		// servidor HTTP (10s, internal/bootstrap/http.go) es la SUMA de los dos plazos,
+		// servidor HTTP (10s, internal/arranque/http.go) es la SUMA de los dos plazos,
 		// no cada uno. Con 3s aquí la suma sería 11s y el 504 se generaría con el
 		// deadline de escritura vencido — el síntoma que GRPCAckTimeout eliminó.
 		if cfg.PublicAPIDBTimeout+cfg.GRPCAckTimeout >= 10*time.Second {

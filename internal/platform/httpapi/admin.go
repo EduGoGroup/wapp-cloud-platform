@@ -14,7 +14,7 @@ import (
 // ErrSessionOffline indica que no hay un stream vivo para la sesión solicitada,
 // por lo que no es posible empujar un comando hacia el Edge.
 //
-// Se declara aquí, en platform, y internal/gateway/session lo re-exporta con el
+// Se declara aquí, en platform, e internal/modulos/edge/session lo re-exporta con el
 // MISMO valor (F0 · D-F0-3): writeSendError compara con errors.Is, y un centinela
 // con el mismo texto pero otro valor haría que el 502 pasara a 500 sin un solo
 // error de compilación. Así platform deja de importar el dominio gateway.

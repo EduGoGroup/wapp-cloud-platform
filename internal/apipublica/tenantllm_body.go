@@ -1,6 +1,3 @@
-// Porta internal/publicapi/tenantllm.go @ 3c74b80 (los techos del PUT, tenantLLMRequest y
-// decodeTenantLLM).
-//
 // tenantllm_body.go — EL CUERPO DEL PUT DE /api/v1/tenant-llm: su forma, sus techos y su
 // lectura. Es un trozo de tenantllm.go partido por tema (05 E-13): solo declaraciones movidas.
 // No exporta nada y nació con el verde (05 E-4, P6); lo cubre tenantllm_body_test.go a través

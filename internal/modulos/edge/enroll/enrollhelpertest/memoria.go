@@ -1,6 +1,3 @@
-// Porta internal/gateway/enroll/store.go (MemoryStore) e
-// internal/gateway/enroll/edgecert.go (MemoryEdgeCertRepository) @ 8896f13
-
 package enrollhelpertest
 
 import (

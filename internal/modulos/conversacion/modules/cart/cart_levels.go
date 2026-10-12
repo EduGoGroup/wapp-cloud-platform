@@ -1,6 +1,3 @@
-// Porta internal/flujos/modules/cart/cart.go @ 9d5a4b6 (trozo «niveles»: advance y los
-// step* de L1 a L6; el viejo es un solo fichero y aquí nace partido, 05 E-13)
-
 // cart_levels.go es el CORAZÓN PURO de la sub-máquina: dada la topología fija, el
 // estado actual y la entrada ya recortada y ya traducida a código, produce el nuevo
 // estado, la pantalla a emitir y los efectos declarados por la transición (design.md

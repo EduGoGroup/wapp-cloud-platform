@@ -14,7 +14,7 @@ import (
 //     (p. ej. "internal/modulos/captacion/pipeline"). Casa con el directorio del fichero si
 //     es igual o si es un prefijo terminado en «/» (Desde "internal/apipublica" cubre
 //     "internal/apipublica/x").
-//   - Hacia: paquete viejo importado, relativo a la raíz (p. ej. "internal/flujos/store").
+//   - Hacia: paquete viejo importado, relativo a la raíz (p. ej. el almacén viejo de flujos).
 //     Casa solo con un import EXACTAMENTE igual (un subpaquete necesita su propio puente).
 //   - Motivo: por qué existe; Nace y Muere: fase que lo crea y fase que lo borra ("F7", "F8").
 type Puente struct {
@@ -31,7 +31,7 @@ type Puente struct {
 //   - Capas: módulo nuevo → módulos nuevos que PUEDE importar, además de platform y nucleo,
 //     que todo el árbol nuevo puede importar. Un módulo sin entrada no puede
 //     importar ningún otro.
-//   - Mapa: prefijo viejo ("internal/iam") → módulo ("acceso"), según 04 §4. Gana el prefijo
+//   - Mapa: prefijo viejo (el árbol viejo de IAM) → módulo ("acceso"), según 04 §4. Gana el prefijo
 //     más largo que case en frontera de «/».
 //   - Conmutados: módulos que el arranque nuevo ya cablea SOLO con lo nuevo. Un módulo entra
 //     con el commit que retira su ÚLTIMO adaptador internal/arranque/bridge_<x>.go, o con su
@@ -139,8 +139,8 @@ const (
 	prefijoApipublica = "internal/apipublica"
 )
 
-// bajo dice si ruta es prefijo o cuelga de él en frontera de «/»: "internal/iam" cubre
-// "internal/iam/app" pero no "internal/iamx".
+// bajo dice si ruta es prefijo o cuelga de él en frontera de «/»: "a/b" cubre
+// "a/b/c" pero no "a/bx".
 func bajo(ruta, prefijo string) bool {
 	prefijo = strings.TrimSuffix(prefijo, "/")
 	return ruta == prefijo || strings.HasPrefix(ruta, prefijo+"/")

@@ -4,10 +4,10 @@
 // métricas, lecturas del entorno). Nace en F0 · T0.12 (plan/F0-andamiaje/diseno.md §6.2):
 // no porta ningún fichero viejo, es nuevo.
 //
-// Lo usan dos tests, y solo ellos (regla 5 de internal/candados/fronteras.go): el del
-// arranque VIEJO, internal/bootstrap/arranque/huella_vieja_test.go, que escribe la dorada
-// internal/arranque/testdata/huella-vieja.golden (golden.go: WriteGolden y ReadGolden); y el
-// del arranque NUEVO, internal/arranque/huella_test.go, que la compara. Si las dos huellas no son iguales, el
+// Lo usan los tests del arranque (regla 5 de internal/candados/fronteras.go). La dorada
+// internal/arranque/testdata/huella-vieja.golden (golden.go: WriteGolden y ReadGolden) la
+// escribió el test del arranque anterior a la reconstrucción y no se regenera; la compara el
+// del arranque NUEVO, internal/arranque/huella_test.go. Si las dos huellas no son iguales, el
 // arranque nuevo ha dejado de ser una copia fiel del viejo, y Diferencia dice en qué.
 //
 // Todo lo que devuelve es determinista: listas ordenadas (sort.Strings), sin fechas ni SHA,
@@ -509,7 +509,7 @@ func paqueteProduccion(fset *token.FileSet, dir string) ([]*ast.File, error) {
 //
 // Por qué no el importador "source" que proponía diseno.md §6.1: comprueba desde fuente
 // todo el grafo de dependencias (grpc, aws sdk, prometheus…) en cada llamada, y sobre
-// internal/bootstrap/arranque tardó 105 s (medido el 2026-09-30); con los datos de
+// el paquete del arranque tardó 105 s (medido el 2026-09-30); con los datos de
 // exportación, que la caché de compilación ya tiene, son segundos. El resultado es el mismo:
 // los tipos los da el compilador en los dos casos.
 func importadorDe(fset *token.FileSet, dir string) (types.Importer, error) {

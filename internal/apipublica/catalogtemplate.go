@@ -1,7 +1,3 @@
-// Porta internal/publicapi/catalogtemplate.go @ 724f3035 (144 líneas, entero) y el registro de
-// I16 e I17 (internal/publicapi/publicapi.go @ 724f3035, registerCatalogImport, líneas
-// 1115-1123).
-//
 // catalogtemplate.go — LA PLANTILLA Y EL PROMPT DEL IMPORT DE CATÁLOGO (Plan 041 · Ola 3 · T3.2;
 // mapa §2.9, I16 e I17): GET /api/v1/catalog/import/template y GET /api/v1/catalog/import/prompt.
 // Son el contrato dicho de dos maneras, y las sirve el BACKEND —no una copia pegada en la

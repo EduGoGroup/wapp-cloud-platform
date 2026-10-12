@@ -35,7 +35,7 @@ import (
 //     tipos de otra clase) Y entre fuentes hay un fichero del paquete <paquete>helpertest
 //     en el subdirectorio <dir>/<paquete>helpertest (p. ej.
 //     internal/nucleo/contact/contacthelpertest; es el patrón de
-//     internal/gateway/fleet/fleettest con el sufijo de D-F1-10) que declara una función de
+//     fleettest del árbol viejo con el sufijo de D-F1-10) que declara una función de
 //     primer nivel `Contrato` cuyo primer parámetro es *testing.T. Sin esa suite entre
 //     fuentes, el puerto necesita test; una suite en <paquete>test, el nombre viejo, no vale;
 //   - puerto de ENTRADA sin suite por decisión (D-F2-5, Jhoan, 2026-09-30; excepción en el

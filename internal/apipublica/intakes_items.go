@@ -1,6 +1,3 @@
-// Porta internal/publicapi/intakes.go @ ed60c24 (1073 líneas: la edición manual de líneas,
-// líneas 522-730).
-//
 // intakes_items.go — G4, LA EDICIÓN MANUAL DE LAS LÍNEAS DE UN PRESUPUESTO (PUT
 // /api/v1/intakes/{id}/items; Plan 041 · T4.10, REQ-36 / D-041.26), que es también la acción
 // «Corregir» del Plan 044 (T4.4, D-044.48 §1). Es un trozo de intakes.go partido por tema

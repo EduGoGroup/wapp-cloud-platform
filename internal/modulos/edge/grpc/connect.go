@@ -1,5 +1,5 @@
-// Porta internal/gateway/grpc/connect.go @ cbc5736 (el bucle Recv del stream CloudLink, su
-// cierre y la identidad mTLS del peer). Trozo de connect.go, partido por E-13.
+// El bucle Recv del stream CloudLink, su cierre y la identidad mTLS del peer. Partido por
+// E-13.
 //
 // Aquí vive Connect y lo que es solo suyo: closeStream y peerIdentity. Lo que el bucle
 // LLAMA está en los otros trozos: el reparto de cada frame en connect_route.go, el registro

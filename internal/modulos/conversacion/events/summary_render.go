@@ -1,4 +1,4 @@
-// Porta internal/flujos/events/summary.go @ 9d5a4b6 (trozo: las dos SALIDAS del resumen).
+// Trozo de summary.go: las dos SALIDAS del resumen.
 //
 // summary.go pasaba de 600 líneas con su lógica y se parte por tema (05 E-13), solo moviendo
 // declaraciones: allí quedan los tipos, las fuentes durables y cómo se ARMA y se persiste un
