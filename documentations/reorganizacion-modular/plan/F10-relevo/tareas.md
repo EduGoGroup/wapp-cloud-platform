@@ -100,7 +100,7 @@ tarea, directo en `dev`, en este orden (`arquitectura.md` §3). No necesita Dock
   - **Hecho cuando**: `make ci-local` GATE_RC=0 con la toolchain fijada; `CUENTA=3 make test-procesos` `RC=0`, 0 SKIP, 0 FAIL; `git push origin dev` con su `rc` leído
 - [x] **T10.16 · UAT desde el commit del relevo** · dep. T10.15 · cumple R10.6.a, R10.2.b · necesita UAT (SSH) — hecha el 2026-10-11 (F10-05; PR #83, en revisión), sin commit propio: UAT corre `cmd/server` @ `21d527af` desde las 01:49:27 UTC del 2026-10-12, `vcs.modified=false`, claves `file` y `config`; acta §7.2–§7.3. ✎ Se compiló a `bin/server.new` y se renombró (acta §5.3), no `go build -o bin/server`; queda además `bin/server.modular-e82b6e92`
   - **Hecho cuando**: `git checkout dev && git reset --hard origin/dev`; `GOWORK=off go build -o bin/server ./cmd/server`; `systemctl restart wapp-cloud` + las dos consolas; §6 (`path …/cmd/server`, `vcs.revision` = SHA del relevo) y §9 (líneas de clave) del runbook verificados; `bin/server.viejo-*` se conserva hasta T10.22
-- [x] **T10.17 · Acta `CERRADO`** · dep. T10.16 — hecha en `SHA_CIERRE` (F10-05, 2026-10-11; PR #83, en revisión): acta §7, `CERRADO 2026-10-11`. Lo de §5.7 sigue sin ver (§7.4)
+- [x] **T10.17 · Acta `CERRADO`** · dep. T10.16 — hecha en `d096ce50` (F10-05, 2026-10-11; PR #83, en revisión): acta §7, `CERRADO 2026-10-11`. Lo de §5.7 sigue sin ver (§7.4)
   - **Ficheros**: `traspasos/TRASPASO-F10-relevo.md` (`CERRADO <fecha>`), `ESTADO.md`
   - **Commit**: `docs(reorganizacion-modular): relevo cerrado en el repo y en UAT`
 
