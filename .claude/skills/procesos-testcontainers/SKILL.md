@@ -5,8 +5,9 @@ description: Use when writing, running or fixing the process-level integration t
 
 # Tests de proceso con testcontainers
 
-> **La norma vive en [`documentations/reorganizacion-modular/05-metodo-contratos-y-tdd.md`](../../../documentations/reorganizacion-modular/05-metodo-contratos-y-tdd.md) §7.**
-> Esta skill es el cómo. Si choca con `05`, manda `05`.
+> **La norma vive en [`documentations/constitucion.md`](../../../documentations/constitucion.md) §5** (E-5: ni un
+> `t.Skip`; E-6: la suite de contrato corre en memoria y contra Postgres) y en
+> [`operacion.md`](../../../documentations/operacion.md). Esta skill es el cómo. Si chocan, manda la constitución.
 
 `test/procesos/` es **la única prueba contra Postgres** que tiene el repo: los unitarios
 (`make test`, dentro de `make ci-local`) corren sin base de datos. La integración va **por proceso
