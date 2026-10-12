@@ -1,5 +1,3 @@
-// Porta internal/intakes/quotetext/quotetext.go @ 36d5a04
-
 package quotetext
 
 // quotetext_fewshot.go — parte de quotetext.go (E-13): EL FEW-SHOT de D-044.11. Las

@@ -1,5 +1,3 @@
-// Porta internal/iam/domain/invitation.go @ 9a77307
-
 package domain
 
 // invitation.go — LA INVITACIÓN DE UN SOLO USO Y SU TOKEN (Plan 047 · Ola A · T-A2/T-A8, tabla

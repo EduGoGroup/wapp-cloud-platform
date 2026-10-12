@@ -19,8 +19,8 @@ import (
 
 // La mitad «identity-api» del doble de identity: las tres rutas de sesión de un operador (login,
 // refresh, logout) con el formato del cable que consume el cliente del servidor
-// (internal/iam/infra/identity/client.go y su gemelo de internal/modulos/acceso). identidad_test.go
-// es la otra mitad (el JWKS y los emisores); aquí vive quién puede entrar y con qué contraseña.
+// (internal/modulos/acceso/iam/infra/identity/client.go). identidad_test.go es la otra mitad (el
+// JWKS y los emisores); aquí vive quién puede entrar y con qué contraseña.
 //
 // Sin esta mitad —y sin WAPP_IDENTITY_URL, que la señala— el servidor no tiene a quién preguntarle
 // por unas credenciales y contesta «auth no disponible» a todo login de operador: el IAM local se

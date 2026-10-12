@@ -1,5 +1,3 @@
-// Porta internal/gateway/grpc/receipt_sink.go @ c851591
-
 package grpc
 
 import (

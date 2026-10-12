@@ -22,10 +22,8 @@
 // adaptador contra Postgres en los procesos de F9, con el arnés de testcontainers
 // (test/procesos/runtime_tenant_resolver_contrato_test.go y runtime_self_numbers_contrato_test.go).
 //
-// Nuevo: no tiene fichero viejo. Los casos salen del contrato de runtime.PostgresTenantResolver y
-// de runtime.PostgresSelfNumbers y de los tests viejos de internal/flujos/runtime @ e0159171
-// (tenant_resolver_integration_test.go, self_numbers_integration_test.go, self_loop_guard_test.go
-// y passive_guard_test.go), leídos y NO portados (05 E-8).
+// Los casos salen del contrato de runtime.PostgresTenantResolver y de
+// runtime.PostgresSelfNumbers.
 //
 // Para añadir un caso: escribe su función en el fichero de su suite y añade su fila a la tabla.
 package runtimehelpertest

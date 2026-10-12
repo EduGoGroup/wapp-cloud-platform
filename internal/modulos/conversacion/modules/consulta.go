@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/consulta.go @ c0c0c03
-
 // consulta.go — EL CONTRATO DEL RE-ENTRY: un módulo PURO que necesita preguntar
 // (Plan 044 · Ola 3.5 · T3.5-2).
 //

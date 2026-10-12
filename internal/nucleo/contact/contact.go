@@ -10,8 +10,6 @@
 //   - repository_memory.go y repository_postgres.go: las dos implementaciones del puerto, en
 //     memoria (MemoryResolver) y sobre public.contacts con el value cifrado en reposo
 //     (PostgresResolver). La suite contacthelpertest.Contrato fija lo que las dos prometen.
-//
-// Porta internal/flujos/contact/contact.go @ 77df20f.
 package contact
 
 import (

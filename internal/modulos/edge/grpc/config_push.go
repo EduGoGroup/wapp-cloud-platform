@@ -1,5 +1,3 @@
-// Porta internal/gateway/grpc/config_push.go @ cbc5736
-//
 // Nombres (E-11), viejo → nuevo: calentarEdges → warmEdges, unaSesionPorEdge →
 // oneSessionPerEdge; session.SendAcotado es session.BoundedSend. Los textos de log son los
 // del viejo, literales.

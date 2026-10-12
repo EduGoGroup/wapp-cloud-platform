@@ -1,4 +1,3 @@
-// Copia de internal/bootstrap/arranque/flowforkind.go @ 80807ba (F0 · 05 §6).
 // 🔀 F8 · conmutar(conversacion): el almacén de reglas es el de internal/modulos/conversacion/trigger.
 package arranque
 

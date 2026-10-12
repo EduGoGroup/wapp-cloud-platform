@@ -1,5 +1,3 @@
-// Porta internal/publicapi/export.go @ ed60c24 (342 líneas).
-//
 // export.go — EL EXPORT DE LA BANDEJA A UNA HOJA DE CÁLCULO (Plan 041 · T1.2, REQ-03, D-041.15;
 // mapa §2.7, G9): `GET /api/v1/intakes/export?format=csv|xlsx`. Lo monta MountIntakeReports
 // (intakereports.go), cuyo comentario es su contrato.

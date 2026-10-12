@@ -1,5 +1,3 @@
-// Porta internal/integrations/crmpush/push.go @ 36d5a04
-
 // Package crmpush arma y ENCOLA el `intake.push` del contrato wapp-crm-v1.
 //
 // UNA REGLA, DOS PUERTAS (Plan 044 · Ola 4 · Tanda 2). El único productor de

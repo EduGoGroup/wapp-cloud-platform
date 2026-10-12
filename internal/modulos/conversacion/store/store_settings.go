@@ -1,5 +1,3 @@
-// Porta internal/flujos/store/store.go @ c0c0c03
-//
 // Trozo de store.go (05 E-13): la configuración por tenant (public.tenant_settings),
 // sus valores por defecto y la bienvenida única (public.conversation_welcomes), que se
 // gobierna con dos claves de esa configuración. Solo declaraciones movidas.
@@ -145,7 +143,7 @@ type TenantSettings struct {
 	// 🔧 Y LOS MOTIVOS CAMBIARON CON LA OLA 1.6 (D-044.31), aunque la conclusión no:
 	// aquí se listaban los del PUSH del Edge (presupuesto de espera del despachador,
 	// mensaje sin texto, grupo, breaker abierto). Ese push murió. Hoy la señal la PIDE
-	// el Cloud (internal/intakeahead) y puede faltar por otros: vía caída, cola de
+	// el Cloud (captacion/intakeahead) y puede faltar por otros: vía caída, cola de
 	// clasificación llena, catálogo de intents sin publicar, umbral no alcanzado, o una
 	// respuesta que llega después de que la ventana ya cerró.
 	//

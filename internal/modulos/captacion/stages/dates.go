@@ -1,5 +1,3 @@
-// Porta internal/intake/stages/fechas.go @ 4cd9cfb
-
 package stages
 
 import (

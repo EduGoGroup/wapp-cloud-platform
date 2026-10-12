@@ -1,5 +1,5 @@
-// Porta internal/intakeahead/intakeahead.go @ 56097aa (E-13: la mitad «clasificar» del
-// fichero viejo, partida por tema; el contrato vive en intakeahead.go).
+// La mitad «clasificar» del paquete, partida por tema (E-13); el contrato vive en
+// intakeahead.go.
 
 package intakeahead
 

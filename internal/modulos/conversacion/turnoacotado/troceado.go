@@ -1,5 +1,3 @@
-// Porta internal/turnoacotado/troceado.go @ 42117b5
-
 // troceado.go — UNA LLAMADA CHICA POR TROZO, Y UN TOPE QUE PROTEGE EL TURNO
 // (Plan 044 · Ola 3.5 · T3.5-3).
 //

@@ -1,5 +1,3 @@
-// Porta internal/intake/stages/p2.go @ 4cd9cfb
-
 // Package stages son LAS ETAPAS del pipeline de presupuestos (Plan 044 · Ola 2), una
 // por fichero: P2 saca las ideas, P3 especifica cada ítem, P4 normaliza cantidades y
 // fechas; `match` cruza con el catálogo y `draft` deja el borrador.

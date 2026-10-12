@@ -1,5 +1,3 @@
-// Porta internal/intake/reanalisis.go @ 8d875ab
-
 // postgres_reanalysis.go es el SQL del SEGUNDO PRODUCTOR DE JOBS (ver reanalysis.go,
 // que lleva el porqué entero): la pregunta por el job vivo de un evento y la
 // apertura del job del re-análisis. En el paquete viejo los dos métodos vivían en

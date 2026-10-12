@@ -1,5 +1,3 @@
-// Porta internal/prompts/volcar.go @ ebf4eb7
-
 package prompts
 
 import (

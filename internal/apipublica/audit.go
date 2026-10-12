@@ -1,6 +1,3 @@
-// Porta internal/publicapi/audit.go @ 9a77307 (listAuditHandler, toAuditDTOs) y
-// el registro de C1 (internal/publicapi/publicapi.go @ 9a77307, línea 604).
-//
 // audit.go — LA BITÁCORA DE LA EMPRESA DEL TOKEN (mapa §2.3, C1). parseIntQuery, que en la cara
 // vieja vivía en este fichero, nació en response.go: la usan también áreas de F4, F6 y F8 (T-15).
 

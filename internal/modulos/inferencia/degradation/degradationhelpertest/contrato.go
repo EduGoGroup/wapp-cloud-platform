@@ -12,11 +12,9 @@
 // La suite la corren las dos implementaciones del puerto: Memoria en unitario (memoria_test.go)
 // y degradation.Postgres en los procesos de F9 (test/procesos), con el arnés de testcontainers.
 //
-// Los casos salen de plan/F4-inferencia/diseno.md §2 y de los tests viejos de
-// internal/degradation/postgres_integration_test.go @ ebf4eb7, leídos, no portados. De sus seis,
-// aquí está la conducta de cuatro (N fallos una fila, escrituras concurrentes, ventana siguiente,
-// lista acotada al tenant) y media de un quinto (los ocho motivos entran); la otra mitad y
-// TestElCheckDeMotivosEsLaRedDeAbajo afirman el CHECK de la tabla por SQL crudo y van a F9.
+// Los casos salen de plan/F4-inferencia/diseno.md §2: N fallos una fila, escrituras concurrentes,
+// ventana siguiente, lista acotada al tenant y que los ocho motivos entran. El CHECK de la tabla se
+// afirma por SQL crudo y no es de esta suite.
 //
 // Para añadir un caso: escribe su función en el fichero de su tema y añade su fila a cases().
 package degradationhelpertest

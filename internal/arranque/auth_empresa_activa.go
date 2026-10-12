@@ -1,4 +1,4 @@
-// Parte de internal/arranque/auth.go (copia de internal/bootstrap/arranque/auth.go @ 80807ba), T2.34: la elección de empresa.
+// La elección de empresa.
 package arranque
 
 import (

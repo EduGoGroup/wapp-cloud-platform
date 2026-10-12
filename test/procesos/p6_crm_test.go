@@ -40,7 +40,7 @@ const (
 	p6PathOutbox      = "/api/v1/integrations/outbox"
 	p6PathVariables   = "/api/v1/tenant-variables"
 
-	// Los dos permisos que auditan las rutas de configuración (protect, internal/publicapi/publicapi.go).
+	// Los dos permisos que auditan las rutas de configuración (protect, internal/apipublica/chain.go).
 	p6ActWrite = "integrations.write"
 
 	// p6PlanNoBridge es un plan sembrado SIN la feature crm_bridge (0039: `basic` no trae ninguna).
@@ -61,10 +61,11 @@ const (
 	p6NBSP = "\u00a0"
 
 	// p6MsgDead es la línea ERROR con la que el worker dice que una entrega agotó sus reintentos
-	// (internal/integrations/worker.go, fail). Es el único ERROR que el proceso espera del worker.
+	// (internal/modulos/solicitudes/integrations/worker_failure.go, fail). Es el único ERROR que el
+	// proceso espera del worker.
 	p6MsgDead = "webhook worker: entrega DEAD (reintentos agotados)"
 	// p6MsgReflectFailed es la línea ERROR del callback cuando el reflejo falla en la base
-	// (internal/publicapi/crmcallback.go): aquí, un intake_id que no es un UUID.
+	// (internal/apipublica/crmcallback.go): aquí, un intake_id que no es un UUID.
 	p6MsgReflectFailed = "callback CRM: no se pudo reflejar el estado"
 
 	// p6IntegrationMark es la marca de estado de la configuración del puente de una empresa: un md5 de

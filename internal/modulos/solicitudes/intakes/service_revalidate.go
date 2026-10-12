@@ -1,5 +1,3 @@
-// Porta internal/intakes/revalidate.go @ 64c181a (la escritura del Service)
-
 // service_revalidate.go — LA ESCRITURA de una revalidación de precios. El cálculo
 // (`Revalidate`, `Revalidation`, el payload de la revisión) es puro y vive en
 // `revalidate.go`; aquí está el método del `Service` que lo aplica.

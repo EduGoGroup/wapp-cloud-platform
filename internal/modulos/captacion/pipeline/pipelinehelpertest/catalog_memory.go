@@ -1,5 +1,3 @@
-// Porta internal/intake/pipeline/memoria.go @ 56097aa (su mitad CatalogoEnMemoria; D-F7-5)
-
 // Package pipelinehelpertest son los DOBLES del worker del pipeline que necesitan paquetes
 // de test que no se pueden ver entre sí. Hoy es uno: el doble en memoria del puerto
 // `pipeline.Catalogs`. El doble de la máquina (`intake.PipelineStore`) NO vive aquí: se

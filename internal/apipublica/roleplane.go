@@ -1,5 +1,3 @@
-// Porta internal/publicapi/roleplane.go @ 9a77307 (registerRolePlane, B1–B14).
-//
 // roleplane.go — EL PLANO DE ROLES, MIEMBROS E INVITACIONES DE LA EMPRESA DEL TOKEN (plano 2 del
 // ADR-0033; mapa §2.2). Los handlers son los de internal/modulos/acceso/iam/transport/http; aquí
 // solo se decide, por ruta, el patrón, el permiso, si audita y con qué recurso.

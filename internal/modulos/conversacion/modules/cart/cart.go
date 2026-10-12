@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/cart.go @ 9d5a4b6
-//
 // El viejo es un solo fichero de 849 líneas; aquí nace partido por tema (05 E-13):
 // cart.go (el Module y su Step), cart_levels.go (los niveles L1–L6 del recorrido),
 // cart_notes.go (los niveles de indicación) y cart_navigation.go (reencauces,

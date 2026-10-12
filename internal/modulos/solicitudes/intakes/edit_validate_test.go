@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// Los defectos esperados de este fichero son LITERALES calculados con el fichero
-// viejo (internal/intakes/edit.go @ 64c181a) para este mismo corpus, casos
+// Los defectos esperados de este fichero son LITERALES congelados, calculados con
+// la implementación anterior a la reconstrucción para este mismo corpus, casos
 // adversarios incluidos (ver la cabecera de edit_test.go). Las runas invisibles van
 // con su escape numérico, nunca pegadas en el fuente.
 

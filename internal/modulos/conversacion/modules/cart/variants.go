@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/variants.go @ 9d5a4b6
-
 // variants.go es el sub-nivel de variantes de la sub-máquina (Plan 041 · T2.3,
 // design.md §D-041.4): UN nivel más entre la ficha del artículo y la cantidad,
 // no una máquina nueva. Aquí viven las transiciones que dependen de si el

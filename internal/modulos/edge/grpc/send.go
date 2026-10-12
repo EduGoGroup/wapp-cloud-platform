@@ -1,6 +1,5 @@
-// Porta internal/gateway/grpc/send.go @ c851591 (los envíos y su error). El resto
-// del fichero viejo nace partido por E-13: send_ack.go (la correlación de acuses) y
-// send_revoke.go (la familia de la revocación).
+// Los envíos y su error. El resto va partido por E-13: send_ack.go (la correlación
+// de acuses) y send_revoke.go (la familia de la revocación).
 
 package grpc
 

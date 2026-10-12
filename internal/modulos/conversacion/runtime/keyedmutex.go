@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/keyedmutex.go @ e0159171
-
 package runtime
 
 // keyedmutex.go no exporta nada, ni en el viejo ni aquí: su contrato es este comentario,
@@ -46,9 +44,8 @@ package runtime
 // El Runtime guarda UNO (trampa T-1 de reglas.md: dos instancias del runtime parten el
 // candado sin dar error) y lo toma en los cuatro caminos que tocan el estado de una
 // conversación: el entrante, el arranque por API y las dos operaciones de ciclo de vida
-// del evento (en el viejo, internal/flujos/runtime/incoming.go:138, start.go:114,
-// event_lifecycle.go:333 y :408; aquí, HandleIncoming en incoming.go, Start en start.go y
-// las dos de event_lifecycle_cancel.go).
+// del evento (HandleIncoming en incoming.go, Start en start.go y las dos de
+// event_lifecycle_cancel.go).
 
 import (
 	"sync"

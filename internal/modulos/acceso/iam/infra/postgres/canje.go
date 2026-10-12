@@ -1,5 +1,3 @@
-// Porta internal/iam/infra/postgres/canje.go @ 9a77307
-
 package iampostgres
 
 // canje.go — LOS CUATRO PASOS DEL CANJE, EN UNA SOLA TRANSACCIÓN (Plan 047 · Ola A · T-A3 + T-A4

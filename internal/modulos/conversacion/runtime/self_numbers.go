@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/self_numbers.go @ e0159171
-
 package runtime
 
 import (

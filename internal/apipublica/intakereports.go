@@ -1,7 +1,3 @@
-// Porta el registro de G7, G9 y G10 de internal/publicapi/publicapi.go @ ed60c24
-// (registerIntakes: la guarda de la línea 649, los gates de 652-654, G7 en 746-769 y G9/G10 en
-// 787-791).
-//
 // intakereports.go — EL MONTAJE DE LAS LECTURAS DE LA BANDEJA QUE SALEN DE ELLA (mapa §2.7):
 // el export (G9), el resumen (G10) y la sugerencia de cotización (G7). Los tres handlers viven
 // en export.go, summary.go y quotesuggestion.go; el plazo de escritura de G7, en

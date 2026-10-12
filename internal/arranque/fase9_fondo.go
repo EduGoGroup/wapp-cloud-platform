@@ -1,9 +1,8 @@
-// Copia de internal/bootstrap/arranque/fase9_fondo.go @ 80807ba (F0 · 05 §6): cableaba paquetes VIEJOS,
-// salvo el worker del puente CRM, que desde F6 (T6.24, conmutar(solicitudes)) es el de
+// El worker del puente CRM es desde F6 (T6.24, conmutar(solicitudes)) el de
 // internal/modulos/solicitudes/integrations.
-// 🔀 F8 · conmutar(conversacion): ya no cablea ninguno. El agregador que arranca (3/5) es el de
-// internal/modulos/conversacion/runtime; su sentencia `go` es la MISMA, en el mismo sitio y sin
-// envolver (T-4: la huella de goroutines la reconoce por su nombre).
+// 🔀 F8 · conmutar(conversacion): ya no cablea ningún paquete viejo. El agregador que arranca (3/5)
+// es el de internal/modulos/conversacion/runtime; su sentencia `go` es la MISMA, en el mismo sitio
+// y sin envolver (T-4: la huella de goroutines la reconoce por su nombre).
 package arranque
 
 import (

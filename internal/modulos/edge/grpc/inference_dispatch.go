@@ -1,6 +1,6 @@
-// Porta internal/gateway/grpc/inference.go @ ec236b3 (el despacho: Infer, la elección
-// del stream por el que sale —candidato vivo, o el mejor del tenant que no haya dicho
-// que no puede— y el frame). Trozo de inference.go, partido por E-13.
+// El despacho: Infer, la elección del stream por el que sale —candidato vivo, o el
+// mejor del tenant que no haya dicho que no puede— y el frame. Trozo de inference.go,
+// partido por E-13.
 
 package grpc
 

@@ -1,5 +1,5 @@
-// Porta internal/platformadmin/handlers.go @ 9a77307: los handlers de la bandeja de empresas. Reciben
-// el puerto TenantStore, no el *Repository (D-F2-3).
+// Los handlers de la bandeja de empresas. Reciben el puerto TenantStore, no el *Repository
+// (D-F2-3).
 
 package platformadmin
 

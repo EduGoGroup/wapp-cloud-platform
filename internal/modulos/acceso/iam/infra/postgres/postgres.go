@@ -1,5 +1,3 @@
-// Porta internal/iam/infra/postgres/postgres.go @ 9a77307
-
 // Package iampostgres implementa los puertos out del IAM (MembershipRepo, RoleRepo, GrantRepo,
 // AuditRepo, InvitationRepo, ActiveTenantRepo e InvitationRedeemRepo) con SQL raw sobre
 // PostgreSQL, siguiendo el patrón de repos del repo (database/sql + driver pgx/v5 stdlib,

@@ -1,5 +1,3 @@
-// Porta internal/integrations/crmpush/desde_intakes.go @ 36d5a04
-
 package crmpush
 
 // desde_intakes.go — LA SEGUNDA PUERTA del `intake.push`.

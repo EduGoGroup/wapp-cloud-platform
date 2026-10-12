@@ -1,5 +1,3 @@
-// Porta internal/flujos/admin/doc.go @ 724f3035
-
 // Package admin contiene los handlers HTTP del motor de flujos: publicar una
 // definición (DefinitionHandler), abrir una conversación por API (StartHandler) y el
 // CRUD de reglas de disparo (CreateTriggerHandler, ListTriggersHandler,

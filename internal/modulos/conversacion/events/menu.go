@@ -1,5 +1,3 @@
-// Porta internal/flujos/events/menu.go @ 9d5a4b6
-
 package events
 
 import (

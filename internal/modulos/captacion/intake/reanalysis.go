@@ -1,5 +1,3 @@
-// Porta internal/intake/reanalisis.go @ 8d875ab
-
 // reanalysis.go — EL SEGUNDO PRODUCTOR DE JOBS (Plan 044 · Ola 4 · T4.6, D-044.15,
 // design §8.1; migración 0080).
 //
@@ -44,7 +42,7 @@
 // # LO QUE ESTE FICHERO NO HACE
 //
 // No lee el hilo, no descifra, no cifra y no decide si hay material: eso es del
-// endpoint (`internal/reanalisis`), que además lo comprueba ANTES de llamar aquí
+// endpoint (`captacion/reanalisis`), que además lo comprueba ANTES de llamar aquí
 // para no dejar jobs huérfanos que nadie va a poder correr. El sobre le llega ya
 // cifrado y lo guarda sin abrirlo. Aquí solo se abre la fila y se pregunta por la
 // concurrencia.

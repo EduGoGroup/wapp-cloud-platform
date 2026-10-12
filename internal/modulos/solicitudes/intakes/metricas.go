@@ -1,5 +1,3 @@
-// Porta internal/intakes/metricas.go @ 64c181a
-
 // metricas.go — LAS MÉTRICAS DE LA BANDEJA DEL DUEÑO (Plan 044 · T5.2, design §10).
 //
 // Tres de los cinco eventos de design §10 nacen aquí, y son los TRES que produce

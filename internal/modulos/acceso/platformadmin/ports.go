@@ -1,8 +1,7 @@
 // Nuevo (D-F2-3, Jhoan): los puertos de platformadmin. En el viejo no existían: los handlers
-// recibían el *Repository de Postgres y la lógica de la aprobación vivía mezclada con su SQL
-// (internal/platformadmin/postgres.go:99-277 y access_requests.go:136-485 @ 9a77307). Separarlos
-// es lo que deja probar esa lógica sin base (E-6). Solo interfaces: su suite de contrato es
-// platformadminhelpertest.Contrato (diseño F2 §2), y la corren el doble en memoria
+// recibían el *Repository de Postgres y la lógica de la aprobación vivía mezclada con su SQL.
+// Separarlos es lo que deja probar esa lógica sin base (E-6). Solo interfaces: su suite de
+// contrato es platformadminhelpertest.Contrato (diseño F2 §2), y la corren el doble en memoria
 // (platformadminhelpertest.Fake) y el adaptador Postgres (Repository) en los procesos de F9.
 
 package platformadmin

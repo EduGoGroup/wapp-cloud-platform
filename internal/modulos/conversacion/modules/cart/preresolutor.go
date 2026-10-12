@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/preresolutor.go @ 9d5a4b6
-
 // preresolutor.go — LA CASCADA DETERMINISTA, DELANTE DE LA SUB-MÁQUINA
 // (Plan 044 · Ola 3.5 · T3.5-1).
 //

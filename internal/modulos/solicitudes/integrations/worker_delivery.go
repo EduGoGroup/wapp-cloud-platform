@@ -1,6 +1,6 @@
-// Porta internal/integrations/worker.go @ 36d5a04 (trozo de worker.go, E-13): la
-// entrega de UNA fila — completar el payload, firmar y hacer el POST. Solo se
-// movieron declaraciones; el contrato de todo ello está en Run (worker.go).
+// Trozo de worker.go (E-13): la entrega de UNA fila — completar el payload,
+// firmar y hacer el POST. Solo se movieron declaraciones; el contrato de todo
+// ello está en Run (worker.go).
 
 package integrations
 
@@ -54,8 +54,8 @@ func (w *Worker) deliver(ctx context.Context, item WebhookOutbox) {
 		return
 	}
 	defer func() {
-		// Drenar antes de cerrar permite reutilizar la conexión (patrón de
-		// internal/iam/infra/identity/client.go).
+		// Drenar antes de cerrar permite reutilizar la conexión (patrón
+		// de internal/modulos/acceso/iam/infra/identity/client.go).
 		if _, derr := io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBody)); derr != nil {
 			_ = derr
 		}

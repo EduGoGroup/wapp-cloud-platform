@@ -14,7 +14,7 @@ import (
 
 const (
 	// p0MsgFase es el mensaje con el que el orquestador deja constancia de cada fase del arranque
-	// (internal/bootstrap/arranque/orquestador.go:117-123).
+	// (internal/arranque/orquestador.go).
 	p0MsgFase = "arranque: fase completada"
 	// p0MsgMigraciones es la línea de database.go:40-44 con version, content_hash y skipped.
 	p0MsgMigraciones = "migraciones aplicadas"
@@ -26,7 +26,7 @@ const (
 	// pki.go:119): si aparece, el servidor no usó la clave que el arnés le dio.
 	p0MsgEfimera = "EFÍMERA"
 	// p0MsgHTTP y p0MsgGRPC son las líneas que cada listener escribe al ponerse a servir
-	// (internal/bootstrap/arranque/servir.go:65,72).
+	// (internal/arranque/servir.go).
 	p0MsgHTTP = "servidor HTTP iniciado"
 	p0MsgGRPC = "servidor gRPC iniciado"
 	// p0MsgSenal es la línea con la que el servidor confirma que vio SIGTERM

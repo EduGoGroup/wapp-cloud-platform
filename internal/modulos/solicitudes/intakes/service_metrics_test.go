@@ -14,9 +14,9 @@ import (
 )
 
 // La telemetría de la bandeja vista desde su cableado (WithMetrics, WithMetricsClock): qué se
-// publica en Approve y en RequestInfo, con qué reloj, y qué pasa cuando no hay publicador o
-// falla. Los dobles y la siembra están en service_test.go; los payloads esperados salen del
-// fichero viejo (internal/intakes/metricas.go @ 64c181a) sobre esta misma escena.
+// publica en Approve y en RequestInfo, con qué reloj, y qué pasa cuando no hay publicador o falla.
+// Los dobles y la siembra están en service_test.go; los payloads esperados son valores congelados,
+// calculados con la implementación anterior a la reconstrucción sobre esta misma escena.
 
 // svcLogSpy retiene lo emitido como "NIVEL mensaje args".
 type svcLogSpy struct{ lines []string }

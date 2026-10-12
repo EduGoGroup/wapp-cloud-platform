@@ -1,6 +1,3 @@
-// Porta internal/publicapi/intakes_llm_gate.go @ ed60c24 (180 líneas) e
-// internal/publicapi/intakes.go @ ed60c24 (writeIntakeDetail, líneas 310-327).
-//
 // intakes_llm_gate.go — EL GATE POR CAMPO DEL DETALLE DE UNA SOLICITUD (Plan 044 · T4.1,
 // D-044.47 §1 y D-044.48 §2) y la ÚNICA salida por la que ese detalle llega al wire. Van juntos
 // a propósito: quien escribe el detalle es quien lo filtra, y no hay otro camino.

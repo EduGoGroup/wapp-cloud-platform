@@ -1,5 +1,3 @@
-// Porta internal/flujos/store/repository_postgres.go @ c0c0c03
-//
 // Trozo de repository_postgres.go (05 E-13): public.tenant_content y
 // public.tenant_content_versions. Las reglas comunes del adaptador están en la
 // cabecera de repository_postgres.go.

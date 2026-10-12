@@ -24,7 +24,8 @@ import (
 //
 // `InferenceRequest.class` no dice la etapa (trampa T-8: es telemetría, «interactivo» o «lote»). Las
 // dos candidatas eran el techo `max_output_tokens` y un marcador del texto. Leídos
-// internal/llmvia/local/local.go y wapp-shared/llm@v0.4.5 (prompt.go), gana el marcador:
+// internal/modulos/inferencia/llmvia/local/local.go y wapp-shared/llm@v0.4.5 (prompt.go), gana el
+// marcador:
 //
 //   - el techo NO distingue P2 de P3: los dos valen 512 (P1 192, P4 1024, P5 768);
 //   - el techo se puede APAGAR en campo (local.WithMaxOutputTokens, el interruptor de
@@ -41,18 +42,20 @@ import (
 // TestArnes_GuionRecognizesStages construye los cinco prompts con los constructores REALES de
 // wapp-shared/llm: si un release cambia un rótulo, se pone rojo ese test y no un proceso entero.
 //
-// # De qué test viejo sale cada JSON (E-8)
+// # De dónde sale cada JSON (E-8)
 //
-//   - P2 (scriptReplyP2), P3 (scriptReplyP3Choc, …Vanilla, …Tequenos) y P4 (scriptReplyP4): de
-//     internal/intake/pipeline/guion_ambar_test.go, el modelo falso `fusProveedor` del caso Ámbar
-//     (ExtractMainIdeas, ExtractItemSpecs, NormalizeQuantities), valor por valor. Las `evidence`
-//     son subcadenas literales de la ráfaga del caso (draftBurst, en p4_borrador_helpers_test.go):
-//     P2 descarta la idea cuya evidencia no está en el literal (internal/intake/stages/p2_test.go).
-//   - P1 (scriptClassification): la forma es el esquema del prompt de P1 y el valor el de
-//     `fusClasificador` del mismo fichero (`intake_request`, 0.95).
-//   - P5 (scriptQuoteText): `artefactoP5` de internal/intakes/quotetext/dobles_test.go.
+// Son valores congelados, tomados de los dobles de la implementación anterior a la reconstrucción;
+// no se regeneran.
+//
+//   - P2 (scriptReplyP2), P3 (scriptReplyP3Choc, …Vanilla, …Tequenos) y P4 (scriptReplyP4): el
+//     modelo falso del caso Ámbar (ExtractMainIdeas, ExtractItemSpecs, NormalizeQuantities), valor
+//     por valor. Las `evidence` son subcadenas literales de la ráfaga del caso (draftBurst, en
+//     p4_borrador_helpers_test.go): P2 descarta la idea cuya evidencia no está en el literal.
+//   - P1 (scriptClassification): la forma es el esquema del prompt de P1 y el valor el del
+//     clasificador falso del mismo caso (`intake_request`, 0.95).
+//   - P5 (scriptQuoteText): el artefacto de P5 de los dobles de la redacción de la cotización.
 //   - El caso «un paquete de 30 es qty 1 con package_size 30, nunca qty 30» y el `package_size`
-//     que no puede valer 0: internal/intake/stages/p4_test.go.
+//     que no puede valer 0: las dos reglas de P4.
 //
 // 🔴 I-CP-1: ningún JSON del guion lleva un valor que su propio validador rechace (P4 fue 0 de 14
 // en campo por un `"package_size": 0`). TestArnes_GuionRepliesPassTheirValidator pasa cada uno por
@@ -88,8 +91,9 @@ var scriptMarkers = map[scriptStage]string{
 // prompt (el hilo es el prefijo estable, la idea lo único que cambia entre las N llamadas).
 const scriptItemMarker = "\n\nÍtem que debes especificar:\n"
 
-// scriptCeilings son los techos de salida que el Cloud fija por etapa (internal/llmvia/local/local.go,
-// «techo por tarea»). No deciden la etapa: los afirma el proceso.
+// scriptCeilings son los techos de salida que el Cloud fija por etapa
+// (internal/modulos/inferencia/llmvia/local/local_budget.go). No deciden la etapa: los afirma el
+// proceso.
 var scriptCeilings = map[scriptStage]int32{stageP1: 192, stageP2: 512, stageP3: 512, stageP4: 1024, stageP5: 768}
 
 // Las ideas del caso Ámbar: lo que P2 saca del hilo y la clave con la que P3 elige qué contestar

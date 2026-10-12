@@ -1,5 +1,3 @@
-// Porta internal/prompts/prompts.go @ ebf4eb7
-
 // Package prompts carga de DISCO el texto ajustable de los prompts del pipeline
 // y lo entrega ya validado, para que afinar un prompt no cueste una release del
 // módulo compartido.

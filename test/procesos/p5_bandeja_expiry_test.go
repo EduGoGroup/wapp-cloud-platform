@@ -14,10 +14,9 @@ import (
 )
 
 // El plazo del presupuesto (24 h, constante de plataforma) y la poda del literal del cliente. Los dos
-// son PEREZOSOS: no hay reloj; se evalúan cuando la dueña lee su bandeja. Los candados que pasan a
-// aserción son internal/intakes/inv_vencimiento_ast_test.go (vencer AVISA y no mata: ni transición,
-// ni evento de telemetría, ni mensaje al cliente) y sello_poda_ast_test.go (la lectura que poda
-// publica el instante de la poda).
+// son PEREZOSOS: no hay reloj; se evalúan cuando la dueña lee su bandeja. Las dos reglas que aquí
+// son aserción: vencer AVISA y no mata (ni transición, ni evento de telemetría, ni mensaje al
+// cliente), y la lectura que poda publica el instante de la poda.
 
 const (
 	// p5DefaultLiteralTTL es el plazo de retención del literal por defecto (12 meses, migración 0079).

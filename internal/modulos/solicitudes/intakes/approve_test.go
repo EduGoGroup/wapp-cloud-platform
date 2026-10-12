@@ -12,8 +12,8 @@ import (
 // La parte PURA de approve.go: constantes, centinelas, los dos errores tipados y qué es una
 // línea sin precio. La acción Approve está en approve_service_test.go.
 //
-// Las salidas esperadas son LITERALES calculados con el fichero viejo
-// (internal/intakes/approve.go @ 64c181a): el candado de fronteras impide importarlo desde aquí.
+// Las salidas esperadas son LITERALES congelados, calculados con la implementación anterior a la
+// reconstrucción; no se regeneran.
 
 // TestApprove_WireConstants: el estado desde el que se aprueba y las dos claves del contrato
 // §7.4 son texto de wire; se conservan byte a byte aunque las constantes cambiaran de nombre.

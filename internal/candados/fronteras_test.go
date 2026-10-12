@@ -11,7 +11,7 @@ const moduloWapp = "github.com/EduGoGroup/wapp-cloud-platform"
 // dirsFronteras: el candado recorre internal/ y cmd/, producción y tests.
 var dirsFronteras = []string{"internal", "cmd"}
 
-// mapaFronteras: "internal/flujos/store" es más largo que "internal/flujos": gana él.
+// mapaFronteras: el prefijo del almacén viejo de flujos es más largo que el de flujos: gana él.
 var mapaFronteras = map[string]string{
 	"internal/iam":          "acceso",
 	"internal/flujos":       "conversacion",

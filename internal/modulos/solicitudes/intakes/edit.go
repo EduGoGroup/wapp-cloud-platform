@@ -1,5 +1,3 @@
-// Porta internal/intakes/edit.go @ 64c181a.
-//
 // edit.go es la EDICIÓN MANUAL de las líneas de una solicitud (REQ-36 / D-041.26):
 // el dueño añade, quita o corrige líneas de un presupuesto SIN LLM de por medio, y
 // cada edición deja una revisión `corrected` firmada por `owner`. Es la contraparte

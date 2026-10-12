@@ -1,5 +1,3 @@
-// Porta internal/intakes/status.go @ 64c181a
-
 // status.go es la MÁQUINA DE ESTADOS de la solicitud (design §D-041.10; regla
 // R-09): las once claves del ciclo de vida, el alias legado `closed`, qué
 // transiciones existen, qué se puede descartar a mano y el error tipado que viaja

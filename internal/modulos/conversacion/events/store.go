@@ -1,5 +1,3 @@
-// Porta internal/flujos/events/store.go @ 9d5a4b6
-//
 // El fichero viejo medía 1.060 líneas y aquí NACE PARTIDO por tema (05 E-13), solo repartiendo
 // declaraciones:
 //

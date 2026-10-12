@@ -19,8 +19,6 @@
 //
 // Las dependencias de lease y fleet son OPCIONALES (WithLease/WithFleet): nil =
 // sin lease ni fleet, lo que mantiene los tests sin TLS verdes.
-//
-// Porta internal/gateway/grpc/server.go @ c851591.
 package grpc
 
 import (

@@ -3,8 +3,9 @@ package intakes
 // El INVENTARIO de lo que ve el cliente por WhatsApp, byte a byte (notifier.go, 🔶): las 7
 // plantillas por estado del ciclo de vida, las 4 del CRM y el render de los tres marcadores sobre
 // la plantilla de seña del tenant. Cada `want` es el mensaje YA renderizado tal como llegó al
-// MessageSender, calculado con internal/intakes/notifier.go @ 64c181a. Las tablas de plantillas
-// no exportadas no existen en el rojo: los literales viven aquí. Dobles en notifier_test.go.
+// MessageSender, calculado con la implementación anterior a la reconstrucción. Las tablas de
+// plantillas no exportadas no existen en el rojo: los literales viven aquí. Dobles en
+// notifier_test.go.
 
 import (
 	"context"

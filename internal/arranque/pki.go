@@ -1,6 +1,5 @@
-// Copia de internal/bootstrap/arranque/pki.go @ 80807ba (F0 · 05 §6): cableaba paquetes VIEJOS,
-// salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge.
-// 🔀 F8 · conmutar(conversacion): ya no cablea ninguno; desde F8 el arranque nuevo es todo módulos nuevos.
+// Edge es desde F3 (T3.28, conmutar(edge)) internal/modulos/edge.
+// 🔀 F8 · conmutar(conversacion): ya no cablea ningún paquete viejo; desde F8 el arranque nuevo es todo módulos nuevos.
 package arranque
 
 import (

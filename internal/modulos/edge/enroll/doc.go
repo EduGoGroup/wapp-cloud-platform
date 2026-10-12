@@ -1,5 +1,3 @@
-// Porta internal/gateway/enroll/doc.go @ 8896f13
-
 // Package enroll implementa el enrolamiento por tenant del Gateway CloudLink
 // (Plan 005 · T3): valida el CSR del Edge, consume un código de activación de un
 // solo uso y firma un certificado de Edge con la CA del entorno.

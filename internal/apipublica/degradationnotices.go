@@ -1,6 +1,3 @@
-// Porta internal/publicapi/degradationnotices.go @ 3c74b80 y el registro de F4
-// (internal/publicapi/publicapi.go @ 3c74b80, registerDegradationNotices, líneas 994-1032).
-//
 // degradationnotices.go — LA LECTURA DE LOS AVISOS DE DEGRADACIÓN DEL DUEÑO (Plan 044 · Ola 1.5
 // · T1.5-4, D-044.32, REQ-38; mapa §2.6, F4): GET /api/v1/degradation-notices. El dominio vive
 // en internal/modulos/inferencia/degradation; aquí solo se abre la puerta HTTP. El contrato de

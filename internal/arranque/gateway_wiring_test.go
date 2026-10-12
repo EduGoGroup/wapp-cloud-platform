@@ -23,7 +23,7 @@ import (
 	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 )
 
-// Rutas de import del gateway: el árbol VIEJO (prefijo: cubre internal/gateway y todos sus
+// Rutas de import del gateway: el árbol VIEJO (prefijo: cubre el paquete raíz y todos sus
 // subpaquetes) y los dos paquetes NUEVOS que solo pueden construirse una vez.
 const (
 	oldGatewayTreeImportPath = "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway"
@@ -72,7 +72,7 @@ func callsTo(t *testing.T, importPath, fn string) int {
 }
 
 // TestCableado_NoBootFileImportsTheOldGateway (R3.6.f): ningún fichero de producción de
-// internal/arranque importa nada de internal/gateway/**. Sin esto, una fase podría levantar un
+// internal/arranque importa nada del árbol viejo del gateway. Sin esto, una fase podría levantar un
 // gateway, un registro o un lease viejos y pasárselos a su consumidor sin tocar ningún campo del
 // contenedor. Hasta F4 había una excepción, bridge_gateway.go (el adaptador hacia el local.Frame
 // viejo); murió en conmutar(inferencia), así que ya no hay ninguna.

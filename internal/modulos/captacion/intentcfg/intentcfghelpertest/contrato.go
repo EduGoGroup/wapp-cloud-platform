@@ -6,10 +6,7 @@
 // testcontainers. Este paquete NO trae un doble propio: el gemelo en memoria ya existe y es el
 // MemoryStore del paquete (trampa T-9 de F7).
 //
-// Nuevo: no tiene fichero viejo. Los casos salen del contrato de intentcfg.Store y de los tests
-// viejos, leídos y no portados: internal/intentcfg/store_test.go (GetNotFound, UpsertYGet,
-// UpsertReemplaza) e internal/intentcfg/store_integration_test.go (UpsertGet, de donde sale la
-// comparación del blob por equivalencia JSON).
+// Los casos salen del contrato de intentcfg.Store; el blob se compara por equivalencia JSON.
 package intentcfghelpertest
 
 import (

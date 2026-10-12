@@ -1,5 +1,3 @@
-// Porta internal/publicapi/conversationevents.go @ ed60c24 (formatInstant, líneas 215-221).
-//
 // instants.go — CÓMO VIAJA UN INSTANTE EN EL JSON DE LA CARA. En la spec FX era `instantes.go`
 // (05 E-11). En el viejo la función vive en conversationevents.go (F8) y la usa además intakes.go
 // (F6): un fichero común nace con su PRIMER consumidor (D-FX-5), y ese es la bandeja de

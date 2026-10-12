@@ -1,6 +1,3 @@
-// Porta internal/publicapi/intakes.go @ ed60c24 (1073 líneas: parseIntakeFilter y
-// parseFilterTime, líneas 965-1073).
-//
 // intakes_filter.go — LA QUERY DEL LISTADO DE SOLICITUDES: cómo se traduce a un intakes.Filter.
 // Es un trozo de intakes.go partido por tema (05 E-13). La comparten G1 (la bandeja) y, con el
 // mismo filtro, G9 y G10 (el export y el resumen): que las tres lean la query por el MISMO sitio

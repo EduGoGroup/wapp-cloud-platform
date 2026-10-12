@@ -1,5 +1,3 @@
-// Porta internal/intake/catalogo/normalizador.go @ 3c74b80
-
 package indice
 
 import "fmt"

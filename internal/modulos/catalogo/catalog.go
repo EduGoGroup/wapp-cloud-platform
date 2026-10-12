@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/catalog.go @ 3c74b80
-
 // Package catalogo es el modelo del catálogo de un tenant, sacado del módulo cart (Plan 016)
 // porque también lo leen el índice de captación y el importador: el árbol de dos niveles
 // (categorías → artículos) y su parser desde model.Content.Raw. Los tipos de este archivo son

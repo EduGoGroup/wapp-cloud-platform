@@ -1,6 +1,3 @@
-// Porta internal/publicapi/sessions.go @ 115a4ba (listSessionsHandler, sessionDTO, isoFormat) y
-// el registro de D2, D3 y D4 (internal/publicapi/publicapi.go @ 115a4ba, líneas 498-550).
-//
 // sessions.go — LAS SESIONES (TELÉFONOS VINCULADOS) DEL TENANT (mapa §2.4): D2 las lista, con su
 // salud derivada (health.go); D3 y D4 fijan su perfil y su estado con los handlers de
 // sessionadmin.go, a los que este fichero pone la cadena W. El puerto SessionLister, que la cara

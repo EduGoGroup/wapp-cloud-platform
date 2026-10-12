@@ -1,5 +1,3 @@
-// Porta internal/flujos/content/static.go @ c0c0c03
-
 package content
 
 import (

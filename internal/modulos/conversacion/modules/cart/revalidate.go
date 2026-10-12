@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/revalidate.go @ 9d5a4b6
-
 // revalidate.go es la mitad del carrito de la REVALIDACIÓN DEL RESCATE (Plan 041 ·
 // T4.9, REQ-35 / D-041.25): el catálogo aplanado a precios vigentes y el MENSAJE con
 // el que se le cuenta al cliente qué cambió mientras su pedido estuvo parado.

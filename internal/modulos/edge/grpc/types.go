@@ -1,5 +1,3 @@
-// Porta internal/gateway/grpc/types.go @ c851591
-
 package grpc
 
 import (

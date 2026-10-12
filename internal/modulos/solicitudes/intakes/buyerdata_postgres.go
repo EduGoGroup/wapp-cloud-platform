@@ -1,5 +1,3 @@
-// Porta internal/intakes/buyerdata.go @ 64c181a
-
 // buyerdata_postgres.go es el adaptador que guarda los datos del comprador
 // CIFRADOS EN REPOSO en public.intake_buyer_data (D-F6-6: el SQL y el cifrado
 // salen del fichero puro buyerdata.go).

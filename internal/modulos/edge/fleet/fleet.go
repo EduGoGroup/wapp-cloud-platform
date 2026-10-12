@@ -1,5 +1,3 @@
-// Porta internal/gateway/fleet/fleet.go @ 809345b
-
 // Package fleet lleva el registro durable del estado online/offline de las
 // sesiones CloudLink de cada Edge (tabla public.fleet_sessions). El estado es
 // DERIVADO del stream vivo: el Gateway marca online al conectar una sesión y

@@ -96,7 +96,7 @@ flowchart TB
 | gRPC Enrollment | `WAPP_GRPC_ENROLL_ADDR` | `:8102` | `EnrollEdge`, **TLS solo de servidor** (el Edge enrola antes de tener certificado) |
 | HTTP API pública | `WAPP_PUBLIC_HTTP_ADDR` | `:8103` | `/api/v1/*` |
 
-Los cuatro defaults están en `internal/platform/config/config.go:624`.
+Los cuatro defaults están en `internal/platform/config/config.go:623`.
 
 ⚠️ El listener público **no tiene sonda de salud**: `/healthz` solo existe en `:8100`. Lo fija la
 huella del arranque (`internal/arranque/testdata/huella-vieja.golden`), donde `/healthz` y
@@ -140,7 +140,7 @@ invitaciones, empresa activa), `ports/in` y `ports/out`, `infra/postgres`, `infr
 La terminación de los túneles de cada Edge. Cuatro piezas:
 
 - **`grpc`** — el servidor `Connect` bidi. `route()` despacha **10** tipos de `EdgeToCloud`
-  (`internal/modulos/edge/grpc/connect_route.go:46`; regla: los `case` del `switch` de esa
+  (`internal/modulos/edge/grpc/connect_route.go:45`; regla: los `case` del `switch` de esa
   función). Regla de diseño explícita: el bucle `Recv` **suelta el trabajo** a un carril por
   sesión, y se quedan **inline** solo los mensajes que son O(1) en memoria (`Ack`,
   `InferenceResult`), porque son las víctimas del head-of-line, no su causa.
@@ -174,7 +174,7 @@ eventos) y un **registro de módulos enchufables**.
 | `turnoacotado` | Nivel B: una pregunta suelta al modelo cuando un módulo determinista no entendió |
 
 **Módulos registrados en producción: exactamente cuatro**, y se ven en una línea cada uno —
-`internal/arranque/fase7_flujos.go:58` menu, `:59` survey, `:69` cart, `:70` media.
+`internal/arranque/fase7_flujos.go:57` menu, `:59` survey, `:69` cart, `:70` media.
 
 La identidad **opaca** del contacto (PII cifrada con KEK versionada + índice ciego HMAC) no es de
 este módulo: vive en `internal/nucleo/contact`, porque la usan también `edge` y `solicitudes`.
@@ -183,7 +183,7 @@ este módulo: vive en `internal/nucleo/contact`, porque la usan también `edge` 
 
 **Un pedido y un presupuesto son el mismo objeto** (la solicitud, tabla `intakes`), con una
 máquina de **11 estados** más un alias legado (`closed`), declarados en
-`internal/modulos/solicitudes/intakes/status.go:25` (regla: las constantes `Status…` de ese
+`internal/modulos/solicitudes/intakes/status.go:23` (regla: las constantes `Status…` de ese
 bloque, sin contar `StatusClosedLegacy`).
 
 El camino, de mensaje a borrador:
@@ -210,7 +210,7 @@ flowchart LR
 | `stages` | `captacion` | Las etapas, una por fichero: P2, P3, P4, `match` y `draft` |
 | `pipeline` | `captacion` | **El worker**: reclama un job, encadena las etapas, y lo termina o lo castiga con la causa escrita |
 | `anclaje` | `captacion` | A qué línea pertenece cada adjunto. **Determinista, sin LLM**. Lo importan `stages` y `pipeline` |
-| `intakeahead` | `captacion` | Adelanto de la ventana **por pull**; `DefaultWorkers = 4` (`internal/modulos/captacion/intakeahead/intakeahead.go:110`) |
+| `intakeahead` | `captacion` | Adelanto de la ventana **por pull**; `DefaultWorkers = 4` (`internal/modulos/captacion/intakeahead/intakeahead.go:108`) |
 | `evidence` | `captacion` | La regla de la evidencia: ¿la frase que el modelo dice citar está de verdad en el texto? |
 | `reanalisis` | `captacion` | El caso de uso de `POST /api/v1/intakes/{id}/reanalyze` |
 | `casebank` | `captacion` | Banco de casos anonimizados **con consentimiento** (se siembra con `cmd/casebank`) |
@@ -241,8 +241,8 @@ Lo leen tres consumidores: el módulo `cart` (solo el paquete raíz), el pipelin
 ### 2.6 · Entitlements — `internal/modulos/acceso/entitlements`
 
 Los derechos comerciales por tenant: `Has`, `ListEffective` y `CacheTTL`
-(`internal/modulos/acceso/entitlements/postgres.go:138`), más el middleware `RequireFeature`
-(`internal/modulos/acceso/entitlements/middleware.go:48`) que **gatea rutas**. Fail-closed
+(`internal/modulos/acceso/entitlements/postgres.go:136`), más el middleware `RequireFeature`
+(`internal/modulos/acceso/entitlements/middleware.go:46`) que **gatea rutas**. Fail-closed
 (I-CP-6), con caché en memoria por TTL.
 
 Los planes y las features sembradas: [`esquema-postgres.md`](esquema-postgres.md) §7.
@@ -270,10 +270,10 @@ El puente CRM es una **pieza independiente**; este repo congela el contrato `wap
 |---|---|---|
 | `intake.push` | wApp → puente | **Implementado**: `crmpush` lo arma y lo encola en la cola durable `webhook_outbox`; el worker lo entrega firmado |
 | `intake.status` | puente → wApp | **Implementado**: `POST /api/v1/integrations/callback` |
-| `catalog.pull` | puente → wApp | **NO implementado**: configurar su adaptador `http` responde **422** «catalog.pull diferido» (`internal/apipublica/integrations_validate.go:100`) |
+| `catalog.pull` | puente → wApp | **NO implementado**: configurar su adaptador `http` responde **422** «catalog.pull diferido» (`internal/apipublica/integrations_validate.go:96`) |
 
 `sigv1` es HMAC-SHA256 sobre el cuerpo crudo, con comparación en **tiempo constante**
-(`internal/modulos/solicitudes/integrations/sigv1/sigv1.go:63`). La ventana anti-replay de
+(`internal/modulos/solicitudes/integrations/sigv1/sigv1.go:61`). La ventana anti-replay de
 ±300 s la aplica quien llama, no el paquete.
 
 ### 2.9 · La cara — `internal/apipublica`
@@ -284,12 +284,12 @@ llamando a un montador `Mount…` por área; cada montador decide qué dependenc
 ruta, y delega en los módulos de arriba. La lista de rutas es de
 [`contratos.md`](contratos.md) §2.
 
-Sus dos cadenas de middleware (`internal/apipublica/chain.go:114` y `:127`):
+Sus dos cadenas de middleware (`internal/apipublica/chain.go:110` y `:127`):
 
 - `protect(...)` = `accessLog → Authenticate → annotateTenant → RequirePermission(scope) → AuditMiddleware → h`
 - `protectRead(...)` = igual **sin auditoría** (una lectura no tiene efecto que registrar)
 
-Envoltura global de la cara (`internal/arranque/http.go:179`):
+Envoltura global de la cara (`internal/arranque/http.go:178`):
 `InstrumentHTTP("public") → PublicRateLimit → cara`.
 
 El listener admin es otra cosa y no pasa por la cara: sus rutas las cablea **una sola función**,
@@ -322,7 +322,7 @@ El listener admin es otra cosa y no pasa por la cara: sus rutas las cablea **una
 
 | `cmd/` | Qué hace |
 |---|---|
-| `cmd/server` | **El proceso real.** `main.go` son 36 líneas y delega en `arranque.Ejecutar` (`internal/arranque/orquestador.go:68`), que carga la configuración, corre las nueve fases —migra al arrancar—, levanta los cuatro listeners y hace cierre ordenado |
+| `cmd/server` | **El proceso real.** `main.go` son 36 líneas y delega en `arranque.Ejecutar` (`internal/arranque/orquestador.go:67`), que carga la configuración, corre las nueve fases —migra al arrancar—, levanta los cuatro listeners y hace cierre ordenado |
 | `cmd/migrate` | Aplica el DDL **y sale**, sin listeners. `-status` solo consulta (`cmd/migrate/main.go:43`). Lee las **mismas** `WAPP_DB_*` que el servidor, nunca un argumento |
 | `cmd/prompts` | `-volcar <dir>` escribe las plantillas de P2–P5 con el texto que corre hoy; `-comprobar <dir>` las valida sin arrancar (`cmd/prompts/main.go:44`) |
 | `cmd/casebank` | `-tenant X -consentido` siembra un caso en el banco de casos y sale. **Sin `-consentido` se niega** (`cmd/casebank/main.go:54`) |
@@ -405,21 +405,21 @@ ese directorio además **escribe** (`INSERT`, `UPDATE` o `DELETE`).
 Los casos que más pesan, con su línea:
 
 - 🔴 **`edge` ESCRIBE `public.tenants`.** El kill-switch comercial vive en el repositorio de
-  leases: `internal/modulos/edge/lease/repository_postgres.go:130` hace
+  leases: `internal/modulos/edge/lease/repository_postgres.go:128` hace
   `UPDATE public.tenants SET revoked_at = now() …` y `:143` el `… SET revoked_at = NULL`. El
   resto del SQL de esa tabla es de `acceso` (por ejemplo
-  `internal/modulos/acceso/platformadmin/postgres.go:281`, que también la escribe). Dos módulos
+  `internal/modulos/acceso/platformadmin/postgres.go:279`, que también la escribe). Dos módulos
   escriben la tabla de identidad del tenant, **sin API interna de por medio**.
 - 🔴 **`conversacion` y `solicitudes` escriben las mismas tres tablas, cruzadas.** El carrito
   proyecta la solicitud con SQL propio
-  (`internal/modulos/conversacion/store/repository_postgres_intakes.go:126`,
+  (`internal/modulos/conversacion/store/repository_postgres_intakes.go:124`,
   `INSERT INTO public.intakes`), y la bandeja cancela el evento conversacional con el suyo
-  (`internal/modulos/solicitudes/intakes/postgres_discard.go:193`,
+  (`internal/modulos/solicitudes/intakes/postgres_discard.go:191`,
   `UPDATE public.conversation_events`).
 - 🟡 **`internal/nucleo` escribe una tabla del motor.** Al fusionar dos contactos, el resolver
-  migra y poda `flow_state` (`internal/nucleo/contact/repository_postgres.go:496` y `:506`).
+  migra y poda `flow_state` (`internal/nucleo/contact/repository_postgres.go:495` y `:506`).
 - 🟡 **`internal/apipublica` tiene SQL propio**: la lectura de telemetría de eventos consulta
-  `flow_events` desde la cara (`internal/apipublica/eventstelemetry_store.go:66`), no a través
+  `flow_events` desde la cara (`internal/apipublica/eventstelemetry_store.go:63`), no a través
   de un módulo.
 
 **No hay candado para esto.** Los candados de §4.3 vigilan imports, tamaño y tests; ninguno
@@ -473,7 +473,7 @@ reinicio:
 
 🔴 **Los cinco fallos son MUDOS y están identificados como tales en el propio código.** La única
 red es de pruebas, no un supervisor en tiempo de ejecución: `TestPipelineCaptacionCableado`
-(`internal/arranque/pipeline_captacion_cableado_test.go:58`) cuenta que el worker se lanza **una
+(`internal/arranque/pipeline_captacion_cableado_test.go:57`) cuenta que el worker se lanza **una
 sola vez** (W = 1, I-CP-4), y `TestHuella` fija la lista de goroutines que el arranque lanza. Ver
 [`deuda.md`](deuda.md) (D-11).
 

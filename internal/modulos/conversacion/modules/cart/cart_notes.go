@@ -1,7 +1,3 @@
-// Porta internal/flujos/modules/cart/cart.go @ 9d5a4b6 (trozo «indicaciones»:
-// toItemNote, stepItemNoteScope, stepItemNote, stepOrderNote y backToContinue; el
-// viejo es un solo fichero y aquí nace partido, 05 E-13)
-
 // cart_notes.go son los tres niveles de INDICACIÓN del cliente (Plan 041 · T4.1c,
 // D-041.19 + D-041.20): la de una línea («sin cebolla») y la de todo el pedido
 // («dejarlo en portería»). NO son pasos del recorrido: son ramas OPCIONALES colgadas

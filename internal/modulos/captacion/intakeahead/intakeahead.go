@@ -1,5 +1,3 @@
-// Porta internal/intakeahead/intakeahead.go @ 56097aa
-
 // Package intakeahead es EL ADELANTO DE VENTANA POR PULL (Plan 044 · Ola 1.6 ·
 // T1.6-4; D-044.31, REQ-09, REQ-35, INV-10, ADR-0045).
 //

@@ -1,5 +1,3 @@
-// Porta internal/turnoacotado/turnoacotado.go @ 42117b5
-
 // Package turnoacotado implementa el TURNO ACOTADO del Nivel B: la pregunta suelta
 // que el motor de flujos le hace al modelo del tenant cuando un módulo puro no pudo
 // interpretar lo que el cliente escribió (Plan 044 · Ola 3.5 · T3.5-2, ADR-0044 §5).

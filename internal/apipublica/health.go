@@ -1,6 +1,3 @@
-// Porta internal/publicapi/health.go @ 115a4ba (HealthRules y su derivación, Alerter,
-// NoopAlerter), sobre el fleet.Session del módulo edge NUEVO.
-//
 // health.go — LA SALUD DERIVADA DE UNA SESIÓN (ADR-0023, Plan 031 · T4). El estado se calcula al
 // SERVIR GET /api/v1/sessions (D2, sessions.go): no se persiste y no hay job de fondo.
 //

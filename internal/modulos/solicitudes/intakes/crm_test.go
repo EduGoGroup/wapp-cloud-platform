@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// Las salidas esperadas de este fichero son LITERALES calculados con el fichero
-// viejo (internal/intakes/crm.go @ 64c181a): el candado de fronteras impide
-// importarlo desde aquí.
+// Las salidas esperadas de este fichero son LITERALES congelados, calculados
+// con la implementación anterior a la reconstrucción; no se regeneran.
 
 // TestCRMStatuses_WireValues: los cuatro estados canónicos del contrato wapp-crm-v1, byte a byte
 // (son el enum del schema publicado y el CHECK de la migración 0048).

@@ -1,5 +1,3 @@
-// Porta internal/iam/transport/http/roles.go @ 9a77307
-
 package iamhttp
 
 // roles.go — LA PUERTA HTTP DEL PLANO DE ROLES DEL TENANT (Plan 047 · Ola 1.0 ·

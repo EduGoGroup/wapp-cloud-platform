@@ -1,5 +1,3 @@
-// Porta internal/iam/usecase/roles.go @ 9a77307
-
 package usecase
 
 import (

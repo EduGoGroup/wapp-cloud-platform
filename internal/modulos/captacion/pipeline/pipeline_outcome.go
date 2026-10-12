@@ -1,4 +1,4 @@
-// Porta internal/intake/pipeline/pipeline.go @ 56097aa (los desenlaces, la reanudación y el cronómetro)
+// Los desenlaces, la reanudación y el cronómetro.
 
 package pipeline
 

@@ -8,10 +8,9 @@ import (
 	"time"
 )
 
-// Las salidas esperadas de este fichero son LITERALES calculados con el fichero
-// viejo (internal/intakes/summary.go @ 64c181a): el candado de fronteras impide
-// importarlo desde aquí, así que la equivalencia viejo ↔ nuevo se fija con lo que
-// el viejo devolvió para este mismo corpus.
+// Las salidas esperadas de este fichero son LITERALES congelados, calculados con la
+// implementación anterior a la reconstrucción para este mismo corpus; no se
+// regeneran.
 
 // summaryDay fija un instante determinista de agosto de 2026.
 func summaryDay(d int) time.Time { return time.Date(2026, 8, d, 12, 0, 0, 0, time.UTC) }

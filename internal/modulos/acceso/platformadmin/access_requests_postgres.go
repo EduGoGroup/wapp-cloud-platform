@@ -1,6 +1,6 @@
-// Porta internal/platformadmin/access_requests.go @ 9a77307, líneas 135-336 y 481-526: el SQL de
-// la bandeja de solicitudes de acceso, separado de sus reglas (D-F2-3). Es la mitad Postgres del
-// puerto AccessRequestStore (ports.go); las reglas que lo orquestan viven en access_requests.go.
+// El SQL de la bandeja de solicitudes de acceso, separado de sus reglas (D-F2-3). Es la mitad
+// Postgres del puerto AccessRequestStore (ports.go); las reglas que lo orquestan viven en
+// access_requests.go.
 
 package platformadmin
 

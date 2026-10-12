@@ -1,4 +1,4 @@
-// Porta internal/catalogimport/tabular.go @ 3c74b80 (el documento que se arma y la vuelta de cada defecto a su fila, líneas 57-77 y 461-546; partido de tabular.go por E-13)
+// El documento que se arma y la vuelta de cada defecto a su fila (partido de tabular.go por E-13).
 
 package catalogimport
 

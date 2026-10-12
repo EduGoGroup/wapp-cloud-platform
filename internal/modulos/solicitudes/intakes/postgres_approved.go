@@ -1,5 +1,3 @@
-// Porta internal/intakes/aprobadas.go @ 64c181a
-
 // postgres_approved.go es la lectura de las cotizaciones APROBADAS del tenant. En el
 // paquete viejo el método vivía en aprobadas.go, junto a su gemelo en memoria; aquí
 // nace con el adaptador (D-F6-6 ampliada).

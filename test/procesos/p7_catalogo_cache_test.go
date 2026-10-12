@@ -11,10 +11,11 @@ import (
 	"time"
 )
 
-// La caché del índice del catálogo (internal/intake/catalogo) vista desde la puerta, y la URL
-// prefirmada de media. El pipeline de captación cruza cada pedido con el catálogo del tenant a través
-// de un índice que se cachea por empresa y se invalida por CONTENIDO: aquí se afirma que el borrador
-// que sigue a un import —y a un PUT a mano— se cotiza con el catálogo nuevo, sin reiniciar el servidor.
+// La caché del índice del catálogo (internal/modulos/catalogo/indice) vista desde la puerta, y la
+// URL prefirmada de media. El pipeline de captación cruza cada pedido con el catálogo del tenant a
+// través de un índice que se cachea por empresa y se invalida por CONTENIDO: aquí se afirma que el
+// borrador que sigue a un import —y a un PUT a mano— se cotiza con el catálogo nuevo, sin reiniciar
+// el servidor.
 
 const (
 	// Los contactos de los tres borradores: antes del import, después, y después del PUT a mano.

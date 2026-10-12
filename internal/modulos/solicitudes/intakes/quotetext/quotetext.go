@@ -1,5 +1,3 @@
-// Porta internal/intakes/quotetext/quotetext.go @ 36d5a04
-
 package quotetext
 
 import (

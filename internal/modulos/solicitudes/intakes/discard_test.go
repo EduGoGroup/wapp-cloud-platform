@@ -10,10 +10,9 @@ import (
 	"testing"
 )
 
-// Los textos, las razones, los estados descartables y los payloads esperados de este
-// fichero son LITERALES calculados con el fichero viejo (internal/intakes/discard.go
-// @ 64c181a): el candado de fronteras impide importarlo desde aquí, así que la
-// equivalencia viejo ↔ nuevo se fija con lo que el viejo devolvió para este corpus.
+// Los textos, las razones, los estados descartables y los payloads esperados de
+// este fichero son LITERALES congelados, calculados con la implementación anterior
+// a la reconstrucción para este corpus; no se regeneran.
 
 const discardTenant = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 

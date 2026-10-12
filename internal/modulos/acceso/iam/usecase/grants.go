@@ -1,5 +1,3 @@
-// Porta internal/iam/usecase/grants.go @ 9a77307
-
 package usecase
 
 // grants.go — LOS GRANTS EFECTIVOS DE UNA PERSONA, resueltos AL EMITIR el Context Token

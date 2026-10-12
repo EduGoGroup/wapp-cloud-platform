@@ -1,5 +1,3 @@
-// Porta internal/flujos/contact/repository_memory.go @ 77df20f
-
 package contact
 
 import (

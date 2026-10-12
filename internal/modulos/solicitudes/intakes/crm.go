@@ -1,5 +1,3 @@
-// Porta internal/intakes/crm.go @ 64c181a
-
 // crm.go es el vocabulario del REFLEJO del CRM sobre una solicitud (verbo
 // intake.status del contrato wapp-crm-v1, D-042.6; ADR-0031: «cuando HAY CRM, el CRM
 // manda»). Lleva solo lo PURO: los estados canónicos y el resultado del reflejo. La

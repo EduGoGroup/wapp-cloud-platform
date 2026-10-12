@@ -7,11 +7,10 @@ import (
 	"unicode/utf8"
 )
 
-// Las salidas esperadas de este fichero son LITERALES calculados con el fichero
-// viejo (internal/flujos/modules/cart/note.go @ 3a21138): el candado de fronteras
-// impide importarlo desde aquí, así que la equivalencia viejo ↔ nuevo se fija con
-// lo que el viejo devolvió para este mismo corpus. Las runas invisibles van con su
-// escape numérico, nunca pegadas en el fuente.
+// Las salidas esperadas de este fichero son LITERALES congelados, calculados con la
+// implementación anterior a la reconstrucción para este mismo corpus; no se
+// regeneran. Las runas invisibles van con su escape numérico, nunca pegadas en el
+// fuente.
 
 // TestMaxNoteRunes_Is280: el límite de arranque de D-041.19.
 func TestMaxNoteRunes_Is280(t *testing.T) {

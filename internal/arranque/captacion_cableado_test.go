@@ -39,8 +39,8 @@ import (
 // este candado.
 //
 // ⚠️ La cola vieja se llama como solicitudes sin la «s» final (reglas de F7, T-1):
-// isOldCapturePath compara la ruta entera o el prefijo con «/», así que internal/intakes —que es
-// solicitudes, y tiene su propio candado— NO cuenta como captación.
+// isOldCapturePath compara la ruta entera o el prefijo con «/», así que el árbol viejo con la «s»
+// —que es solicitudes, y tiene su propio candado— NO cuenta como captación.
 const (
 	oldCaptureQueueImportPath = internalTreePath + "intake"
 	oldPipelineImportPath     = oldCaptureQueueImportPath + "/pipeline"

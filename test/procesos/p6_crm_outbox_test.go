@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-// El final de una entrega que el CRM rechaza siempre, y el resumen de la cola. Re-expresa
-// internal/integrations/outbox_stats_integration_test.go (contadores por estado, aislamiento por
-// empresa, ceros sin filas) y la mitad «dead conserva el payload» de payload_purge_integration_test.go.
+// El final de una entrega que el CRM rechaza siempre, y el resumen de la cola. Cubre las
+// estadísticas de la cola (contadores por estado, aislamiento por empresa, ceros sin filas) y la
+// mitad «dead conserva el payload» de la purga.
 
 // pushExhausted: el reintento llega cuando toca (el backoff del primer fallo), el CRM vuelve a
 // contestar 500 y, con el tope en 2 intentos, la entrega queda `dead`: terminal, con sus dos intentos

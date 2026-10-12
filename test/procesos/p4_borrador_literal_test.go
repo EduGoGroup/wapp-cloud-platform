@@ -10,9 +10,7 @@ import (
 )
 
 // El barrido del literal de P4: lo que el cliente escribió no puede quedar en claro en ninguna columna
-// de ninguna tabla, ni en el log. Es el criterio de REQ-10c que
-// internal/flujos/runtime/source_composer_integration_test.go escribió como test
-// (TestIntegration_ElLiteralNoQuedaEnClaroEnNingunaTabla), aquí con el pipeline entero detrás.
+// de ninguna tabla, ni en el log. Es el criterio de REQ-10c, aquí con el pipeline entero detrás.
 
 // p4NoLiteralInClear busca la aguja que el cliente escribió en TODA columna de TODA tabla del esquema
 // public (las bytea por bytes, el resto por su texto) y en el log del servidor: no puede estar en

@@ -1,6 +1,4 @@
-// Nuevo (D-F3-3): no tiene fichero viejo. El comentario de paquete porta el de
-// internal/ingest/dedupe.go @ 8896f13, y la firma de Deduper es la de runtime.IngestDeduper
-// (internal/flujos/runtime/runtime.go:116 @ 8896f13).
+// La firma de Deduper es la de runtime.IngestDeduper, de conversacion/runtime (D-F3-3).
 
 // Package ingest deduplica los mensajes ENTRANTES (Edge→Cloud) ante la semántica
 // at-least-once del OUTBOX DURABLE del Edge (Plan 028 · T6, ADR-0003).

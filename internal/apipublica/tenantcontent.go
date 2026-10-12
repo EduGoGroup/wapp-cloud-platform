@@ -1,7 +1,3 @@
-// Porta internal/publicapi/tenantcontent.go @ 724f3035 (204 líneas, entero) y el registro de
-// I6–I10 (internal/publicapi/publicapi.go @ 724f3035, Register, líneas 470-483; los campos
-// Content y ContentMaxBytes de MediaDeps, líneas 112-118).
-//
 // tenantcontent.go — EL CRUD DE CONTENIDO DINÁMICO POR-TENANT (Plan 018 · T6, R7; mapa §2.9,
 // I6–I10): los blobs JSONB de public.tenant_content que alimentan el adapter content.JSON del
 // Motor (source:json,ref) o una ref de media por-tenant. Todo acotado al tenant del token

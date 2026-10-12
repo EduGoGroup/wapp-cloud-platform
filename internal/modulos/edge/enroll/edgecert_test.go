@@ -23,8 +23,8 @@ var (
 	_ enroll.EdgeCertRepository = (*enrollhelpertest.MemoriaEdgeCertRepository)(nil)
 )
 
-// El INSERT, byte a byte, escrito aquí a mano (el literal de
-// internal/gateway/enroll/edgecert.go @ 8896f13, con su sangría).
+// El INSERT, byte a byte, escrito aquí a mano (el literal del paquete anterior
+// a la reconstrucción, con su sangría).
 const sqlInsertEdgeCert = "\n" +
 	"\t\tINSERT INTO public.edge_certs\n" +
 	"\t\t\t(tenant_id, subject_cn, serial_number, fingerprint, not_before, not_after, cert_pem)\n" +

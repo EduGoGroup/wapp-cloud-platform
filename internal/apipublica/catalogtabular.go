@@ -1,6 +1,3 @@
-// Porta internal/publicapi/catalogtabular.go @ 724f3035 (286 líneas, entero) y el registro de
-// I15 (internal/publicapi/publicapi.go @ 724f3035, registerCatalogImport, líneas 1106-1113).
-//
 // catalogtabular.go — LA PUERTA DE LA PLANILLA DEL IMPORT DE CATÁLOGO (Plan 041 · Ola 3 · T3.4,
 // D-041.9; mapa §2.9, I15): POST /api/v1/catalog/import/tabular. Es el otro extremo de
 // export.go: allí las filas se convierten en un CSV o un XLSX que se descarga; aquí un CSV o un

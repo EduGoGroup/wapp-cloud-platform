@@ -1,5 +1,3 @@
-// Porta internal/intake/store.go @ 8d875ab
-
 // Package intake es la COLA del pipeline de captación por LLM (Plan 044 · Ola 1):
 // la tabla `intake_jobs` (migración 0072) y el puerto estrecho por el que se
 // escribe.
@@ -9,9 +7,9 @@
 // paquete NO sabe nada de LLM, ni de cifrado, ni del hilo del evento — solo abre
 // ventanas, les añade referencias y las cierra.
 //
-// ⚠️ NO CONFUNDIR CON `intakes` (en plural; `internal/modulos/solicitudes/intakes`,
-// antes `internal/intakes`), que es el dominio de los BORRADORES/solicitudes que el
-// cliente confirma. Aquí no hay borradores: hay una
+// ⚠️ NO CONFUNDIR CON `intakes` (en plural;
+// `internal/modulos/solicitudes/intakes`), que es el dominio de los
+// BORRADORES/solicitudes que el cliente confirma. Aquí no hay borradores: hay una
 // cola de trabajo. La FK lógica `intake_jobs.intake_id` es el puente entre los dos,
 // y la escribe la Ola 3.
 package intake

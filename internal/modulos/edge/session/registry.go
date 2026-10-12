@@ -5,8 +5,6 @@
 //
 // El estado es puramente en memoria (rápido, derivado del stream vivo). La
 // durabilidad (fleet_sessions en PostgreSQL) vive en el paquete fleet.
-//
-// Porta internal/gateway/session/registry.go @ 8896f13.
 package session
 
 import (

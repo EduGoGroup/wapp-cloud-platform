@@ -5,13 +5,10 @@
 // integrations.Postgres en los procesos de F9, con el arnés de testcontainers
 // (test/procesos/integrations_contrato_test.go).
 //
-// Nuevo: no tiene fichero viejo. Los casos salen del contrato de integrations.Store y de los tests
-// viejos, leídos y NO portados (05 E-8): los cuatro *_integration_test.go de internal/integrations
-// (postgres_, crud_, outbox_stats_ y payload_purge_) y los tres de worker_test.go que en realidad
-// probaban el almacén (RecuperaSoloLosClaimsVencidos, ClaimLostSeReconoceEnvuelto y el claim
-// sellado). De ellos quedan FUERA los que no son del puerto: CountOutbox y SecretFingerprint (son
-// de *Postgres, D-F6-6: los afirma postgres_test.go), el cifrado en reposo del secreto (es de la
-// tabla: lo mira el Montaje de Postgres) y la migración 0050 (es del runner de migraciones).
+// Los casos salen del contrato de integrations.Store. Quedan FUERA los que no son del puerto:
+// CountOutbox y SecretFingerprint (son de *Postgres, D-F6-6: los afirma postgres_test.go), el
+// cifrado en reposo del secreto (es de la tabla: lo mira el Montaje de Postgres) y la migración
+// 0050 (es del runner de migraciones).
 //
 // Un fichero por tema; los de casos y de apoyo terminan en _contrato.go:
 //   - contrato.go: la entrada. Montaje, las filas, Contrato y la tabla de casos.

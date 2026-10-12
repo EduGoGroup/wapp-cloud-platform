@@ -10,9 +10,7 @@
 // platformadmin.Repository en los procesos de F9 (test/procesos/platformadmin_contrato_test.go),
 // con el arnés de testcontainers.
 //
-// Nuevo (D-F2-3): no tiene fichero viejo. Los casos salen de diseño F2 §2 y §4 (R-A3, R-A6) y de
-// los tests viejos de internal/platformadmin @ 9a77307 (postgres_test.go, access_requests_test.go,
-// executeapprovaltx_internal_test.go), leídos, no portados.
+// Nuevo (D-F2-3): no tiene fichero viejo. Los casos salen de diseño F2 §2 y §4 (R-A3, R-A6).
 package platformadminhelpertest
 
 import (

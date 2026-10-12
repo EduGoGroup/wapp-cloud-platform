@@ -1,4 +1,4 @@
-// Porta internal/intake/pipeline/pipeline.go @ 56097aa (el bucle: Despertar, Run y los drenajes)
+// El bucle: Despertar, Run y los drenajes.
 
 package pipeline
 

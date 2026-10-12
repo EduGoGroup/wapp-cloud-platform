@@ -1,7 +1,3 @@
-// Porta internal/flujos/modules/cart/projection.go @ 9d5a4b6 (trozo «líneas»:
-// ensureOpenIntake, projectOpenLines y la lectura de la foto del payload; el viejo es
-// un solo fichero y aquí nace partido, 05 E-13)
-
 // projection_lines.go es la mitad del proyector que mantiene AL DÍA las líneas de una
 // solicitud abierta (item_added y note_added): asegura la solicitud —por identidad de
 // negocio primero y por evento después (D-044.46)— y reemplaza sus intake_items por la

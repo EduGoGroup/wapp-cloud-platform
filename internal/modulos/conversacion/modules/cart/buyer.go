@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/buyer.go @ 9d5a4b6
-
 // buyer.go es el paso de DATOS DEL COMPRADOR del carrito (Plan 041 · T4.5,
 // D-041.13 / ADR-0031 §5): el checklist que el dueño configura —RUT, dirección de
 // entrega, referencia— y que el cliente rellena entre el resumen y el cierre, un

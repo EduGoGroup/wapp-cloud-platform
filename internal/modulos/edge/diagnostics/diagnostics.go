@@ -1,5 +1,3 @@
-// Porta internal/diagnostics/diagnostics.go @ 8896f13
-
 // Package diagnostics implementa el lado Cloud del diagnóstico remoto bajo demanda
 // (Plan 031 · T5, ADR-0023 capa 3): persiste las solicitudes (DiagnosticsRequest
 // emitido al Edge) y correlaciona sus bundles (DiagnosticsBundle recibido), con un

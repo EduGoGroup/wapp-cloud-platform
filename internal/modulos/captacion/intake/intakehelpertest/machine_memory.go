@@ -1,5 +1,3 @@
-// Porta internal/intake/pipeline/memoria.go @ 8d875ab (su mitad StoreEnMemoria; D-F7-5)
-
 package intakehelpertest
 
 import (

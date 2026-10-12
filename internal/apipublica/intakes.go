@@ -1,12 +1,8 @@
-// Porta internal/publicapi/intakes.go @ ed60c24 (1073 líneas: IntakeService, líneas 19-57;
-// listIntakesHandler y getIntakeHandler, líneas 240-308) y el registro de G1–G6 y G8
-// (internal/publicapi/publicapi.go @ ed60c24, registerIntakes, líneas 648-786).
-//
 // intakes.go — LA BANDEJA DE SOLICITUDES DEL DUEÑO (Plan 041 · T1.1/T1.4, ADR-0031; mapa §2.7,
 // G1–G6 y G8): el puerto, las dependencias, el montaje y las dos lecturas (lista y detalle). El
 // dominio vive en internal/modulos/solicitudes/intakes; aquí solo se abre la puerta HTTP.
 //
-// El fichero viejo se partió por tema (05 E-13), y cada trozo dice de qué líneas porta:
+// El fichero se partió por tema (05 E-13):
 // intakes_filter.go (la query del listado), intakes_dto.go (las proyecciones al wire),
 // intakes_llm_gate.go (el gate por campo y la única salida del detalle), intakes_status.go (G3 y
 // G8), intakes_items.go (G4) e intakes_approve.go (G5 y G6).

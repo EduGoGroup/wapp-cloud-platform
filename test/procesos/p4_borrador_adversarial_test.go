@@ -34,8 +34,7 @@ const (
 	p4EvidenceInvented = "dos bandejas de pasapalos surtidos"
 
 	// p4AdversaryP2 es la salida de P2: cinco ideas (dos sin respaldo en el literal) y una pista de
-	// entrega inventada. Las formas salen de internal/intake/stages/p2_test.go (`evidenciaInventada`,
-	// la pista «el sábado»).
+	// entrega inventada.
 	p4AdversaryP2 = `{"version":1,"wants":[` +
 		`{"idea":"` + p4IdeaTequenos + `","evidence":"` + scriptEvidenceTequenos + `"},` +
 		`{"idea":"` + p4IdeaInvented + `","evidence":"` + p4EvidenceInvented + `"},` +
@@ -48,8 +47,8 @@ const (
 	// un espacio U+00A0 y en mayúsculas.
 	p4AdversaryProduct = "Tequeños\u00a0CONGELADOS"
 
-	// p4AdversaryP4 es la salida de P4, con los errores de internal/intake/stages/p4_test.go: el
-	// tamaño del paquete en la cantidad (qty 30), una evidencia inventada y un ítem de más.
+	// p4AdversaryP4 es la salida de P4, con tres errores: el tamaño del paquete en la cantidad
+	// (qty 30), una evidencia inventada y un ítem de más.
 	p4AdversaryP4 = `{"version":1,"items":[` +
 		`{"product":"` + p4AdversaryProduct + `","qty":30,"evidence":"` + scriptEvidenceTequenos + `"},` +
 		`{"product":"torta@@vainilla","qty":1,"evidence":"una frase que el cliente nunca escribió"},` +

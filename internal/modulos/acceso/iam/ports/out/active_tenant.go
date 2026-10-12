@@ -1,5 +1,3 @@
-// Porta internal/iam/ports/out/active_tenant.go @ 9a77307
-
 package out
 
 // active_tenant.go — EL PUERTO DE LA EMPRESA ACTIVA (Plan 047 · Ola 5 · T5.1,

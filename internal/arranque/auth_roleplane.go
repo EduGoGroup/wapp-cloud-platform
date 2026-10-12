@@ -1,4 +1,4 @@
-// Parte de internal/arranque/auth.go (copia de internal/bootstrap/arranque/auth.go @ 80807ba), T2.34: el plano de roles del tenant (roles, miembros e invitaciones).
+// El plano de roles del tenant (roles, miembros e invitaciones).
 package arranque
 
 import (

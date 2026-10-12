@@ -4,12 +4,12 @@ package stages_test
 // F6) — blancos Unicode, caracteres invisibles, acentos combinantes, dígitos que no son
 // ASCII, separadores repetidos y skus casi iguales.
 //
-// Lo esperado de cada fila se fijó ejecutando el paquete viejo (internal/intake/stages @
-// 4cd9cfb) sobre estas mismas entradas: es la equivalencia viejo ↔ nuevo, fijada a mano
-// porque el paquete nuevo no importa el viejo. Una fila NO dice que su resultado sea el
-// deseable: dice lo que el sistema hace hoy. Las que cobran una negación («sin» pegado
-// a lo negado por un carácter que no es un blanco) están marcadas: son conducta del
-// viejo que se conserva, no una decisión.
+// Lo esperado de cada fila se fijó ejecutando el paquete viejo, anterior a la
+// reconstrucción, sobre estas mismas entradas: es la equivalencia viejo ↔ nuevo, fijada
+// a mano porque el paquete nuevo no importa el viejo. Una fila NO dice que su resultado
+// sea el deseable: dice lo que el sistema hace hoy. Las que cobran una negación («sin»
+// pegado a lo negado por un carácter que no es un blanco) están marcadas: son conducta
+// del viejo que se conserva, no una decisión.
 //
 // 🔴 Los caracteres invisibles van ESCAPADOS, nunca literales, y este fichero se genera
 // por script por eso mismo: un U+200B literal en el fuente no se ve en la revisión.

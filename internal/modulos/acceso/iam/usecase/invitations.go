@@ -1,5 +1,3 @@
-// Porta internal/iam/usecase/invitations.go @ 9a77307
-
 package usecase
 
 // invitations.go — LA EMISIÓN, EL LISTADO Y LA REVOCACIÓN DE INVITACIONES (Plan 047 · Ola A ·

@@ -1,8 +1,5 @@
 package runtime_test
 
-// Porta la REGLA de internal/flujos/runtime/streak_invariante_test.go @ e0159171
-// (TestRacha_TodoDeleteCierraElEpisodio en el viejo).
-//
 // Es uno de los DOS candados AST que la reconstrucción permite (05 E-7, diseno.md §4.2 de
 // F8): lee el código de producción como texto porque la regla que vigila no se puede cazar
 // barato con conducta.

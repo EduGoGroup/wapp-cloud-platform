@@ -1,5 +1,3 @@
-// Porta internal/intakes/reanalisis.go @ 64c181a
-
 // reanalisis.go — lo que el RE-ANÁLISIS necesita del dominio de solicitudes
 // (D-044.15).
 //

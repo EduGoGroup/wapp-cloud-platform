@@ -10,8 +10,8 @@ import (
 )
 
 // POST /api/v1/intakes/{id}/request-info: la dueña le manda al cliente SU pregunta y la solicitud
-// queda en `needs_info`. El candado que pasa a aserción es internal/intakes/inv1_pedirinfo_ast_test.go:
-// la pregunta sale por el POST de la dueña, una vez, y con su texto.
+// queda en `needs_info`. La regla que aquí es aserción: la pregunta sale por el POST de la dueña,
+// una vez, y con su texto.
 
 const (
 	// p5AskedPn es el contacto del borrador sobre el que se pide información.

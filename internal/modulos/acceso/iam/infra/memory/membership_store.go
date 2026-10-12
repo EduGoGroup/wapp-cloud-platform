@@ -1,5 +1,3 @@
-// Porta internal/iam/infra/memory/membership_store.go @ 9a77307
-
 package memory
 
 import (

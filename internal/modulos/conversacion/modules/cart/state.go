@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/state.go @ 9d5a4b6
-
 // state.go define el estado de la sub-máquina del carrito (design.md §3.2): el
 // nivel de navegación en curso, la categoría/artículo en foco, la página de
 // paginación, las líneas acumuladas del pedido y los contadores. Todo el estado

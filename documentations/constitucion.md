@@ -33,8 +33,8 @@ llave que lo descifra, o pedir al Edge que se la mande.
 dependencia de este repo. ⚠️ **El grep sobre el código NO sale a cero**, así que no lo uses de
 receta: `grep -rn "whatsmeow" --include='*.go' cmd internal test` devuelve **19 aciertos**
 (medido el 2026-10-11) y **todos son comentarios** que nombran la pieza — la mayoría, justo para
-avisar del homónimo de §3.1 (p. ej. `internal/modulos/solicitudes/intakes/buyerdata.go:17`,
-`internal/modulos/edge/fleet/fleet.go:16`, `internal/nucleo/contact/repository_postgres.go:46`).
+avisar del homónimo de §3.1 (p. ej. `internal/modulos/solicitudes/intakes/buyerdata.go:15`,
+`internal/modulos/edge/fleet/fleet.go:14`, `internal/nucleo/contact/repository_postgres.go:45`).
 La regla: el invariante se verifica sobre `go.mod`, no sobre los comentarios. **Sin candado**:
 ningún `depguard` lo vigila (`.golangci.yml` no lo declara); es una regla sostenida por revisión.
 
@@ -50,7 +50,7 @@ Dos llaves independientes, y esta pieza **solo** tiene la segunda:
 Dónde vive el lado servidor: `internal/modulos/edge/lease/`. La firma es Ed25519, la clave
 privada se lee de fichero (`WAPP_LEASE_PRIVATE_KEY_FILE`) o de base64
 (`WAPP_LEASE_PRIVATE_KEY_B64`), y la pública se imprime al arrancar para configurar el Edge
-(`internal/arranque/lease.go:46`). Revocación por `/admin/leases/revoke`, permiso
+(`internal/arranque/lease.go:45`). Revocación por `/admin/leases/revoke`, permiso
 `leases.revoke` (`internal/arranque/rutas_admin.go:71`).
 
 🔴 **Homónimo peligroso: ver §3.1.** «DEK» en el código de este repo nombra **otra cosa**.
@@ -80,8 +80,8 @@ El código de otro producto del grupo (EduGo) se **copió y adaptó** al espacio
 ⚠️ **Pero hay una excepción real y sin documentar en la regla original**: `go.mod:7` declara
 `github.com/EduGoGroup/identity-shared/auth v0.3.1`, y se usa **en producción** en
 `internal/arranque/auth_stack.go:10`, `internal/platform/httpapi/authmw.go:9`,
-`internal/modulos/acceso/iam/usecase/grants.go:12` e
-`internal/modulos/acceso/iam/usecase/exchange.go:11`. No es un
+`internal/modulos/acceso/iam/usecase/grants.go:10` e
+`internal/modulos/acceso/iam/usecase/exchange.go:9`. No es un
 `edugo-*`: es el SDK del **SSO del grupo** (identity-core), cuyos tokens ES256 esta pieza
 verifica. **No lo retires creyendo que es una violación** — y no lo uses como precedente para
 importar nada más.
@@ -115,16 +115,16 @@ WAPP_LLM_PROMPTS_DIR=/ruta/prompts ./server    # se enciende con la variable
 
 - Los cuatro ficheros son `p2-extraer-ideas.tmpl`, `p3-especificar-item.tmpl`,
   `p4-normalizar-cantidades.tmpl`, `p5-redactar-cotizacion.tmpl`
-  (`NombreDeFichero`, `internal/modulos/inferencia/prompts/volcar.go:22`). **Solo el prefijo
+  (`NombreDeFichero`, `internal/modulos/inferencia/prompts/volcar.go:20`). **Solo el prefijo
   `pN-` es contrato**: el resto del nombre es tuyo (`stageFromName`,
-  `internal/modulos/inferencia/prompts/prompts.go:259`). Un fichero sin extensión `.tmpl` se
+  `internal/modulos/inferencia/prompts/prompts.go:257`). Un fichero sin extensión `.tmpl` se
   ignora en silencio — es la forma de dejar notas al lado.
 - **NO hay recarga en caliente, y es a propósito.** Cambiar texto sin reiniciar significaría
   que dos peticiones simultáneas corren prompts distintos.
 - `go run ./cmd/prompts -comprobar <dir>` valida un directorio **sin arrancar el servidor**.
 - 🔴 **Un directorio inválido ABORTA EL ARRANQUE.** No hay degradación a «sigo con el texto
-  compilado»: `ErrPromptsDir` lo declara (`internal/modulos/inferencia/prompts/prompts.go:130`) y
-  `cargarPlantillasDePrompt` lo propaga (`internal/arranque/prompts.go:27`). El motivo está
+  compilado»: `ErrPromptsDir` lo declara (`internal/modulos/inferencia/prompts/prompts.go:128`) y
+  `cargarPlantillasDePrompt` lo propaga (`internal/arranque/prompts.go:26`). El motivo está
   escrito allí mismo: *«un operador que editó un fichero y no ve el efecto es peor que un
   proceso que no arranca, porque el segundo se nota»*.
 - El arranque **deja en el log de dónde salió cada plantilla** (`p4=/ruta/…` o
@@ -134,7 +134,7 @@ WAPP_LLM_PROMPTS_DIR=/ruta/prompts ./server    # se enciende con la variable
 propio validador rechace.** El modelo **copia el ejemplo**. P4 fue **0 de 14 en campo** por un
 `"package_size": 0` impreso en su esquema, que `validarPaquete` rechazaba. Por eso
 `llm.ValidarPlantilla` corre el `Parse*` de la etapa **sobre el ejemplo del esquema** y falla
-si lo rechaza (la llamada está en `internal/modulos/inferencia/prompts/prompts.go:246`).
+si lo rechaza (la llamada está en `internal/modulos/inferencia/prompts/prompts.go:244`).
 
 **Candado.** `TestValidarPlantilla…` en el módulo `wapp-shared/llm` muta
 `"package_size": 30` → `0` y exige el error; aquí,
@@ -155,11 +155,11 @@ repo de documentación del ecosistema):
 
 **Consecuencia medida que cambia lo que puedes construir:** `Signal.Intent` **es hoy siempre
 `nil` en producción**, así que las reglas `flow_triggers kind='llm'` **NO PUEDEN DISPARAR**.
-La rama sigue viva (`internal/modulos/conversacion/trigger/config_resolver.go:85`, y
-`trigger.KindLLM` en `internal/modulos/conversacion/trigger/trigger.go:54`) y **sus tests están
+La rama sigue viva (`internal/modulos/conversacion/trigger/config_resolver.go:83`, y
+`trigger.KindLLM` en `internal/modulos/conversacion/trigger/trigger.go:52`) y **sus tests están
 verdes**, midiendo código que producción no alcanza. Lo declara el propio código: el runtime
 arma la señal **sin** intención en `buildSignal`
-(`internal/modulos/conversacion/runtime/incoming_trigger.go:426`). No lo «arregles» de paso: es
+(`internal/modulos/conversacion/runtime/incoming_trigger.go:424`). No lo «arregles» de paso: es
 un frente de producto con dueño. Ver `deuda.md`.
 
 ### I-CP-3 · 🔴 El switch por vía (`local` | `api`) vive en `llmvia` y en NINGÚN otro sitio
@@ -178,7 +178,7 @@ ancho a propósito: cuenta cualquier comparación o `switch` cuyo sujeto empiece
 
 ### I-CP-4 · La plaza única: W=1 worker de pipeline, K=1 por Edge
 
-El pipeline de captación corre con **un** worker (`internal/arranque/fase9_fondo.go:106`). Duplicar esa línea
+El pipeline de captación corre con **un** worker (`internal/arranque/fase9_fondo.go:105`). Duplicar esa línea
 **no daría ningún error**: dos workers reclamarían sin pisarse en la base y se bloquearían
 mutuamente en la única plaza de inferencia del Edge. El aforo por Edge lo toma el worker antes
 de la cadena (`Slot` y `Capacity`, en `internal/modulos/captacion/pipeline/slot.go`).
@@ -203,7 +203,7 @@ permiso: `tenants.read.any`, `fleet.read.any`, `users.provision.any`… Se le co
 
 ⚠️ **Trampa de estilo que impone el candado**: el detector lee **texto fuente** y reconoce una
 ruta de plataforma buscando la cadena `"platformadmin."` en el argumento de `adminHandler(...)`
-(el detector, en `internal/arranque/platform_permissions_test.go:50`; la advertencia, en
+(el detector, en `internal/arranque/platform_permissions_test.go:49`; la advertencia, en
 `internal/arranque/rutas_admin.go:25`). Por eso esos handlers **deben** construirse inline y no
 pre-armarse en `adminRouteDeps`. Un refactor «de limpieza» que los mueva a campos deja el candado **ciego sin
 ponerse rojo**.
@@ -211,12 +211,12 @@ ponerse rojo**.
 ### I-CP-6 · El gate de features es FAIL-CLOSED
 
 Los tres modos de no-resolución de `RequireFeature` devuelven **403**, nunca 500 ni un pase
-libre (`internal/modulos/acceso/entitlements/middleware.go:48`). La resolución (feature efectiva de un
+libre (`internal/modulos/acceso/entitlements/middleware.go:46`). La resolución (feature efectiva de un
 tenant): un override en `tenant_features` **gana**; sin override manda el plan; sin `plan_id`
-se trata como `basic` (`COALESCE(plan_id, 'basic')`, `internal/modulos/acceso/entitlements/postgres.go:196`).
+se trata como `basic` (`COALESCE(plan_id, 'basic')`, `internal/modulos/acceso/entitlements/postgres.go:194`).
 
 Hay **11 constantes de feature en Go**
-(`internal/modulos/acceso/entitlements/entitlements.go:51-141`) y **14 sembradas** en las
+(`internal/modulos/acceso/entitlements/entitlements.go:49-137`) y **14 sembradas** en las
 migraciones (el recuento y su regla, en [`esquema-postgres.md`](esquema-postgres.md) §7). Las tres de más (`stt_audio`, `owner_app` y
 `passive_profiles`) **no gatean nada**. Ver `deuda.md`.
 
@@ -240,7 +240,7 @@ repartir entre sesiones: apunta siempre al **host directo**.
 
 Las claves que viajan por el wire y viven en la BD van en inglés (`pending_approval`,
 `needs_info`); el nombre bonito vive en la UI y en la documentación, **nunca** en la base.
-Ejemplo canónico: `internal/modulos/solicitudes/intakes/status.go:27`.
+Ejemplo canónico: `internal/modulos/solicitudes/intakes/status.go:25`.
 
 En el código, los **nombres** (ficheros, tipos, funciones, variables, tests) van en **inglés** y
 los **comentarios** y la documentación en **español**
@@ -299,13 +299,13 @@ Confundirlas lleva a concluir que **el zero-knowledge está roto cuando no lo es
 contenido de negocio sube a la nube y se cifra allí.
 
 El propio código lleva el aviso allí donde aparece la palabra: en los datos del comprador
-(`internal/modulos/solicitudes/intakes/buyerdata.go:14`, que es donde lo declara con todas las
+(`internal/modulos/solicitudes/intakes/buyerdata.go:12`, que es donde lo declara con todas las
 letras, y `buyerdata_postgres.go` a su lado), en el gateway
-(`internal/modulos/edge/grpc/server.go:285`), en la flota
-(`internal/modulos/edge/fleet/fleet.go:16`), en los contactos
-(`internal/nucleo/contact/repository_postgres.go:46`), en el historial de eventos
-(`internal/modulos/conversacion/events/store.go:40`) y en la clave de API del tenant
-(`internal/modulos/inferencia/tenantllm/postgres.go:26`). Las tablas con sobre y el censo de
+(`internal/modulos/edge/grpc/server.go:283`), en la flota
+(`internal/modulos/edge/fleet/fleet.go:14`), en los contactos
+(`internal/nucleo/contact/repository_postgres.go:45`), en el historial de eventos
+(`internal/modulos/conversacion/events/store.go:38`) y en la clave de API del tenant
+(`internal/modulos/inferencia/tenantllm/postgres.go:25`). Las tablas con sobre y el censo de
 rotación, en [`esquema-postgres.md`](esquema-postgres.md) §6.
 
 ### 3.2 · «admin» nombra dos planos distintos
@@ -348,7 +348,7 @@ tabla y hace concluir que el dominio no está construido.
 - **`identity-shared/auth v0.3.1`** — la excepción de I-ECO-4.
 - **S3/R2**: `aws-sdk-go-v2/service/s3 v1.98.0`, usado **solo** para URLs prefirmadas.
 - **KMS**: `cloud.google.com/go/kms v1.33.0`. Construido pero **apagado**: el default de
-  `WAPP_KEK_PROVIDER` es `env` (`internal/platform/config/config.go:654`).
+  `WAPP_KEK_PROVIDER` es `env` (`internal/platform/config/config.go:653`).
 - **Prometheus** `client_golang v1.23.2`; **excelize v2.11.0** (import de catálogo xlsx y
   export de bandeja, solo en `internal/apipublica`); **`golang.org/x/time v0.15.0`** (token
   buckets); **`jsonschema/v6 v6.0.3`** solo en tests; **`testcontainers-go v0.44.0`** para los procesos de
@@ -420,26 +420,26 @@ tabla y hace concluir que el dominio no está construido.
    rutas.
 3. **Añadir una ruta sin mirar si su dependencia puede ser `nil`.** Muchas rutas son
    **condicionales**: si su dependencia llega `nil`, la ruta **no se monta** y responde un 404
-   de ruta inexistente (`mountRoles` y `mountMembers`, `internal/apipublica/roleplane.go:125` y
+   de ruta inexistente (`mountRoles` y `mountMembers`, `internal/apipublica/roleplane.go:123` y
    `:157`). Matiz deliberado: `POST /api/v1/members` se monta **siempre que haya administración
    de membresía**, tenga o no el despliegue credencial M2M de identity, y sin ella degrada a
-   **503**, nunca a 404 (`internal/apipublica/roleplane.go:170`).
+   **503**, nunca a 404 (`internal/apipublica/roleplane.go:168`).
 4. **Tocar el `WriteTimeout` global creyendo que gobierna todo.** `POST
    /api/v1/intakes/{id}/quote-suggestion` es **la única ruta con plazo de escritura propio**
-   (`writeDeadline`, `internal/apipublica/writedeadline.go:102`, montado en
-   `internal/apipublica/intakereports.go:231`): espera al modelo **dentro**
+   (`writeDeadline`, `internal/apipublica/writedeadline.go:100`, montado en
+   `internal/apipublica/intakereports.go:227`): espera al modelo **dentro**
    de la petición (24,8–35,5 s medidos en UAT) contra un `WriteTimeout` global de 10 s.
 5. **Suponer que `/metrics` es inocuo.** El scrape **barre de paso** las rachas de
-   auto-respuesta vencidas y las manda al histograma (`internal/arranque/fase7_flujos.go:140`). Si nadie raspa
+   auto-respuesta vencidas y las manda al histograma (`internal/arranque/fase7_flujos.go:139`). Si nadie raspa
    `/metrics`, esos episodios **no se cierran nunca**.
 6. **Esperar ver una métrica recién desplegada.** Un `CounterVec` de Prometheus **no aparece
    en `/metrics` hasta su primer incremento**, y el reinicio lo borra. Su ausencia tras
    desplegar no es un fallo.
 7. **Cambiar `WAPP_STORAGE_S3_PREFIX` creyendo que mueve algo.** Está en `.env.example` y en
    los runbooks, y **no la lee nadie**: el prefijo es la constante compilada
-   `mediaKeyPrefix = "wapp/media"` (`internal/apipublica/media.go:127`). Ver `deuda.md`.
+   `mediaKeyPrefix = "wapp/media"` (`internal/apipublica/media.go:123`). Ver `deuda.md`.
 8. **Desplegar sin R2/S3 vivo.** `NewR2PresignClient` valida el bucket con `HeadBucket` y si
-   falla **el proceso no levanta** (`internal/arranque/flows.go:76`). Es fail-fast a
+   falla **el proceso no levanta** (`internal/arranque/flows.go:75`). Es fail-fast a
    propósito, pero acopla el arranque de IAM y del gateway a un almacén que solo usa el nodo
    `media`.
 9. **Abrir un PR esperando validación.** `ci.yml` es `workflow_dispatch`: **un PR no valida

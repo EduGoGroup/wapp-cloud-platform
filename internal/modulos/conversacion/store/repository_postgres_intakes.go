@@ -1,5 +1,3 @@
-// Porta internal/flujos/store/repository_postgres.go @ c0c0c03
-//
 // Trozo de repository_postgres.go (05 E-13): public.intakes y public.intake_items.
 // Las reglas comunes del adaptador están en la cabecera de repository_postgres.go.
 //
@@ -50,7 +48,7 @@ const intakeItemCols = 6
 // isUUID dice si `s` puede estar en una columna de tipo `uuid`. Se pregunta ANTES de
 // consultar para no depender del 22P02 de Postgres: es un predicado, no un error, y
 // como predicado lo puede leer el linter y el que venga detrás. Gemelo del `isUUID` de
-// internal/intakes, que existe por lo mismo.
+// solicitudes/intakes, que existe por lo mismo.
 func isUUID(s string) bool {
 	_, err := uuid.Parse(s)
 	return err == nil

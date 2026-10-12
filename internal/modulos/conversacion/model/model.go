@@ -1,5 +1,3 @@
-// Porta internal/flujos/model/model.go @ 3c74b80
-
 // Package model define los tipos de la definición de flujo (Flow/Node) y del
 // estado conversacional (Conversation), junto con su (de)serialización JSON y
 // la validación de esquema.

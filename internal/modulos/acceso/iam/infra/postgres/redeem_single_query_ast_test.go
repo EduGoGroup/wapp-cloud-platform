@@ -1,10 +1,9 @@
 package iampostgres_test
 
 // redeem_single_query_ast_test.go — EL CANDADO DE LA LATENCIA SIMÉTRICA DEL CANJE (Plan 047 · Ola
-// A · T-A3, requisito anti-oráculo). Porta el primer test de
-// internal/iam/infra/postgres/canje_una_consulta_ast_test.go @ 9a77307 (D-F2-1, R-P6). El segundo
-// —las cuatro NULLables cableadas— deja de ser AST: es el test de conducta de invitationFromRow
-// (R-P7), en canje_test.go.
+// A · T-A3, requisito anti-oráculo; D-F2-1, R-P6). La otra regla de esa consulta —las cuatro
+// NULLables cableadas— no es AST: es el test de conducta de invitationFromRow (R-P7), en
+// canje_test.go.
 //
 // 🔴 QUÉ VIGILA, Y POR QUÉ NO PUEDE SER UN TEST DE CONDUCTA. El criterio pide que «no existe»
 // (404) y «caducada» (410) cuesten lo MISMO, para que nadie pueda sondear con un cronómetro qué

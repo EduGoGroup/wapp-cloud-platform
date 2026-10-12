@@ -1,6 +1,5 @@
 // Nuevo: las suites de contrato de los siete puertos persistentes de iam/ports/out (diseño F2
-// §2, tareas T2.6). No tienen fichero viejo: los casos salen de los comentarios de los puertos y
-// de los tests viejos de internal/iam/infra/{memory,postgres} @ 9a77307, leídos, no portados.
+// §2, tareas T2.6). No tienen fichero viejo: los casos salen de los comentarios de los puertos.
 
 // Package outhelpertest es la suite de contrato de los puertos persistentes de out: una suite
 // por puerto y Contrato, que las corre todas. Ningún código de producción lo importa: arrastra

@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/runtime.go @ e0159171
-
 // Package runtime es la orquestación viva del motor de flujos: recibe cada entrante del Gateway,
 // resuelve a qué tenant y a qué conversación pertenece, decide si el motor reactivo debe verlo,
 // carga y persiste el estado, empuja la respuesta y reparte los efectos a sus sinks.

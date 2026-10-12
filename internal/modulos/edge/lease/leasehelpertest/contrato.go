@@ -15,9 +15,6 @@
 // revocación es PEGAJOSA en el almacén —la segunda de las dos guardas del kill-switch; la
 // primera es la lectura previa de lease.Manager— y que los dos sujetos de corte, el Edge y el
 // tenant, son independientes.
-//
-// Los casos salen de plan/F3-edge/diseno.md §2 y de los tests viejos de internal/gateway/lease
-// @ 8896f13 (TestMemoryUpsertNoResucitaLeaseRevocado, TestIntegration_*), leídos, no portados.
 package leasehelpertest
 
 import (

@@ -24,7 +24,7 @@ const (
 	p7ErrFileBytes    = "el archivo excede el tamaño máximo de 1048576 bytes"
 	p7ErrContentBytes = "excede el tamaño máximo de 1048576 bytes"
 	// p7EnvelopeSlack es el margen que el servidor da al sobre multipart por encima del techo del
-	// archivo (internal/publicapi/catalogtabular.go: multipartEnvelopeSlack).
+	// archivo (internal/apipublica/catalogtabular.go: catalogTabularEnvelopeSlack).
 	p7EnvelopeSlack = 8 << 10
 )
 
@@ -100,8 +100,8 @@ func (w *p7World) itemLimit(t *testing.T) {
 }
 
 // p7DocOfSize fabrica un documento VÁLIDO de exactamente n bytes, rellenando la descripción de su
-// único artículo (`documentoDe`, internal/catalogimport/limits_test.go): lo único que puede hacerlo
-// fallar es su tamaño. Falla (t.Fatalf) si n es menor que el documento sin relleno.
+// único artículo: lo único que puede hacerlo fallar es su tamaño. Falla (t.Fatalf) si n es menor
+// que el documento sin relleno.
 func p7DocOfSize(t *testing.T, n int) []byte {
 	t.Helper()
 	const template = `{"format":"wapp.catalog_import","version":1,"catalog":{"categories":[` +

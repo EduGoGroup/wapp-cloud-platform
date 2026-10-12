@@ -1,5 +1,3 @@
-// Porta internal/iam/infra/memory/audit_store.go @ 9a77307
-
 package memory
 
 import (

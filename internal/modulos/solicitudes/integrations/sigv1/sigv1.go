@@ -1,5 +1,3 @@
-// Porta internal/integrations/sigv1/sigv1.go @ 3a21138
-
 // Package sigv1 implementa la firma HMAC-SHA256 de las entregas salientes del
 // puente CRM (Plan 042, D-042.5). Es un subpaquete deliberadamente sin estado ni
 // dependencia de Postgres/HTTP: solo cadena canónica + HMAC, para que el worker

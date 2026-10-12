@@ -1,5 +1,3 @@
-// Porta internal/intakes/postgres.go @ 64c181a
-
 // postgres_reminders.go es lo que los dos recordatorios necesitan de la persistencia
 // (DepositStore, ExpiryStore) y la configuración de notificación del tenant
 // (SettingsReader). Nada de aquí abre transacción: cada método es UNA sentencia

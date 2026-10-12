@@ -5,11 +5,8 @@
 // (memory_test.go) y tenantvars.Postgres en los procesos de F9, con el arnés de testcontainers
 // (test/procesos/tenantvars_contrato_test.go).
 //
-// Nuevo: no tiene fichero viejo. Los casos salen del contrato de tenantvars.Store y de los tests
-// de integración viejos; casos leídos de internal/tenantvars/postgres_integration_test.go, no
-// portados. De sus cinco tests, cuatro son del puerto (Roundtrip_Verbatim,
-// Replace_ReemplazaElConjunto, Aislamiento_PorTenant, UpdatedAt_SoloSeMueveAlCambiar); el quinto,
-// TestMigracion_DobleAplicacion_NoRompeNiBorra, es del runner de migraciones y no entra aquí.
+// Los casos salen del contrato de tenantvars.Store. La doble aplicación de la migración es del
+// runner de migraciones y no entra aquí.
 package tenantvarshelpertest
 
 import (

@@ -1,5 +1,3 @@
-// Porta internal/flujos/store/store.go @ c0c0c03
-//
 // Trozo de store.go (05 E-13): las solicitudes del carrito (public.intakes y
 // public.intake_items) vistas desde el motor de flujos. Solo declaraciones movidas.
 

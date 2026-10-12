@@ -292,7 +292,7 @@ func TestPostgres_Revisions_StoredSealWinsOverTheNewOne(t *testing.T) {
 	}
 }
 
-// wantSelectRevisionsSQL es la lectura de revisiones con su edad y su TTL (internal/intakes/postgres.go:484).
+// wantSelectRevisionsSQL es la lectura de revisiones con su edad y su TTL.
 const wantSelectRevisionsSQL = `
 	SELECT r.revision_no, r.kind, r.payload, r.rendered_text, r.created_by, r.created_at,
 	       r.literal_enc, r.literal_dek, r.literal_kek_id, r.literal_pruned_at,
@@ -304,7 +304,7 @@ const wantSelectRevisionsSQL = `
 	WHERE r.intake_id = $1
 	ORDER BY r.revision_no`
 
-// wantPruneLiteralSQL es la poda del literal, con su guard y su RETURNING (internal/intakes/postgres.go:510).
+// wantPruneLiteralSQL es la poda del literal, con su guard y su RETURNING.
 const wantPruneLiteralSQL = `
 	UPDATE public.intake_revisions
 	   SET literal_enc       = NULL,

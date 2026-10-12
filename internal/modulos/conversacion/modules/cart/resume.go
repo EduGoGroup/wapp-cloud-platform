@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/resume.go @ 9d5a4b6
-
 package cart
 
 import (

@@ -1,5 +1,3 @@
-// Porta internal/reanalisis/reanalisis.go @ 56097aa
-
 // Package reanalisis es el caso de uso de `POST /api/v1/intakes/{id}/reanalyze`
 // (Plan 044 · Ola 4 · T4.6; D-044.15, REQ-24b/c/d/e, contrato completo en design
 // §8.1): el dueño mira un presupuesto que la máquina interpretó mal y pide que lo
@@ -139,8 +137,7 @@ type Intakes interface {
 
 // Thread (antes `Hilo`) es el historial cifrado del evento, DESCIFRADO en el borde
 // (REQ-10c). Lo satisface `*events.Store`, que es quien tiene el FieldCipher. Sus tipos
-// (`events.ThreadEntry`) son los de `conversacion/events` (🔀 F8 · conmutar(conversacion):
-// de F7 a F8 fue un puente de import a `internal/flujos/events`; murió en T8.31).
+// (`events.ThreadEntry`) son los de `conversacion/events`.
 //
 // `AppendPastedMessage` añade el texto del dueño como UNA fila más del hilo, con
 // `origin='owner_pasted'`, y devuelve su `seq`; `ListPastedByOwner` devuelve, ya

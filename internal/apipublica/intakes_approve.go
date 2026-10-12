@@ -1,6 +1,3 @@
-// Porta internal/publicapi/intakes.go @ ed60c24 (1073 líneas: la aprobación, líneas 732-854; la
-// petición de información, líneas 856-936).
-//
 // intakes_approve.go — LAS DOS PUERTAS POR LAS QUE EL DUEÑO LE HABLA AL CLIENTE: G5, aprobar el
 // presupuesto (POST /api/v1/intakes/{id}/approve; Plan 044 · T4.3, D-044.49), y G6, pedir más
 // información (POST /api/v1/intakes/{id}/request-info; T4.4, D-044.49 §2). Es un trozo de

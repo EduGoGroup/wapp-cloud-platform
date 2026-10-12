@@ -1,4 +1,4 @@
-// Porta internal/catalogimport/validator.go @ 3c74b80 (los decodificadores de campo y las utilidades de los mensajes, líneas 746-876; partido de validator.go por E-13)
+// Los decodificadores de campo y las utilidades de los mensajes (partido de validator.go por E-13).
 
 package catalogimport
 

@@ -1,7 +1,3 @@
-// Porta internal/publicapi/publicapi.go @ 9a77307 (writeJSON y writeJSONErr, líneas 1146-1170),
-// internal/publicapi/messages.go @ 9a77307 (writeError, línea 322), internal/publicapi/limits.go
-// @ 9a77307 (errorBody, línea 71) e internal/publicapi/audit.go @ 9a77307 (parseIntQuery, línea 70).
-//
 // response.go — LAS UTILIDADES DE RESPUESTA QUE COMPARTEN TODAS LAS ÁREAS DE LA CARA. En la spec
 // FX era `respuesta.go` (05 E-11). Nace en verde y sin rojo: no exporta nada, y un auxiliar no
 // exportado no puede existir en un rojo (05 E-4, P6; hallazgo 33).

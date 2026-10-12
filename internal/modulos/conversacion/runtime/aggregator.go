@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/aggregator.go @ e0159171
-
 // aggregator.go — EL AGREGADOR DE VENTANAS del pipeline de captación por LLM
 // (Plan 044 · Ola 1 · T1.1, T1.2 y T1.7; design §6.2, D-044.26, D-044.20).
 //

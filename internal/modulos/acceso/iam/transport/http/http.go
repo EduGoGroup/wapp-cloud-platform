@@ -1,5 +1,3 @@
-// Porta internal/iam/transport/http/http.go @ 9a77307
-
 package iamhttp
 
 // http.go — LA FONTANERÍA COMPARTIDA DEL TRANSPORTE HTTP DEL IAM: decodificar el cuerpo, leer el

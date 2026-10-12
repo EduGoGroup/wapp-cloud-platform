@@ -1,7 +1,3 @@
-// Porta internal/publicapi/conversationeventcancel.go @ 724f3035 (126 líneas, entero) y el
-// registro de I19 (internal/publicapi/publicapi.go @ 724f3035, registerConversationEvents, líneas
-// 794-852; el campo EventCanceller de Deps, líneas 182-187).
-//
 // conversationeventcancel.go — LA ACCIÓN DE LIMPIEZA DE LA BANDEJA DE EVENTOS (Plan 043 · T4.2,
 // REQ-28/D-043.8; mapa §2.9, I19): POST /api/v1/conversation-events/{id}/cancel. El dueño cierra
 // a mano un evento que el flujo no cerró solo. Su lectura es I18 (conversationevents.go),

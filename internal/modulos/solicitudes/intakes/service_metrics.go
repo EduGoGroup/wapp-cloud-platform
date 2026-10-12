@@ -1,5 +1,3 @@
-// Porta internal/intakes/metricas.go @ 64c181a (las opciones del Service)
-
 // service_metrics.go — QUIÉN PUBLICA las métricas de la bandeja: las dos opciones
 // del `Service` que el fichero viejo `metricas.go` llevaba junto a los nombres de
 // los eventos y al puerto. Los nombres, el puerto y la forma de cada payload viven

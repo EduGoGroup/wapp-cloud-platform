@@ -15,8 +15,6 @@
 // comentario de cada uno dice cuál era: TransversalRoleID (RolTransversalID), EvaluateRedemption
 // (EvaluarCanje), RedemptionVerdict (ResultadoCanje) y los Redemption* (Canje*). El adaptador de
 // arranque (bridge_iam.go, F2-04) traduce lo que cruce hacia el código viejo.
-//
-// Porta internal/iam/domain/entities.go @ 9a77307.
 package domain
 
 import "time"

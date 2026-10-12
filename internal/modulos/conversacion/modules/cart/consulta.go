@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/consulta.go @ 9d5a4b6
-
 // consulta.go — CUÁNDO EL CARRITO PIDE AYUDA, Y QUÉ ACEPTA DE VUELTA
 // (Plan 044 · Ola 3.5 · T3.5-2).
 //

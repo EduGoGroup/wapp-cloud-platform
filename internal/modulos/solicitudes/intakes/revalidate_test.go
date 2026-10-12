@@ -9,10 +9,9 @@ import (
 	"testing"
 )
 
-// Las salidas esperadas de este fichero son LITERALES calculados con el fichero
-// viejo (internal/intakes/revalidate.go @ 64c181a): el candado de fronteras impide
-// importarlo desde aquí, así que la equivalencia viejo ↔ nuevo se fija con lo que el
-// viejo devolvió para este mismo corpus, casos adversarios incluidos.
+// Las salidas esperadas de este fichero son LITERALES congelados, calculados con la
+// implementación anterior a la reconstrucción para este mismo corpus, casos
+// adversarios incluidos; no se regeneran.
 
 // martaLines son las líneas del 1 de enero: 2 × Pan $2.00 + 1 × Queso $3.00.
 func martaLines() []Item {

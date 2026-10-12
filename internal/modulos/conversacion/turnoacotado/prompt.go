@@ -1,5 +1,3 @@
-// Porta internal/turnoacotado/prompt.go @ 42117b5
-
 // prompt.go — LOS DOS PROMPTS DEL TURNO ACOTADO, Y POR QUÉ SON DOS
 // (Plan 044 · Ola 3.5 · T3.5-2).
 //

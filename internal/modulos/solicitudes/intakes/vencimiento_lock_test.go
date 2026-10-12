@@ -2,8 +2,7 @@ package intakes
 
 // vencimiento_lock_test.go — LOS BARRIDOS de los candados del plazo (R-06, R6.2.c).
 // Los dos tests que los usan viven en vencimiento_test.go (§candados); aquí está solo la
-// maquinaria, apartada por tamaño (E-13). Porta internal/intakes/inv_vencimiento_ast_test.go
-// @ 64c181a.
+// maquinaria, apartada por tamaño (E-13).
 //
 // 🚨 LA GUARDA ANTI-HUECO ES LA MITAD DEL CANDADO. Un barrido que no encuentra nada pasa
 // siempre, y ese es su modo de fallo natural: se cambia la ruta, se rompe el filtro de
@@ -62,8 +61,8 @@ const repoRoot = "../../../.."
 
 // lockFiles son los DOS ficheros del candado nuevo, por su ruta desde la raíz: el barrido
 // de texto no los lee, para que el control positivo que ellos mismos escriben no se
-// satisfaga solo. El viejo excluía por nombre base (esteCandado); aquí va la ruta entera
-// porque `vencimiento_test.go` también existe en internal/intakes y ese SÍ hay que leerlo.
+// satisfaga solo. Va la ruta entera y no el nombre base para no excluir un homónimo de otro
+// paquete, que SÍ hay que leer.
 var lockFiles = map[string]bool{
 	"internal/modulos/solicitudes/intakes/vencimiento_lock_test.go": true,
 	"internal/modulos/solicitudes/intakes/vencimiento_test.go":      true,

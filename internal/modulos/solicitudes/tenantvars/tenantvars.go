@@ -1,5 +1,3 @@
-// Porta internal/tenantvars/tenantvars.go @ 3a21138
-
 // Package tenantvars persiste las VARIABLES DE EMPRESA de un tenant: pares
 // clave→valor de texto que el tenant define y que **wApp no interpreta** (Plan
 // 041 · T2.1, design.md §D-041.1).

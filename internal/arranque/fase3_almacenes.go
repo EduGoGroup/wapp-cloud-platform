@@ -1,7 +1,6 @@
-// Copia de internal/bootstrap/arranque/fase3_almacenes.go @ 80807ba (F0 · 05 §6). Nació cableando
-// paquetes VIEJOS y cada conmutar(<módulo>) le cambió los suyos: acceso (F2, T2.31), edge (F3,
-// T3.28), inferencia (F4, T4.24), solicitudes (F6, T6.24: los almacenes de solicitudes, del puente
-// CRM y de las variables) y captación (F7, T7.23: el store de intenciones y la cola del pipeline).
+// Cada conmutar(<módulo>) le cambió a esta fase sus paquetes: acceso (F2, T2.31), edge (F3, T3.28),
+// inferencia (F4, T4.24), solicitudes (F6, T6.24: los almacenes de solicitudes, del puente CRM y de
+// las variables) y captación (F7, T7.23: el store de intenciones y la cola del pipeline).
 //
 // 🔀 F8 · conmutar(conversacion) (T8.32): los almacenes del motor (flujos, resolver de tenant,
 // disparadores, evento conversacional) son los de internal/modulos/conversacion, y mueren las dos

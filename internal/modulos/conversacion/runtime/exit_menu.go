@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/exit_menu.go @ e0159171
-
 package runtime
 
 import (

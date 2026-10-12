@@ -1,13 +1,12 @@
-// Copia de internal/bootstrap/arranque/fase8_transporte.go @ 80807ba (F0 · 05 §6). Nació cableando
-// paquetes VIEJOS y cada conmutar(<módulo>) le cambió los suyos: acceso (F2, T2.31), edge (F3,
-// T3.28: un solo gateway, el nuevo), inferencia (F4, T4.24: sus almacenes hacia la cara nueva),
+// Cada conmutar(<módulo>) le cambió a esta fase sus paquetes: acceso (F2, T2.31), edge (F3, T3.28:
+// un solo gateway, el nuevo), inferencia (F4, T4.24: sus almacenes hacia la cara nueva),
 // solicitudes (F6, T6.25: G1–G18, requestsDepsOfTheNewFace) y captación (F7, T7.24: H1, E1 y E2,
 // captureDepsOfTheNewFace).
 //
 // 🔀 F8 · conmutar(conversacion) (T8.33, T8.34 · FX TX.24): las 19 rutas de conversación (I1–I19)
 // las sirve la cara nueva con lo que arma conversationDepsOfTheNewFace, y J18–J22 del :8100 los
 // handlers de internal/modulos/conversacion/admin. Murió depsDeLaAPIPublica: a la cara vieja no le
-// queda ninguna ruta y este fichero ya no importa internal/publicapi ni internal/flujos.
+// queda ninguna ruta y este fichero ya no importa nada del árbol viejo.
 package arranque
 
 import (

@@ -1,4 +1,4 @@
-// Porta internal/catalogimport/validator.go @ 3c74b80 (el cuerpo del documento: categorías y subcategorías, líneas 321-491; partido de validator.go por E-13)
+// El cuerpo del documento: categorías y subcategorías (partido de validator.go por E-13).
 
 package catalogimport
 

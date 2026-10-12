@@ -1,8 +1,3 @@
-// Porta internal/publicapi/conversationevents.go @ 724f3035 (líneas 1-212: todo menos
-// formatInstant, que ya nació en instants.go por T-15) y el registro de I18
-// (internal/publicapi/publicapi.go @ 724f3035, registerConversationEvents, líneas 794-847; el
-// campo ConversationEvents de Deps, líneas 177-181).
-//
 // conversationevents.go — LA BANDEJA DE EVENTOS CONVERSACIONALES (Plan 043 · T3.9b, REQ-28; mapa
 // §2.9, I18): GET /api/v1/conversation-events, el listado por el que el dueño limpia lo que la
 // bandeja de solicitudes no alcanza. Es el mínimo que hace EJECUTABLE la limpieza de REQ-26d: un

@@ -14,10 +14,6 @@
 //
 // La suite la corren las dos implementaciones del puerto: Memoria en unitario (memoria_test.go)
 // y el adaptador Postgres en los procesos de F9 (sesión F3-05), con el arnés de testcontainers.
-//
-// Los casos salen de plan/F3-edge/diseno.md §2 y de los tests viejos de internal/gateway/fleet
-// @ 809345b (fleet_test.go, worker_health_test.go y los *_integration_test.go), leídos, no
-// portados.
 package fleethelpertest
 
 import (

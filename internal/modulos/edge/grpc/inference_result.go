@@ -1,7 +1,7 @@
-// Porta internal/gateway/grpc/inference.go @ ec236b3 (la espera y la lectura del
-// resultado: awaitInference, readInference, openInference, el motivo del frame, y la
-// correlación de inferencias en vuelo —deliverInference, clearInfer,
-// cancelSessionInfers—). Trozo de inference.go, partido por E-13.
+// La espera y la lectura del resultado: awaitInference, readInference,
+// openInference, el motivo del frame, y la correlación de inferencias en vuelo
+// —deliverInference, clearInfer, cancelSessionInfers—. Trozo de inference.go,
+// partido por E-13.
 
 package grpc
 

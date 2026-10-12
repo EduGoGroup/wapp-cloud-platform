@@ -1,5 +1,3 @@
-// Porta internal/intake/stages/plazo.go @ 4cd9cfb
-
 package stages
 
 import (

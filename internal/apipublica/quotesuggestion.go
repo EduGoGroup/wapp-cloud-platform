@@ -1,5 +1,3 @@
-// Porta internal/publicapi/quotesuggestion.go @ ed60c24 (134 líneas).
-//
 // quotesuggestion.go es la puerta HTTP del GENERADOR DE COTIZACIÓN (Plan 044 · Ola 5 · T5.1,
 // D-044.11; mapa §2.7, G7): `POST /api/v1/intakes/{id}/quote-suggestion`. La monta
 // MountIntakeReports (intakereports.go), con su plazo de escritura propio (writedeadline.go).

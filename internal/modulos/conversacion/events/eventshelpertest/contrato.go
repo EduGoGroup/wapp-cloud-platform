@@ -6,13 +6,10 @@
 // (store_test.go) y events.Store contra Postgres en los procesos de F9, con el arnés de
 // testcontainers (test/procesos/events_contrato_test.go).
 //
-// Nuevo: no tiene fichero viejo. Los casos salen del contrato de events.Store y de los 14 ficheros
-// de test viejos de internal/flujos/events, leídos y NO portados (05 E-8); los de integración
-// (store_integration_test.go, store_list_integration_test.go, content_integration_test.go,
-// get_for_tenant_integration_test.go) son el guion. De ellos quedan FUERA los que no son del
-// almacén sino del esquema (los CHECK de grado, de rol y de origen de la 0051, que la base impone
-// a quien escriba por fuera de las cinco puertas) y los que cruzan a otros dominios (la siembra de
-// features del Plan 040 y la escena de la solicitud huérfana con sus líneas).
+// Los casos salen del contrato de events.Store. Quedan FUERA los que no son del almacén sino del
+// esquema (los CHECK de grado, de rol y de origen de la 0051, que la base impone a quien escriba
+// por fuera de las cinco puertas) y los que cruzan a otros dominios (la siembra de features del
+// Plan 040 y la escena de la solicitud huérfana con sus líneas).
 //
 // Un fichero por tema; los de casos y de apoyo terminan en _contrato.go:
 //   - contrato.go: la entrada. Port, Montaje, Contrato y la tabla de casos.

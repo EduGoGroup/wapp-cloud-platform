@@ -7,10 +7,6 @@
 //
 // La suite la corren las dos implementaciones del puerto: Memoria en unitario (memoria_test.go) y
 // receipts.PostgresStore en los procesos de F9, con el arnés de testcontainers (F3-05).
-//
-// Nuevo: no tiene fichero viejo. Los casos salen de plan/F3-edge/diseno.md §2 y de los tests
-// viejos de internal/receipts @ 8896f13 (TestMemoryStore_Idempotent,
-// TestPostgresStore_SaveIdempotentAndList), leídos, no portados.
 package receiptshelpertest
 
 import (

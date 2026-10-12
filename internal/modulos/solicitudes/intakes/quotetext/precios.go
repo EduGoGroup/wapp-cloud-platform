@@ -1,5 +1,3 @@
-// Porta internal/intakes/quotetext/precios.go @ 36d5a04
-
 package quotetext
 
 import (

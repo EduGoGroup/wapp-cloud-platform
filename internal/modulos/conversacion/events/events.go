@@ -1,5 +1,3 @@
-// Porta internal/flujos/events/events.go @ 9d5a4b6
-
 // Package events es el modelo y el almacén del EVENTO conversacional (Plan 043 ·
 // Ola 1 · T1.4; ADR-0029 y su «Enmienda 2 (2026-08-05, noche)» E-6; ADR-0034).
 //

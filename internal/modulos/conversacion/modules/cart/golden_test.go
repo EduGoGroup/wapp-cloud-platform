@@ -14,12 +14,12 @@ import (
 // completos y compara la TRANSCRIPCIÓN literal —cada pantalla emitida, el payload
 // público de cada efecto y el estado serializado— con los goldens de testdata/.
 //
-// 🔒 Los goldens son DATOS OBSERVABLES copiados byte a byte del carrito viejo
-// (internal/flujos/modules/cart/testdata, D-F8-3). NO SE REGENERAN: aquí no hay
-// `-update` ni ninguna otra puerta de escritura de testdata/. Si uno falla, la
-// respuesta correcta es arreglar el código. La única línea tocada a mano en su
-// historia es la pantalla de «Pedido cancelado» del v1 (2026-08-11, hallazgo #29),
-// razonada en screens.go.
+// 🔒 Los goldens son DATOS OBSERVABLES copiados byte a byte del carrito viejo,
+// anterior a la reconstrucción (D-F8-3). NO SE REGENERAN: aquí no hay `-update` ni
+// ninguna otra puerta de escritura de testdata/. Si uno falla, la respuesta
+// correcta es arreglar el código. La única línea tocada a mano en su historia es
+// la pantalla de «Pedido cancelado» del v1 (2026-08-11, hallazgo #29), razonada en
+// screens.go.
 
 // assertGolden compara `got` con el contenido del golden. Solo lee.
 func assertGolden(t *testing.T, name, got string) {

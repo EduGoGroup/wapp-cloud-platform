@@ -1,5 +1,4 @@
-// Porta internal/entitlements/entitlements.go @ 9a77307 (líneas 203-296: el Fake, que pasa a
-// este paquete por D-F2-4).
+// El Fake vive en este paquete, y no en entitlements, por D-F2-4.
 
 package entitlementshelpertest
 

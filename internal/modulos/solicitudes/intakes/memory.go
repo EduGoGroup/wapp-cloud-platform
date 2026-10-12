@@ -1,5 +1,3 @@
-// Porta internal/intakes/memory.go @ 64c181a
-//
 // El fichero viejo medía 907 líneas y aquí NACE PARTIDO por tema (05 E-13), solo
 // repartiendo declaraciones:
 //

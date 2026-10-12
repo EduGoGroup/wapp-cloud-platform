@@ -31,7 +31,7 @@ var reglas = candados.Reglas{
 	//
 	// El índice del catálogo (D-F5-2, F5): la arista PROHIBIDA `conversacion/** →
 	// catalogo/indice` —el índice no entra en el turno conversacional, INV-02/T1.5; era el
-	// candado AST internal/intake/catalogo/frontera_test.go— vivió en esta regla 1 mientras
+	// candado AST del índice viejo del catálogo— vivió en esta regla 1 mientras
 	// Capas["conversacion"] no incluía "catalogo" (decisión de Jhoan, 2026-10-07): el motor solo
 	// distingue MÓDULOS, así que nada de conversacion podía importar nada de catalogo. Desde F8-03
 	// (decisión de Jhoan, 2026-10-09, «Capas + test propio») el carrito nuevo importa el paquete
@@ -74,19 +74,19 @@ var reglas = candados.Reglas{
 	// regla 3 falla, porque el adaptador existe para importar lo viejo. acceso (conmutado en F2)
 	// entró en F3, con el conmutar(edge) que borró bridge_iam.go. edge entró al cierre de F45-02
 	// (D-F3-14): su adaptador bridge_gateway.go murió en F4 (conmutar(inferencia)) y se borró
-	// internal/arranque/session_identity_test.go, que importaba internal/gateway/session viejo para
+	// internal/arranque/session_identity_test.go, que importaba el paquete de sesiones viejo para
 	// afirmar que el centinela ErrSessionOffline viejo y el nuevo son la misma variable (D-F3-2).
 	// Era redundante: lo afirman edge/session/registry_test.go contra el de platform, los tests de
 	// platform/httpapi por comportamiento (502) y el proceso P1 por el cable. catalogo entró en F7,
 	// con el conmutar(captacion) (D-R-4 ✎ 2026-10-07, decisión de Jhoan; F5 reglas.md §4.10): nunca
 	// tuvo adaptador, pero su conmutación de F5 fue nominal y el arranque siguió importando el
-	// índice viejo (internal/intake/catalogo) hasta que el worker nuevo de captación pasó a pedir
+	// índice viejo del catálogo hasta que el worker nuevo de captación pasó a pedir
 	// el *indice.Indice de internal/modulos/catalogo/indice.
 	//
 	// 🔀 F8 · conmutar(conversacion): la lista queda COMPLETA. Con ese commit mueren los tres
 	// adaptadores que quedaban y entra el dueño de cada uno: nucleo (bridge_contact.go, vivo desde
 	// F1), inferencia (bridge_inferencia.go, desde F4), captacion (bridge_captacion.go, desde F7) y
-	// solicitudes (la segunda instancia vieja de internal/intakes que el arranque construía para el
+	// solicitudes (la segunda instancia de su almacén viejo que el arranque construía para el
 	// proyector del carrito viejo); y entra conversacion, que nunca tuvo adaptador propio. Desde
 	// aquí la regla 3 prohíbe a internal/arranque cablear CUALQUIER paquete viejo del Mapa.
 	Conmutados: []string{"acceso", "edge", "catalogo", "nucleo", "inferencia", "captacion", "solicitudes", "conversacion"},
@@ -273,8 +273,8 @@ var classifierMarks = []string{"intent", "llm", "ollama", "openai", "anthropic",
 // TestEventsDoesNotDependOnTheClassifier: ningún fichero de PRODUCCIÓN del paquete
 // internal/modulos/conversacion/events importa una ruta que contenga uno de classifierMarks
 // (REQ-21, T3.3: el resumen determinista y el menú del evento son el camino SIN LLM). Era
-// TestPaqueteEventsNoDependeDelClasificador (internal/flujos/events/summary_test.go:784), un
-// test de imports dentro del paquete; D-F8-4 lo trae aquí porque es una regla de frontera
+// TestPaqueteEventsNoDependeDelClasificador, un test de imports dentro del paquete viejo;
+// D-F8-4 lo trae aquí porque es una regla de frontera
 // (conversacion/events no importa inferencia/** ni captacion/intentcfg) y no una conducta del
 // resumen. Como el viejo, mira solo producción y solo el directorio del paquete, no sus
 // subpaquetes: eventshelpertest es soporte de tests.

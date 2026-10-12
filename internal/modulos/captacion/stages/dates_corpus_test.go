@@ -4,10 +4,10 @@ package stages_test
 // 40 de F6) — blancos Unicode, caracteres invisibles, acentos combinantes, dígitos que
 // no son ASCII, separadores repetidos, años imposibles, subcadenas y UTF-8 inválido.
 //
-// Las fechas esperadas se fijaron ejecutando el paquete viejo
-// (internal/intake/stages @ 4cd9cfb) sobre estas mismas entradas: es la equivalencia
-// viejo ↔ nuevo, fijada a mano porque el paquete nuevo no importa el viejo. Una fila con
-// fecha esperada NO dice que esa fecha sea la deseable: dice lo que el sistema hace hoy.
+// Las fechas esperadas se fijaron ejecutando el paquete viejo, anterior a la
+// reconstrucción, sobre estas mismas entradas: es la equivalencia viejo ↔ nuevo, fijada
+// a mano porque el paquete nuevo no importa el viejo. Una fila con fecha esperada NO
+// dice que esa fecha sea la deseable: dice lo que el sistema hace hoy.
 //
 // 🔴 Los caracteres invisibles van ESCAPADOS, nunca literales: un U+FEFF literal en el
 // fuente ni siquiera compila («illegal byte order mark»).

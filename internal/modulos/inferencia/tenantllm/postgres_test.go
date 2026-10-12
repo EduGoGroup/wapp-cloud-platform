@@ -23,8 +23,8 @@ import (
 
 // Las cuatro sentencias, byte a byte, escritas aquí a mano y NO copiadas de una constante de
 // producción: si alguien toca el SQL del adaptador, este fichero lo dice. Los espacios en blanco
-// (el salto inicial, las tabulaciones de sangría, la tabulación final) son los del literal del
-// paquete viejo, internal/tenantllm/postgres.go @ ebf4eb7.
+// (el salto inicial, las tabulaciones de sangría, la tabulación final) son los del literal de la
+// implementación anterior a la reconstrucción.
 const (
 	// Get: la credencial no se selecciona, solo si existe.
 	sqlGet = "\n" +

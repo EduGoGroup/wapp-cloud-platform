@@ -1,5 +1,3 @@
-// Porta internal/gateway/lease/signingkey.go @ 8896f13
-
 package lease
 
 import (

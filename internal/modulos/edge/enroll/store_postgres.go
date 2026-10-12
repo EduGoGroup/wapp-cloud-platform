@@ -1,5 +1,3 @@
-// Porta internal/gateway/enroll/store_postgres.go @ 8896f13
-
 package enroll
 
 import (

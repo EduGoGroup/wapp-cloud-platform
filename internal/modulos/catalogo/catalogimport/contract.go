@@ -1,5 +1,3 @@
-// Porta internal/catalogimport/contract.go @ 3c74b80
-
 // Package catalogimport es el contrato del import de catálogo (Plan 041 · Ola 3,
 // D-041.5) y su validador ESTRICTO. Es PURO: sin I/O, sin BD y sin HTTP.
 //

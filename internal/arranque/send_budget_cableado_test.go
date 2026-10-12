@@ -1,5 +1,4 @@
-// Copia de internal/bootstrap/arranque/send_budget_cableado_test.go @ 80807ba (F0 · 05 §6). Desde
-// F3 (T3.28, conmutar(edge)) D1 la sirve la cara nueva: lo que se vigila es el SendBudget de
+// Desde F3 (T3.28, conmutar(edge)) D1 la sirve la cara nueva: lo que se vigila es el SendBudget de
 // apipublica.MessagesDeps, derivado con apipublica.SendBudgetFrom.
 package arranque
 

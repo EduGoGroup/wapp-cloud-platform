@@ -1,5 +1,3 @@
-// Porta internal/intakes/aprobadas.go @ 64c181a
-
 // aprobadas.go — EL HISTORIAL APROBADO DEL TENANT (D-044.11): «cómo escribe este
 // negocio», que es material de otra naturaleza que la negociación de un pedido y
 // tiene otro consumidor (quien le sugiere al dueño el texto de la cotización).

@@ -1,8 +1,3 @@
-// Porta internal/publicapi/messages.go @ 115a4ba (messagesHandler, sessionBelongsToTenant,
-// writeSendError, streamCaidoFrom, commandIDFrom y sus textos), los puertos MessageSender y
-// SessionLister (internal/publicapi/publicapi.go @ 115a4ba, líneas 39-51) y el registro de D1
-// (publicapi.go @ 115a4ba, línea 443).
-//
 // messages.go — EL ENVÍO DE UN TEXTO POR UNA SESIÓN DEL EDGE (mapa §2.4, D1). writeError, que en
 // la cara vieja vivía en este fichero, nació en response.go (T-15).
 //

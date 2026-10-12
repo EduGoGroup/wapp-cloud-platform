@@ -1,4 +1,4 @@
-// Porta internal/llmvia/llmvia.go @ ebf4eb7 (el turno acotado del Nivel B, líneas 468-656; partido de llmvia.go por E-13)
+// El turno acotado del Nivel B (partido de llmvia.go por E-13).
 
 package llmvia
 

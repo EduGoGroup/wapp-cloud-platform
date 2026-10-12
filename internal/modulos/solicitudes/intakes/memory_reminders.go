@@ -1,4 +1,4 @@
-// Porta internal/intakes/memory.go @ 64c181a (los dos recordatorios).
+// Los dos recordatorios de MemoryStore.
 //
 // Los tres métodos reciben el instante `at` del llamante y NO miran el reloj del
 // store. Ninguno toca UpdatedAt: en la seña es higiene y en el plazo del presupuesto

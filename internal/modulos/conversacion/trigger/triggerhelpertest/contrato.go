@@ -5,10 +5,7 @@
 // (store_memory_test.go) y trigger.PostgresStore en los procesos de F9, con el arnés de
 // testcontainers (test/procesos/trigger_contrato_test.go).
 //
-// Nuevo: no tiene fichero viejo. Los casos salen del contrato de trigger.Store y de los tests
-// viejos, leídos y no portados: internal/flujos/trigger/store_memory_test.go (4) y
-// store_postgres_test.go (5: InsertGetDelete, NullMappingAndList, SessionScope, TenantIsolation,
-// EventKindRoundTrip).
+// Los casos salen del contrato de trigger.Store.
 package triggerhelpertest
 
 import (

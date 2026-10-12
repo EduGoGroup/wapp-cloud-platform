@@ -12,9 +12,9 @@ import (
 // rutas del plano de plataforma —las que actúan sobre una empresa AJENA y piden un permiso «.any»—
 // están cerradas para la administradora de una empresa cliente, aunque su rol tenant_admin tenga el
 // comodín «*», y abiertas para el staff de plataforma. Es la regla de
-// internal/platformadmin/platform_permissions_test.go del código viejo, vista por la puerta.
+// internal/arranque/platform_permissions_test.go, vista por la puerta.
 
-// p2PlatformRoute es una ruta del plano de plataforma (internal/bootstrap/arranque/rutas_admin.go).
+// p2PlatformRoute es una ruta del plano de plataforma (internal/arranque/rutas_admin.go).
 type p2PlatformRoute struct {
 	Metodo  string
 	Ruta    string // con {tenant} y {request} por sustituir

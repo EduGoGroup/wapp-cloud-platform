@@ -1,5 +1,4 @@
-// Porta internal/platformadmin/access_requests.go @ 9a77307: las REGLAS y los handlers de la
-// bandeja de solicitudes de acceso. Su SQL (líneas 135-336 y 481-526 del viejo) vive en
+// Las REGLAS y los handlers de la bandeja de solicitudes de acceso. Su SQL vive en
 // access_requests_postgres.go (D-F2-3), detrás del puerto AccessRequestStore de ports.go.
 
 package platformadmin

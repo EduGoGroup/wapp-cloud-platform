@@ -241,15 +241,15 @@ a `intakes` / `intake_items` — pedido y presupuesto son el mismo objeto de dom
 | `intake_jobs.status` (CHECK, `0072_intake_jobs_y_ventana_agregacion.sql:479`) | `aggregating` · `pending` · `processing` · `done` · `failed` |
 | `intake_jobs.stage` (CHECK, `0072_intake_jobs_y_ventana_agregacion.sql:493`) | `p2` · `p3` · `p4` · `match` · `draft` (o NULL) |
 | `conversation_event_messages.entry_kind` (CHECK, `0072_intake_jobs_y_ventana_agregacion.sql:705`) | `decision` · `summary` · `message` · `message_out_of_turn` |
-| `intakes.status` (Go, `internal/modulos/solicitudes/intakes/status.go:27`) | `open` · `pending_approval` · `confirmed` · `deposit_requested` · `deposit_paid` · `settled` · `cancelled` · `expired` · `abandoned` · `rejected` · `needs_info`, más `closed` como **alias legado** |
-| `fleet_sessions.state` (Go, `internal/modulos/edge/fleet/repository_postgres.go:106`, `:125` y `:142`) | `online` · `offline` · `loggedout` |
+| `intakes.status` (Go, `internal/modulos/solicitudes/intakes/status.go:25`) | `open` · `pending_approval` · `confirmed` · `deposit_requested` · `deposit_paid` · `settled` · `cancelled` · `expired` · `abandoned` · `rejected` · `needs_info`, más `closed` como **alias legado** |
+| `fleet_sessions.state` (Go, `internal/modulos/edge/fleet/repository_postgres.go:104`, `:125` y `:142`) | `online` · `offline` · `loggedout` |
 
 Sobre `intakes.status`: los terminales (`settled`, `cancelled`, `rejected`, `abandoned` y el
-legado `expired`) no transicionan a ninguna parte (`transitions`, `internal/modulos/solicitudes/intakes/status.go:76`); `expired`
+legado `expired`) no transicionan a ninguna parte (`transitions`, `internal/modulos/solicitudes/intakes/status.go:74`); `expired`
 **ya no se entra nunca** (nada vence por tiempo) y solo se conserva por las filas que quedaron
-dentro, que el dueño puede descartar a mano (`discardable`, `internal/modulos/solicitudes/intakes/status.go:106`). El alias
-`closed → confirmed` se resuelve **en un único punto** (`aliases`, `internal/modulos/solicitudes/intakes/status.go:64`, que consulta
-`NormalizeStatus`, `internal/modulos/solicitudes/intakes/status.go:136`): si algún día se migran las filas, se vacía esa tabla y no
+dentro, que el dueño puede descartar a mano (`discardable`, `internal/modulos/solicitudes/intakes/status.go:104`). El alias
+`closed → confirmed` se resuelve **en un único punto** (`aliases`, `internal/modulos/solicitudes/intakes/status.go:62`, que consulta
+`NormalizeStatus`, `internal/modulos/solicitudes/intakes/status.go:134`): si algún día se migran las filas, se vacía esa tabla y no
 se toca nada más.
 
 ---
@@ -293,7 +293,7 @@ no lo elige quien llama (`AppendMessage`, `internal/modulos/conversacion/events/
 
 **La KEK**: proveedor conmutable `env` | `kms` (`WAPP_KEK_PROVIDER`). El adaptador de Google
 KMS está **construido** (`internal/platform/crypto/kms_gcp.go`, `keyprovider_kms.go`) y
-**apagado**: el default es `env` (`internal/platform/config/config.go:654`), por decisión de
+**apagado**: el default es `env` (`internal/platform/config/config.go:653`), por decisión de
 coste. Encenderlo es un gate de negocio, no un cambio de fichero.
 
 ---
@@ -310,7 +310,7 @@ Semillas en `0032_entitlements.sql:54` y `:59`, `0039_seed_plan_taxonomy.sql:43`
 y es el plan entero») · `pro` (interno de laboratorio).
 
 **14 features sembradas**; **11 tienen constante en Go**
-(`internal/modulos/acceso/entitlements/entitlements.go:51-141`): `llm_intent` · `cart_basic` ·
+(`internal/modulos/acceso/entitlements/entitlements.go:49-137`): `llm_intent` · `cart_basic` ·
 `intakes_export` · `catalog_import` · `crm_bridge` · `menu` · `survey` · `media` ·
 `llm_intake` · `api_llm` · `multi_empresa`.
 
@@ -319,7 +319,7 @@ Las tres restantes (`stt_audio`, `owner_app`, `passive_profiles`) **no gatean na
 
 **Resolución de una feature efectiva**: un override en `tenant_features` **gana**; sin
 override manda el plan; sin `plan_id` se trata como `basic`
-(`COALESCE(plan_id, 'basic')`, `internal/modulos/acceso/entitlements/postgres.go:196`).
+(`COALESCE(plan_id, 'basic')`, `internal/modulos/acceso/entitlements/postgres.go:194`).
 
 ---
 

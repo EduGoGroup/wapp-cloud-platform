@@ -1,5 +1,3 @@
-// Porta internal/intakes/telemetria/telemetria.go @ 36d5a04
-
 // Package telemetria deja las mediciones de la BANDEJA DEL DUEÑO en el outbox
 // `flow_events` (Plan 044 · T5.2, design §10).
 //
@@ -7,10 +5,10 @@
 // POR QUÉ ES UN PAQUETE Y NO UN MÉTODO MÁS DE `intakes`
 // ════════════════════════════════════════════════════════════════════════════
 //
-// Porque `intakes` NO PUEDE importar el almacén de flujos (`conversacion/store`; en el
-// viejo, `internal/flujos/store`): aquel paquete tiene tests IN-PACKAGE que importan
-// `intakes` (en el viejo, reserved_prefix_test.go, para atar su prefijo reservado al
-// de allí), y el ciclo —aunque una pata sea de test— no compila.
+// Porque `intakes` NO PUEDE importar el almacén de flujos (`conversacion/store`): aquel
+// paquete tiene tests IN-PACKAGE que importan `intakes` (en el viejo,
+// reserved_prefix_test.go, para atar su prefijo reservado al de allí), y el ciclo
+// —aunque una pata sea de test— no compila.
 // Es el mismo nudo que ya resolvió `integrations/crmpush` con el suyo: un adaptador
 // pequeño en su propio paquete, que es quien conoce a los dos lados.
 //
@@ -19,11 +17,8 @@
 // qué flujo se firma una fila de telemetría es quien escribe en esa tabla, no quien
 // mide cuántas líneas corrigió un dueño.
 //
-// 🔀 F8 · conmutar(conversacion): el almacén es el NUEVO,
-// `internal/modulos/conversacion/store`. De F6 a F8 este import fue un PUENTE al
-// `internal/flujos/store` viejo, declarado en `internal/modulos/fronteras_test.go`;
-// murió con la conmutación (T8.31) y hoy es la arista `solicitudes → conversacion` de
-// `Capas`. No cambió ningún nombre ni firma: solo la ruta.
+// El almacén es `internal/modulos/conversacion/store`: este import es la arista
+// `solicitudes → conversacion` de `Capas` (`internal/modulos/fronteras_test.go`).
 package telemetria
 
 import (

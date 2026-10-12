@@ -1,5 +1,3 @@
-// Porta internal/flujos/admin/triggers.go @ 724f3035
-//
 // Trozo de triggers.go, partido por tema (E-13): la baja de reglas de disparo y la
 // puerta de atrás de D-054.8.
 

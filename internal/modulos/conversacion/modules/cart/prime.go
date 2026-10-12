@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/prime.go @ 9d5a4b6
-
 // prime.go implementa la capacidad modules.Primer del carrito (Plan 029 · T8,
 // design.md §4.c): al ARRANCAR el flujo por una decisión kind='llm', el runtime
 // siembra en Vars los intent_params extraídos por el clasificador (p. ej.

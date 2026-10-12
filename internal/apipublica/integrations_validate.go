@@ -1,7 +1,3 @@
-// Porta internal/publicapi/integrations.go @ ed60c24 (líneas 34-46, 91-108 y 263-374: los techos
-// del PUT, su cuerpo, decodeIntegration, validateIntegration, validateEndpointURL y
-// validateLiveBridge).
-//
 // integrations_validate.go — LA LECTURA Y LA VALIDACIÓN DEL CUERPO DE G15
 // (PUT /api/v1/integrations). Es un trozo de integrations.go, partido por tema (05 E-13) solo
 // moviendo declaraciones; las promesas observables están escritas en el comentario de

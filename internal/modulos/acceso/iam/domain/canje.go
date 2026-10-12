@@ -1,5 +1,3 @@
-// Porta internal/iam/domain/canje.go @ 9a77307
-
 package domain
 
 // canje.go — EL VEREDICTO SOBRE UNA INVITACIÓN QUE ALGUIEN INTENTA CANJEAR (Plan 047 · Ola A ·

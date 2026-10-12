@@ -1,5 +1,3 @@
-// Porta internal/iam/transport/http/auth.go @ 9a77307
-
 // Package iamhttp expone la superficie HTTP del IAM del módulo acceso en el listener público
 // :8103: /api/v1/auth/{verify,exchange} (este fichero), la elección de empresa
 // (active_tenant.go), el canje de invitaciones (canje.go), la emisión y revocación de

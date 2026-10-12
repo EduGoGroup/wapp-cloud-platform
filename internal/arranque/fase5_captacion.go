@@ -1,5 +1,4 @@
-// Copia de internal/bootstrap/arranque/fase5_captacion.go @ 80807ba (F0 · 05 §6). Nació cableando
-// paquetes VIEJOS y cada conmutar(<módulo>) le cambió los suyos: edge desde F3 (T3.28); inferencia
+// Cada conmutar(<módulo>) le cambió a esta fase sus paquetes: edge desde F3 (T3.28); inferencia
 // desde F4 (T4.24: el selector de vía, su adaptador local y el cargador de prompts); el generador
 // de cotización de internal/modulos/solicitudes desde F6 (T6.24); y desde F7 (T7.23) las cinco
 // etapas, el aforo, el worker y el re-análisis de internal/modulos/captacion, con la caché del
@@ -313,7 +312,7 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	//
 	// 🔀 F7 · conmutar(captacion): es el índice de internal/modulos/catalogo/indice (F5), que
 	// es el que nombra el puerto pipeline.Catalogs del worker nuevo. Con esto el arranque deja
-	// de importar internal/intake/catalogo y `catalogo` entra en Conmutados (D-R-4).
+	// de importar el índice viejo del catálogo y `catalogo` entra en Conmutados (D-R-4).
 	catalogos, err := indice.NewCache(indice.NewFuenteContenido(c.flowStore, ""), textmatch.Normalize, 0)
 	if err != nil {
 		return fmt.Errorf("pipeline de captación, caché del catálogo: %w", err)

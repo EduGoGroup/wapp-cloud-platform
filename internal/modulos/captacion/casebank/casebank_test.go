@@ -11,7 +11,6 @@ import (
 )
 
 // casebank_test.go — EL GUARD DE GO y el orden validar → anonimizar → persistir.
-// Reglas leídas de internal/casebank/casebank_test.go (12 tests), no portadas.
 //
 // 🔴 POR QUÉ ESTE FICHERO MIRA «NO LLEGÓ AL STORE» Y NO «DIO ERROR»: el
 // consentimiento lo defienden DOS cosas —el guard de `Service` y el CHECK de la

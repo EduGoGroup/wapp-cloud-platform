@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-// La configuración del puente CRM por sus puertas: GET / PUT / DELETE /api/v1/integrations. Re-expresa
-// internal/integrations/crud_integration_test.go y lo que postgres_integration_test.go afirma del
-// secreto (cifrado en reposo, «secreto vacío conserva el existente»), visto desde fuera.
+// La configuración del puente CRM por sus puertas: GET / PUT / DELETE /api/v1/integrations. Cubre el
+// CRUD y las reglas del secreto (cifrado en reposo, «secreto vacío conserva el existente»), visto
+// desde fuera.
 
 // p6Bridge es el cuerpo del PUT de un puente webhook hacia endpoint. secret «» no manda el campo:
 // el secreto guardado se conserva.

@@ -1,8 +1,8 @@
-// Copia de internal/bootstrap/arranque/turno_acotado_cableado_test.go @ 80807ba (F0 · 05 §6). Desde F4
-// (T4.27, conmutar(inferencia)) el selector de vía es el de internal/modulos/inferencia, y desde F8 (T8.32,
-// conmutar(conversacion)) el resolutor y el engine son los de internal/modulos/conversacion: turnoacotado.New
-// recibe el selector del contenedor SIN adaptador (murió turneroBridge) y las dos opciones del engine cambiaron
-// de nombre con E-11 (WithConsultaResolver → WithQueryResolver, WithConsultaObserver → WithQueryObserver; T-6).
+// Desde F4 (T4.27, conmutar(inferencia)) el selector de vía es el de internal/modulos/inferencia, y desde F8
+// (T8.32, conmutar(conversacion)) el resolutor y el engine son los de internal/modulos/conversacion:
+// turnoacotado.New recibe el selector del contenedor SIN adaptador (murió turneroBridge) y las dos opciones del
+// engine cambiaron de nombre con E-11 (WithConsultaResolver → WithQueryResolver, WithConsultaObserver →
+// WithQueryObserver; T-6).
 package arranque
 
 import (

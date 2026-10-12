@@ -1,10 +1,8 @@
-// Porta internal/intake/catalogo/indice.go @ 3c74b80
-
 // Package indice es EL ÍNDICE EN MEMORIA del catálogo del tenant (Plan 044 ·
 // Ola 3 · T3.7): la pieza que la etapa `match` consulta una vez por ÍTEM sin
 // volver a leer ni a parsear el catálogo. En el árbol viejo el paquete se llamaba
-// `catalogo` (internal/intake/catalogo) y por eso sus textos observables siguen
-// diciendo "catalogo: …": el renombre del paquete no los cambia.
+// `catalogo` y por eso sus textos observables siguen diciendo "catalogo: …": el
+// renombre del paquete no los cambia.
 //
 // # EL COSTE QUE ESTA PIEZA SACA DEL CAMINO
 //

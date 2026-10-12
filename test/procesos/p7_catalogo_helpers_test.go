@@ -28,7 +28,7 @@ const (
 	p7RouteContent  = "/api/v1/tenant-content"
 	p7RouteUpload   = "/api/v1/media/upload-url"
 
-	// Las dos acciones que auditan las escrituras de P7 (protect, internal/publicapi/publicapi.go):
+	// Las dos acciones que auditan las escrituras de P7 (protect, internal/apipublica/chain.go):
 	// el import —por sus dos puertas— y el PUT genérico comparten `content.write`.
 	p7ActContent = "content.write"
 	p7ActMedia   = "media.upload"
@@ -285,7 +285,7 @@ func p7CSV(t *testing.T, comma rune, rows [][]string) []byte {
 }
 
 // p7Columns es la cabecera canónica de la planilla, escrita a mano: el nombre y el ORDEN de las
-// columnas son contrato (internal/catalogimport/template_test.go, TestTemplateSheet_CabeceraYFormaDeLaTabla).
+// columnas son contrato (internal/modulos/catalogo/catalogimport/tabular.go).
 func p7Columns() []string {
 	return []string{"categoria", "subcategoria", "codigo", "sku", "nombre", "precio",
 		"descripcion", "tags", "atributos", "variantes", "componentes"}

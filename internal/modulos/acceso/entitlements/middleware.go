@@ -1,5 +1,3 @@
-// Porta internal/entitlements/middleware.go @ 9a77307
-
 package entitlements
 
 import (

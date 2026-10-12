@@ -8,8 +8,7 @@
 // La suite la corren las dos implementaciones del puerto: Fake en unitario (fake_test.go) y
 // entitlements.Postgres en los procesos de F9, con el arnés de testcontainers.
 //
-// Nuevo: no tiene fichero viejo. Los casos salen de plan/F2-acceso/diseno.md §2 y de los tests
-// viejos de internal/entitlements @ 9a77307 (TestFake_*, TestIntegration_*), leídos, no portados.
+// Nuevo: no tiene fichero viejo. Los casos salen de plan/F2-acceso/diseno.md §2.
 package entitlementshelpertest
 
 import (

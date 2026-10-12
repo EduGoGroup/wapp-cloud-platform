@@ -338,8 +338,8 @@ func TestSignupHandler_FieldValidation(t *testing.T) {
 }
 
 // R-A8, corpus adversario del correo (reglas §5, hallazgo 40 de F1). La base es la equivalencia con
-// el viejo, medida corriendo internal/platformadmin.SignupHandler @ 9a77307 con este mismo corpus
-// (el correo que llegó a Signup, o el 400 sin llamada), quirks incluidos. 🔴 Las entradas marcadas
+// el viejo, medida corriendo su SignupHandler con este mismo corpus (el correo que llegó a Signup,
+// o el 400 sin llamada), quirks incluidos; son valores congelados. 🔴 Las entradas marcadas
 // «D-F2-13» se APARTAN del viejo por decisión de Jhoan (2026-10-04): U+200B y U+FEFF se recortan
 // de los bordes (el viejo los dejaba dentro del correo), y solo se acepta una dirección pelada (el
 // viejo guardaba «ana <ana@x.com>» entero). Su comentario dice qué hacía el viejo.

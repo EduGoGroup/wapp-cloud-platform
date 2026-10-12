@@ -17,8 +17,9 @@ import (
 // Sale de edge_falso_test.go (D-F9-11: solo se movieron declaraciones).
 
 // Los dos mensajes con los que el servidor dice, en su log de nivel debug, cómo acabó un
-// calentamiento de la caché de prefijo de un Edge (internal/intakeahead/calentamiento.go, calentar):
-// el Edge lo sirvió, o no; en el segundo caso el campo «error» trae el motivo del gateway.
+// calentamiento de la caché de prefijo de un Edge
+// (internal/modulos/captacion/intakeahead/warmup.go, runWarmup): el Edge lo sirvió, o no; en el
+// segundo caso el campo «error» trae el motivo del gateway.
 const (
 	edgeLogWarmupServed    = "calentamiento: emitido contra el Edge"
 	edgeLogWarmupNotServed = "calentamiento: no se emitió"

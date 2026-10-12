@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/effects.go @ 9d5a4b6
-
 // effects.go declara los efectos de negocio que el carrito emite en
 // Result.Effects (design.md §3.3/§9.J). El módulo es PURO: DECLARA los efectos,
 // no los ejecuta; el runtime los despacha por el EventSink (Plan 015) y el

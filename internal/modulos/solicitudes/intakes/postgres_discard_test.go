@@ -185,8 +185,8 @@ func TestPostgres_Discard_SQLIsTheOldOneByteForByte(t *testing.T) {
 }
 
 // Las sentencias del descarte y del abandono, escritas APARTE y byte a byte (sangría y saltos de
-// línea incluidos): son las de internal/intakes/postgres.go, y un cambio en el SQL de producción
-// tiene que romper aquí.
+// línea incluidos): son las de postgres_discard.go, y un cambio en el SQL de producción tiene que
+// romper aquí.
 
 // wantDiscardLockSQL es el bloqueo de la cabecera, acotado por tenant.
 const wantDiscardLockSQL = `

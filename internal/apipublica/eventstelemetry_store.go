@@ -1,6 +1,3 @@
-// Porta internal/publicapi/eventstelemetry_store.go @ ed60c24 (123 líneas: el store, la
-// consulta, ListEventTelemetry y nullableTime).
-//
 // eventstelemetry_store.go — EL ADAPTADOR POSTGRES DE LA TELEMETRÍA DE EVENTOS (mapa §2.7, G18).
 // Es el ÚNICO SQL de la cara, y se queda aquí por decisión (D-FX-4): el dueño físico natural de
 // la tabla flow_events es el motor de flujos (conversacion, F8), y bajarlo allí sería cambiar dos
@@ -56,8 +53,8 @@ func NewPostgresEventTelemetryStore(db *sql.DB) *PostgresEventTelemetryStore {
 //  4. `payload->>'kind' AS event_kind` — NUNCA la columna `kind` de la fila
 //     ("persist"|"event"), que colapsaría en una lectura sin sentido.
 //
-// $2/$3/$4 son NULLABLE a propósito (mismo patrón que
-// internal/flujos/events/store.go:listEventsWhere — "$N::tipo IS NULL"): deja
+// $2/$3/$4 son NULLABLE a propósito (mismo patrón que listEventsWhere en
+// internal/modulos/conversacion/events/store_list.go — "$N::tipo IS NULL"): deja
 // `since` y el cursor OPCIONALES sin bifurcar esta cadena en dos, y evita el
 // error de comparar una fila contra NULL (que en SQL evalúa NULL, no true, y
 // dejaría la primera página siempre vacía si no se guardara así).
@@ -96,8 +93,8 @@ func (s *PostgresEventTelemetryStore) ListEventTelemetry(ctx context.Context, te
 		return nil, fmt.Errorf("apipublica: consultar telemetría de eventos: %w", err)
 	}
 	// Cierre propagado, no descartado (mismo patrón que collect() en
-	// internal/flujos/events/store.go): el error de Close solo sustituye al
-	// que ya hubiera si no había ninguno peor que contar.
+	// internal/modulos/conversacion/events/store.go): el error de Close solo
+	// sustituye al que ya hubiera si no había ninguno peor que contar.
 	defer func() {
 		if cerr := rows.Close(); cerr != nil && err == nil {
 			out, err = nil, fmt.Errorf("apipublica: cerrar filas de telemetría de eventos: %w", cerr)

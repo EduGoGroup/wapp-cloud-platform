@@ -1,5 +1,3 @@
-// Porta internal/intentcfg/store_postgres.go @ 8d875ab
-
 package intentcfg
 
 import (

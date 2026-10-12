@@ -1,6 +1,5 @@
-// Porta internal/gateway/grpc/connect.go @ cbc5736 (el registro de una sesión, el canal de
-// control, el cierre y el seguimiento de las sesiones vivas por Edge). Trozo de connect.go,
-// partido por E-13.
+// El registro de una sesión, el canal de control, el cierre y el seguimiento de las
+// sesiones vivas por Edge. Trozo de connect.go, partido por E-13.
 //
 // Aquí vive lo que el bucle Recv de Connect hace cuando una sesión APARECE
 // (onSessionRegistered → registerSession), cuando un stream usa el canal de control

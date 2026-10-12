@@ -1,5 +1,3 @@
-// Porta internal/filtercfg/filtercfg.go @ 809345b
-
 // Package filtercfg construye el kind:"filters" que la nube empuja al Edge por
 // ConfigUpdate (ADR-0021, ADR-0027; Plan 046 · Ola 2 · T2.1).
 //

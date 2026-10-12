@@ -3,9 +3,8 @@ package cart_test
 // orden_consulta_ast_test.go — EL ORDEN DENTRO DE Module.Step ES UN INVARIANTE, y se
 // vigila sobre el AST (Plan 044 · Ola 3.5 · T3.5-2; trampa T-11 de la fase F8).
 //
-// Porta internal/flujos/modules/cart/orden_consulta_ast_test.go @ 9d5a4b6. Es uno de
-// los DOS candados de invariante que pueden leer el código como texto (05 §3.2,
-// plan/F8-conversacion/diseno.md §4.2); ningún otro test del paquete lo hace.
+// Es uno de los DOS candados de invariante que pueden leer el código como texto (05
+// §3.2, plan/F8-conversacion/diseno.md §4.2); ningún otro test del paquete lo hace.
 //
 // RE-ANCLADO (E-13): el viejo abría `cart.go` a pelo. Aquí cart.go nace partido por
 // tema y nada garantiza que Step se quede donde está, así que el candado busca el

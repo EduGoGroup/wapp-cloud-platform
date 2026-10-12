@@ -1,10 +1,10 @@
 package intakes
 
-// Los tests de fichero de notifier.go, con dobles de sus cuatro dependencias: sin Gateway, sin
-// base y sin reloj. Los literales esperados (textos que ve el cliente, mensajes de log) están
-// calculados con el fichero viejo (internal/intakes/notifier.go @ 64c181a): el candado de
-// fronteras impide importarlo desde aquí. Las plantillas, byte a byte, van en
-// notifier_templates_test.go; la cotización del dueño, en notifier_quote_test.go.
+// Los tests de fichero de notifier.go, con dobles de sus cuatro dependencias: sin Gateway, sin base
+// y sin reloj. Los literales esperados (textos que ve el cliente, mensajes de log) están
+// congelados: se calcularon con la implementación anterior a la reconstrucción y no se regeneran.
+// Las plantillas, byte a byte, van en notifier_templates_test.go; la cotización del dueño, en
+// notifier_quote_test.go.
 
 import (
 	"context"

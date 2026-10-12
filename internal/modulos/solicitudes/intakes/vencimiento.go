@@ -1,5 +1,3 @@
-// Porta internal/intakes/vencimiento.go @ 64c181a.
-//
 // vencimiento.go es EL PLAZO DEL PRESUPUESTO: AVISA Y NO MATA (REQ-25, D-044.50;
 // regla R-06).
 //

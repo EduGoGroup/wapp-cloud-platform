@@ -25,8 +25,8 @@ import (
 )
 
 // Las cuatro sentencias, byte a byte, escritas aquí a mano y NO copiadas de una constante de
-// producción. Los espacios en blanco son los del literal del paquete viejo
-// (internal/intakes/buyerdata.go @ 64c181a).
+// producción. Los espacios en blanco son los del literal de la implementación anterior a la
+// reconstrucción.
 const (
 	// La lectura de la fusión: bloquea la fila.
 	bdSQLSelectForUpdate = "\n" +

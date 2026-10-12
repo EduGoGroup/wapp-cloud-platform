@@ -13,10 +13,8 @@
 // La suite la corren las dos implementaciones del puerto: Memoria en unitario (memoria_test.go)
 // y tenantllm.Postgres en los procesos de F9 (test/procesos), con el arnés de testcontainers.
 //
-// Los casos salen de plan/F4-inferencia/diseno.md §2 y de los tests viejos de
-// internal/tenantllm/postgres_integration_test.go @ ebf4eb7, leídos, no portados. De sus quince,
-// aquí está la conducta de diez; los otros cinco no son del puerto: TestCheck_* afirma los CHECK
-// de la tabla por SQL crudo y los cuatro TestBackfill0073_* son de la migración (van a F9).
+// Los casos salen de plan/F4-inferencia/diseno.md §2. No entran, por no ser del puerto, los CHECK
+// de la tabla (se afirman por SQL crudo) ni el backfill de la migración 0073.
 //
 // Para añadir un caso: escribe su función en el fichero de su tema y añade su fila a cases().
 package tenantllmhelpertest

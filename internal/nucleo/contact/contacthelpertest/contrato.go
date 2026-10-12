@@ -1,5 +1,5 @@
 // Package contacthelpertest es la suite de contrato del puerto contact.Resolver y sus dobles.
-// Ningún código de producción lo importa (mismo criterio que internal/gateway/fleet/fleettest).
+// Ningún código de producción lo importa (mismo criterio que el fleettest del árbol viejo).
 //
 // A diferencia de fleettest, este paquete SÍ importa "testing" (las firmas de Contrato y de
 // Estado lo piden), así que arrastra el runtime de test: una razón más para que solo lo

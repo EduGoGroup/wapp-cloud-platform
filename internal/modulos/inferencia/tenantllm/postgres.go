@@ -1,5 +1,3 @@
-// Porta internal/tenantllm/postgres.go @ ebf4eb7
-
 package tenantllm
 
 import (
@@ -13,8 +11,9 @@ import (
 )
 
 // Postgres es la implementación real de Store sobre database/sql (mismo estilo
-// que internal/integrations/postgres.go: SQL raw con placeholders $1..$n, sin
-// ORM), contra public.tenant_llm (migraciones 0071 y 0073).
+// que internal/modulos/solicitudes/integrations/postgres.go: SQL raw con
+// placeholders $1..$n, sin ORM), contra public.tenant_llm (migraciones 0071 y
+// 0073).
 //
 // Las cuatro sentencias se portan BYTE A BYTE del paquete viejo —su test afirma
 // el texto exacto de cada una contra constantes escritas aparte— y no se
@@ -33,9 +32,10 @@ type Postgres struct {
 
 // NewPostgres construye el store con la conexión y el cifrador de campo que
 // custodia la API key (el MISMO KeyProvider de los planes 011/012 que ya usan
-// internal/intakes para buyer_data e internal/integrations para el secreto HMAC
-// — patrón replicado por la migración 0071). Un único keyring, una única
-// rotación que gestionar.
+// internal/modulos/solicitudes/intakes para buyer_data e
+// internal/modulos/solicitudes/integrations para el secreto HMAC — patrón
+// replicado por la migración 0071). Un único keyring, una única rotación que
+// gestionar.
 //
 // No abre ni comprueba la conexión, ni cifra nada: construir no emite ninguna
 // sentencia.

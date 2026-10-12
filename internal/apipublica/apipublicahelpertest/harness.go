@@ -2,9 +2,8 @@
 // Context Tokens DE VERDAD con sharedjwt, los pasa por el middleware real de httpapi y llama a
 // una Cara; trae además un auditor y un logger que graban lo que reciben.
 //
-// Porta el arnés de internal/publicapi/publicapi_test.go @ 9a77307 (líneas 120-168: testAPI,
-// call y token). En la spec FX era `arnes.go` con `Arnes`, `Nuevo`, `Con`, `Llamar` y
-// `AuditorDoble` (05 E-11: Harness, New, With, Call y AuditRecorderFake).
+// En la spec FX era `arnes.go` con `Arnes`, `Nuevo`, `Con`, `Llamar` y `AuditorDoble` (05 E-11:
+// Harness, New, With, Call y AuditRecorderFake).
 //
 // Como los dobles de los demás paquetes …helpertest (entitlementshelpertest,
 // platformadminhelpertest), nace COMPLETO, sin rojo: no es un contrato de producción sino la

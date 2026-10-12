@@ -1,5 +1,3 @@
-// Porta internal/tenantllm/tenantllm.go @ ebf4eb7
-
 // Package tenantllm guarda la configuración LLM del tenant: LA VÍA que usa
 // (`local` | `api`, REQ-33 · D-044.28 · migración 0073) y, cuando esa vía es
 // `api`, el proveedor y su credencial cifrada (Plan 044 · Ola 0 · T0.3, tabla
@@ -17,9 +15,10 @@
 // que D-044.21 dejó escrito que NO SE CONSTRUYE.
 //
 // La API key entra CIFRADA y sale SOLO hacia quien va a llamar al proveedor. La
-// capa HTTP (internal/publicapi/tenantllm.go) nunca la tiene: su puerto no
-// expone ningún método que la devuelva, igual que integrations.SecretFingerprint
-// mantiene el secreto HMAC fuera del paquete publicapi (crud.go:38-42).
+// capa HTTP (internal/apipublica/tenantllm.go) nunca la tiene: su puerto no
+// expone ningún método que la devuelva, igual que
+// integrations.SecretFingerprint mantiene el secreto HMAC fuera del paquete
+// apipublica.
 //
 // Los ficheros: tenantllm.go (el vocabulario, Config y el puerto Store),
 // postgres.go (el adaptador sobre database/sql) y tenantllmhelpertest (la suite
@@ -79,11 +78,11 @@ const (
 	// inferencia la ejecuta el Edge del propio tenant (ADR-0045) y NO sale texto
 	// hacia ningún tercero, así que no exige credencial ni consentimiento.
 	//
-	// ✅ ABIERTA DESDE T1.6-3 (2026-08-23). En la Ola 1.5 la API la rechazaba con
-	// 422 `llm_provider_unavailable` porque el pipeline local no existía; hoy
-	// existe (internal/llmvia/local habla el frame de inferencia contra el Ollama
-	// del Edge) y elegirla NO EXIGE NADA: ni credencial, ni consentimiento, ni
-	// proveedor, ni modelo.
+	// ✅ ABIERTA DESDE T1.6-3 (2026-08-23). En la Ola 1.5 la API la rechazaba
+	// con 422 `llm_provider_unavailable` porque el pipeline local no existía;
+	// hoy existe (internal/modulos/inferencia/llmvia/local habla el frame de
+	// inferencia contra el Ollama del Edge) y elegirla NO EXIGE NADA: ni
+	// credencial, ni consentimiento, ni proveedor, ni modelo.
 	ViaLocal = "local"
 	// ViaAPI es la vía del proveedor externo: exige credencial cifrada +
 	// `consented_at` (REQ-05, ADR-0030), y es la única cableada en el Plan 044.

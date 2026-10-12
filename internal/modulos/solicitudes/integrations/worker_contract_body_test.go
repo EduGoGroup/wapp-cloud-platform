@@ -5,8 +5,6 @@ package integrations_test
 // tres campos dejaran de viajar congelados en la plantilla (buyer_data, variables{} y
 // customer_note).
 //
-// Porta la regla de internal/integrations/contract_body_test.go @ 36d5a04.
-//
 // El riesgo que cubre: los tres campos son REQUERIDOS por el esquema, así que sacarlos de la
 // plantilla y olvidarse de completar uno en el worker no rompe ninguna compilación ni ningún test
 // de unidad — rompe al puente del cliente, en producción, en silencio. Los tests del sink miran lo

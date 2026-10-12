@@ -1,7 +1,3 @@
-// Porta internal/flujos/modules/cart/cart.go @ 9d5a4b6 (trozo «navegación»: los
-// reencauces toCategories/toArticles/toArticlesOf, mustCategory, reprompt y la
-// localización en el catálogo; el viejo es un solo fichero y aquí nace partido, 05 E-13)
-
 // cart_navigation.go son los reencauces de la sub-máquina, el reprompt y la
 // localización de lo que el estado dice tener en foco dentro del catálogo.
 //

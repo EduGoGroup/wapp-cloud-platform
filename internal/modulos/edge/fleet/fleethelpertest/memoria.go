@@ -1,5 +1,3 @@
-// Porta internal/gateway/fleet/fleet.go @ 809345b (MemoryRepository)
-
 package fleethelpertest
 
 import (

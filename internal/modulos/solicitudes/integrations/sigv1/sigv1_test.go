@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-// Los valores esperados de este fichero son VECTORES LITERALES calculados con el
-// paquete viejo (internal/integrations/sigv1 @ 3a21138): el candado de fronteras
-// impide importarlo desde aquí, así que la equivalencia viejo ↔ nuevo se fija con
-// lo que el viejo devolvió para este mismo corpus.
+// Los valores esperados de este fichero son VECTORES LITERALES congelados,
+// calculados con la implementación anterior a la reconstrucción para este mismo
+// corpus; no se regeneran.
 
 const (
 	baseSecret    = "s3cr3t"

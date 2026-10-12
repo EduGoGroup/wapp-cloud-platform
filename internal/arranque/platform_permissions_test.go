@@ -1,5 +1,4 @@
-// Copia de internal/bootstrap/arranque/platform_permissions_test.go @ 80807ba (F0 · 05 §6). Desde F8
-// (conmutar(conversacion)) el arranque que este test ejercita no cablea ningún paquete viejo.
+// Desde F8 (conmutar(conversacion)) el arranque que este test ejercita no cablea ningún paquete viejo.
 package arranque
 
 import (
@@ -66,7 +65,7 @@ func extractPlatformRoute(fset *token.FileSet, call *ast.CallExpr) *routeCheck {
 
 // TestINV056_1_PlatformPermissionsMustEndInDotAny asegura el invariante INV-056.1:
 // Toda ruta o handler perteneciente al plano de administración de plataforma
-// (paquete internal/platformadmin o rutas /admin/tenants, /admin/access-requests)
+// (paquete internal/modulos/acceso/platformadmin o rutas /admin/tenants, /admin/access-requests)
 // DEBE exigir un permiso RBAC que termine estrictamente en ".any".
 func TestINV056_1_PlatformPermissionsMustEndInDotAny(t *testing.T) {
 	t.Parallel()

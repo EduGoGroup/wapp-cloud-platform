@@ -1,5 +1,3 @@
-// Porta internal/receipts/postgres.go @ 8896f13
-
 package receipts
 
 import (

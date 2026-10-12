@@ -9,10 +9,9 @@ import (
 	"time"
 )
 
-// Las salidas esperadas de este fichero son LITERALES calculados con el fichero
-// viejo (internal/intakes/intakes.go @ 64c181a): el candado de fronteras impide
-// importarlo desde aquí, así que la equivalencia viejo ↔ nuevo se fija con lo que
-// el viejo devolvió para este mismo corpus.
+// Las salidas esperadas de este fichero son LITERALES congelados, calculados con
+// la implementación anterior a la reconstrucción para este mismo corpus; no se
+// regeneran.
 
 // TestSentinels_TextIsLiteral: los tres centinelas son textos observables, byte a byte.
 func TestSentinels_TextIsLiteral(t *testing.T) {

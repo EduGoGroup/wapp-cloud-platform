@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/streak.go @ e0159171
-
 package runtime
 
 // streak.go no exporta nada, ni en el viejo ni aquí: su contrato es este comentario, y
@@ -140,11 +138,6 @@ package runtime
 // nuevo sin su Close infla wapp_flow_autoreply_streak_max media hora, y cinco de los seis
 // cierres se podían borrar con la suite en verde); su constante está RE-MEDIDA sobre el
 // código nuevo (6, los mismos caminos).
-//
-// # Comentario del viejo que no casa con su código
-//
-// internal/flujos/runtime/streak.go:107 dice «idleTTL y maxEntries no nulos se
-// normalizan»; el código normaliza los NO POSITIVOS (<= 0), que es lo que promete ST-5.
 
 import (
 	"sync"

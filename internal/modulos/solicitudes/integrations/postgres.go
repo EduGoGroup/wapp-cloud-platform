@@ -1,6 +1,5 @@
-// Porta internal/integrations/postgres.go @ 36d5a04, y recoge los dos métodos de
-// *Postgres que el viejo tenía fuera: SecretFingerprint (crud.go:42) y CountOutbox
-// (outbox_stats.go:69) — D-F6-6.
+// Aquí viven también los dos métodos de *Postgres que no son del puerto Store:
+// SecretFingerprint y CountOutbox (D-F6-6).
 
 package integrations
 

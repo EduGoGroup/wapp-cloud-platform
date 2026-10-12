@@ -43,7 +43,7 @@ const (
 	p3Keyword = "hola"
 
 	// p3MsgIncomingFailed es la línea ERROR con la que el servidor dice que perdió un entrante: no
-	// hay reintento por encima (internal/flujos/runtime/incoming.go, OnIncoming).
+	// hay reintento por encima (internal/modulos/conversacion/runtime/incoming.go, OnIncoming).
 	p3MsgIncomingFailed = "runtime: procesar entrante"
 	// p3MsgDuplicate es la línea (DEBUG) del entrante que el dedupe de ingesta corta.
 	p3MsgDuplicate = "runtime: entrante duplicado ignorado (dedupe de ingesta)"

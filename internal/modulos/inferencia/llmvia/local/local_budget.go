@@ -1,4 +1,4 @@
-// Porta internal/llmvia/local/local.go @ ebf4eb7 (el presupuesto: la tabla de etapas con sus techos, el reloj único y el interruptor del techo; partido de local.go por E-13)
+// El presupuesto: la tabla de etapas con sus techos, el reloj único y el interruptor del techo (partido de local.go por E-13).
 
 package local
 

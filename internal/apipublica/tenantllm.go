@@ -1,6 +1,3 @@
-// Porta internal/publicapi/tenantllm.go @ 3c74b80 y el registro de F1–F3
-// (internal/publicapi/publicapi.go @ 3c74b80, registerTenantLLM, líneas 940-991).
-//
 // tenantllm.go — LA CONFIGURACIÓN DE LA VÍA LLM POR TENANT (Plan 044 · Ola 0 · T0.3, design §8;
 // mapa §2.6, F1–F3): GET / PUT / DELETE de /api/v1/tenant-llm. El dominio vive en
 // internal/modulos/inferencia/tenantllm; aquí solo se abre la puerta HTTP.

@@ -1,7 +1,3 @@
-// Porta internal/publicapi/media.go @ 724f3035 (126 líneas, entero) y el registro de I5
-// (internal/publicapi/publicapi.go @ 724f3035, Register, líneas 463-468; el campo Media de
-// MediaDeps, líneas 109-111).
-//
 // media.go — MEDIA POR API (Plan 018 · T6, R7; mapa §2.9, I5): POST /api/v1/media/upload-url
 // presigna una URL PUT de corta vida para subir a R2 un archivo (PDF o imagen) que después se
 // referencia en un flujo (nodo media) o en un blob de tenant_content.

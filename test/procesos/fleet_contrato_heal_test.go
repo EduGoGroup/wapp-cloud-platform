@@ -14,9 +14,9 @@ import (
 // importa nada de internal/ (R9.4.d, regla 1): el adaptador le llega por el fleetContractRig, y las
 // sentencias de rotura son las de aquel fichero más la de abajo.
 //
-// 🔴 EL NUEVO SE APARTA DEL VIEJO A PROPÓSITO (D-F3-12): la guarda del viejo
-// (internal/gateway/fleet) solo mira el índice ciego y el key_id, así que una fila sin enc o sin
-// dek —con esos dos intactos— no entra nunca en el UPDATE y queda atrapada para siempre.
+// 🔴 EL NUEVO SE APARTA DEL VIEJO A PROPÓSITO (D-F3-12): la guarda del viejo solo miraba el índice
+// ciego y el key_id, así que una fila sin enc o sin dek —con esos dos intactos— no entraba nunca
+// en el UPDATE y quedaba atrapada para siempre.
 
 // fleetContractEmptyDek es la sexta forma de romper el sobre: la DEK envuelta vacía en vez de NULL.
 // Es la gemela de fleetContractEmptyEnc, y existe porque «incompleto» se define con len()==0, que no

@@ -1,5 +1,3 @@
-// Porta internal/iam/usecase/canje.go @ 9a77307
-
 package usecase
 
 // canje.go — EL CANJE DE UNA INVITACIÓN (Plan 047 · Ola A · T-A3/T-A4/T-A5). El fichero

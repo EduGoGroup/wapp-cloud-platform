@@ -1,5 +1,5 @@
-// Porta internal/flujos/events/store.go @ 9d5a4b6 (trozo: las cinco puertas de escritura del
-// historial; ver el reparto, D-1 y el homónimo DEK en store.go).
+// Las cinco puertas de escritura del historial (trozo de store.go: ver allí el reparto, D-1
+// y el homónimo DEK).
 //
 // Lo que las cinco comparten y el contrato de cada una da por dicho:
 //

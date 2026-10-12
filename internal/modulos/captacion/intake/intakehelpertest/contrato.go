@@ -16,13 +16,11 @@
 // (memory_test.go); MachineMemory, el doble de este paquete, las otras dos (D-F7-5)— e
 // intake.Postgres las tres en los procesos de F9, con el arnés de testcontainers.
 //
-// Nuevo: no tiene fichero viejo. Los casos salen del contrato de los puertos y de los tests de
-// integración viejos de internal/intake, leídos y NO portados (05 E-8): postgres_, machine_,
-// backoff_, retry_ y despertar_integration_test.go (25) y reanalisis_internal_test.go. De ellos
-// quedan FUERA los que no son del puerto sino de la tabla o del motor: la forma de las columnas
-// de la 0078 y el repoblado de las filas viejas, el índice único parcial a mano (dos ventanas
-// vivas por INSERT directo), que `attempts + 1` lo calcula el motor sobre una fila que cambió
-// por detrás, y `FOR UPDATE SKIP LOCKED` (la carrera de dos reclamos a la vez). Son de F9.
+// Los casos salen del contrato de los puertos. Quedan FUERA los que no son del puerto sino de
+// la tabla o del motor: la forma de las columnas de la 0078 y el repoblado de las filas viejas,
+// el índice único parcial a mano (dos ventanas vivas por INSERT directo), que `attempts + 1` lo
+// calcula el motor sobre una fila que cambió por detrás, y `FOR UPDATE SKIP LOCKED` (la carrera
+// de dos reclamos a la vez). Son de F9.
 //
 // Un fichero por tema; los de casos y de apoyo terminan en _contrato.go:
 //   - contrato.go: la entrada. Row, los tres Montajes, las tres suites y sus tablas de casos.

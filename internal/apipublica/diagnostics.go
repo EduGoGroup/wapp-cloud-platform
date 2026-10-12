@@ -1,7 +1,3 @@
-// Porta internal/publicapi/diagnostics.go @ 115a4ba (DiagnosticsRequester, DiagnosticsStore,
-// preflightDiagnostics, resolveScope, requestDiagnosticsHandler, getDiagnosticsHandler y sus
-// textos) y el registro de D5 y D6 (internal/publicapi/publicapi.go @ 115a4ba, líneas 523-541).
-//
 // diagnostics.go — EL DIAGNÓSTICO REMOTO BAJO DEMANDA (Plan 031 · T5, ADR-0023 capa 3; mapa
 // §2.4): D5 pide a una sesión del Edge su bundle de diagnóstico y D6 lo descarga. El bundle es
 // material OPERATIVO saneado en origen por el Edge: aquí viaja opaco, sin llaves ni credenciales.

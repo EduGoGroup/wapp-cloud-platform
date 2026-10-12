@@ -1,7 +1,3 @@
-// Porta internal/flujos/modules/cart/projection.go @ 9d5a4b6 (trozo «comprador y
-// transiciones»: putBuyerField y transitionOpenIntake; el viejo es un solo fichero y
-// aquí nace partido, 05 E-13)
-
 // projection_buyer.go son las dos proyecciones que actúan sobre la solicitud ABIERTA
 // de (tenant, contacto) sin tocar sus líneas: guardar UN campo del checklist del
 // comprador en su fila cifrada (buyer_data_captured) y llevar la solicitud a

@@ -1,5 +1,3 @@
-// Porta internal/iam/infra/postgres/active_tenant.go @ 9a77307
-
 package iampostgres
 
 // active_tenant.go — EL ADAPTADOR DE public.user_active_tenant (migración 0086; Plan 047 · Ola 5

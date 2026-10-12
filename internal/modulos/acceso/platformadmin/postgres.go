@@ -12,8 +12,6 @@
 //
 // 🔒 I-CP-5: el arranque monta estos handlers INLINE e importa este paquete SIN alias: el candado
 // de permisos de plataforma los reconoce por el texto "platformadmin." (trampa T-3 de F2).
-//
-// Porta internal/platformadmin/postgres.go @ 9a77307.
 package platformadmin
 
 import (

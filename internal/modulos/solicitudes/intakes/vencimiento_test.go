@@ -14,8 +14,8 @@ import (
 )
 
 // Las respuestas de Overdue y la traza del sumidero de este fichero son LITERALES
-// calculados con el fichero viejo (internal/intakes/vencimiento.go @ 64c181a) para
-// este mismo corpus: el candado de fronteras impide importarlo desde aquí.
+// congelados, calculados con la implementación anterior a la reconstrucción para
+// este mismo corpus; no se regeneran.
 //
 // Ningún test de este fichero toca una base ni afirma que el dueño reciba nada: el
 // plazo AVISA Y NO MATA, y el emisor de hoy es una traza (T-8). Los dos candados de

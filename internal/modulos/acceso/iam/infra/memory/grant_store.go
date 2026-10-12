@@ -1,5 +1,3 @@
-// Porta internal/iam/infra/memory/grant_store.go @ 9a77307 (y removeGrant, de store.go)
-
 package memory
 
 import (

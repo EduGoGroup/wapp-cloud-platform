@@ -1,5 +1,3 @@
-// Porta internal/intakes/approve.go @ 64c181a
-
 // approve.go — LA ACCIÓN APROBAR DEL DUEÑO (D-044.49).
 //
 // Es el acto en el que un presupuesto deja de ser un borrador: el dueño escribe la

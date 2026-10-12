@@ -1,5 +1,3 @@
-// Porta internal/iam/ports/out/repos.go @ 9a77307
-
 // Package out declara los puertos DE SALIDA del módulo IAM: las interfaces de
 // repositorio que los usecases necesitan para persistir/leer estado. Son
 // contratos PUROS (context + tipos de dominio); las implementaciones viven en

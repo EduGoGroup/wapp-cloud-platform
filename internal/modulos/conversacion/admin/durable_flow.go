@@ -1,5 +1,3 @@
-// Porta internal/flujos/admin/durable_flow.go @ 724f3035
-
 package admin
 
 import (

@@ -1,5 +1,3 @@
-// Porta internal/publicapi/summary.go @ ed60c24 (158 líneas).
-//
 // summary.go — EL RESUMEN DE LA BANDEJA PARA UN LLM EXTERNO (Plan 041 · T1.3, REQ-04, D-041.15;
 // mapa §2.7, G10): `GET /api/v1/intakes/summary.json`. Lo monta MountIntakeReports
 // (intakereports.go), cuyo comentario es su contrato.
