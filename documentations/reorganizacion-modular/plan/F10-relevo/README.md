@@ -2,7 +2,7 @@
 
 > **Estado**: 🔧 **bloque A cerrado (F10-02, 2026-10-11, PR #75 integrado)**: verdad de campo limpia, dorada de la
 > huella congelada, acta abierta e inventario de divergencias. **Bloque B cerrado (F10-03, 2026-10-11, PR #81 integrado)**:
-> el modular corre en UAT, la prueba funcional pasó en local, sin ventana de 24 h (Jhoan); veredicto: «sigue». **Bloque C integrado, salvo T10.14 (F10-04, 2026-10-11, PR #82 integrado)**: el relevo de código está hecho (T10.7–T10.13 y T10.23); T10.14, la documentación del repo, va en un PR propio (F10-04b). Spec escrita el
+> el modular corre en UAT, la prueba funcional pasó en local, sin ventana de 24 h (Jhoan); veredicto: «sigue». **T10.14 hecha (F10-04b, 2026-10-11, PR #84 abierto, en revisión)**. **Bloque C integrado, salvo T10.14 (F10-04, 2026-10-11, PR #82 integrado)**: el relevo de código está hecho (T10.7–T10.13 y T10.23); T10.14, la documentación del repo, va en un PR propio (F10-04b). Spec escrita el
 > 2026-09-28 sobre `dev` @ `1b18932`.
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 > **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §6 (fila F10), §4.1 (cero puentes de import), §4.2 (cero
@@ -249,3 +249,44 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
     `CLAUDE.md`).
 31. **No corrido en esta sesión**: `make ci-docker`, `make test-procesos-edge-real` y el job `integration` de `ci.yml`.
     Y 159 de los 179 paquetes de `ci-local` salieron de la caché de `go test`; el `-v` posterior los corrió todos.
+
+### F10-04b · T10.14 (2026-10-11)
+
+32. **La documentación de la pieza está reescrita contra el árbol que existe** (D-F10-8), no re-apuntada: `contratos.md`,
+    `arquitectura.md`, `constitucion.md`, `operacion.md`, `esquema-postgres.md`, `deuda.md`, los dos `README.md` y
+    `CLAUDE.md`. Antes: 163 rutas de paquetes borrados y 199 referencias que no existían en el árbol (rutas, citas
+    `fichero:línea`, símbolos, variables). Después: 0 y 0. Lo comprueba `scripts/check-docs-tree.sh`, que queda en el
+    repo y se explica en `documentations/README.md`. **No comprueba que la línea citada diga lo que se afirma**: eso lo
+    miró quien escribió cada cita.
+33. **Cuatro cifras de cabecera estaban mal, y no por el relevo.** Variables de entorno: **71**, no 70 (el `grep` del
+    documento no veía `WAPP_FLOW_REPLY_RATE`, que se lee con otra función del loader). Tablas: **45**, no 47 (los 47
+    sumaban `schema_version`, que crea el runner, y una vista). Comandos de `cmd/`: **6**, no 4. Tablas tocadas por más
+    de un módulo: **9**, no 14. Las 95 rutas (22 + 73) y los 2 rpc sí casan con la dorada.
+34. **Afirmaciones que la documentación daba por ciertas y el código desmiente** (corregidas en su documento): con la
+    clave de cifrado vacía el arranque genera un par efímero con aviso, no «no abre los sobres»; con la PKI vacía no
+    levanta el proceso entero, no solo el `:8101`; el *deny* `*.any` lo siembra la migración `0059`, no la `0060`;
+    no todas las rutas de solicitudes llevan la feature `cart_basic`; `anclaje` sí se importa (lo que no tiene llamante
+    es `anclaje.Distribute`); los no-op de `rows.Close()` son 14 en 8 ficheros, no 41 en 24; `POST /api/v1/members` no
+    se monta siempre.
+35. **Tres skills retiradas, por decisión de la sesión**: `contrato-tdd`, `reconstruir-modulo` y `traspaso-web-local`.
+    Son el procedimiento de la reconstrucción y ya no se pueden seguir (piden el fichero viejo de referencia, la
+    etiqueta `pendiente` y `cmd/server-modular`). Van en un commit propio, `19ed4883`, para revertirlo solo si Jhoan
+    prefiere reescribirlas; T10.25 ya preveía «se reescribe o se retira». `validar-antes-de-cerrar` y
+    `procesos-testcontainers` se reescribieron (hallazgo 29). El hook de `SessionStart` ya no imprimía ningún recuento
+    de pendientes: no hubo nada que tocar.
+36. **Lo que queda con rutas o nombres que ya no existen, y de quién es**: tres enlaces de `06-entorno-web.md` a las
+    skills retiradas, y `PROTOCOLO-CLI.md` §3–§4 (`make vet-pendiente`, `make test-integration`, `cmd/server-modular`):
+    son del expediente, que sale en T10.25. Comentarios del código, para T10.26: la cabecera de `cmd/server/main.go`
+    dice «DOS listeners gRPC y un HTTP», la de la dorada nombra `TestHuellaVieja` (el test es `TestHuella`), y
+    `lease` llama «tabla de platform» a `tenants`. `deploy/README.md` enlaza `docs/` de la raíz de wApp (se corrigió
+    solo su comando de arranque y su sección de tests). El `Makefile` conserva `COBERTURA_BRIDGE_DIRS`, que ya no
+    aporta ficheros.
+37. **Tres cosas del código que la reescritura sacó a la luz y no están en `deuda.md`** (no se añadieron: piden que
+    alguien las confirme): ningún `.go` de producción escribe `plans`, `plan_features`, `tenant_features` ni
+    `tenant_settings` (un *override* de plan sería SQL a mano); la lista blanca de fronteras permite tres pares de
+    módulos que se importan en los dos sentidos (`conversacion` con `captacion`, `catalogo` y `solicitudes`); y
+    `internal/apipublica/eventstelemetry_store.go` tiene SQL propio sobre `flow_events`. Sin verificar del todo, y
+    dicho en su entrada: D-4 (medida del 2026-08-29), D-45 y D-46 de `deuda.md`.
+38. **No corrido en esta sesión**: `make test-procesos`, `make ci-docker` y `make test-procesos-edge-real` (no se tocó
+    código: solo documentación, skills y un script de comprobación).
+
