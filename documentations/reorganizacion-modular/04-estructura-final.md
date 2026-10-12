@@ -4,13 +4,11 @@
 > `internal/` tal como quedarían **al terminar** la reorganización, con su origen al lado. Es una
 > guía visual y, a la vez, el insumo del script de reescritura (§4).
 >
-> ✎ **2026-10-11**: F1–F8 están cerradas y `internal/modulos/` existe entero, pero **este dibujo no se regeneró ni se
-> cotejó** contra él: es el del 2026-09-27. Donde difieran, manda el árbol real (`go list ./internal/modulos/...`) y el
-> inventario E-12 de cada fase. Estado: [`ESTADO.md`](ESTADO.md).
+> ✎ **2026-10-11 (F10-04b)**: el relevo está hecho y el código viejo, borrado. **§3 se regeneró desde el código**
+> (`go list`, con el comando escrito allí) y es el árbol real, por paquete. §0–§2, §4 y §5 se quedan como estaban: son
+> el plan del 2026-09-27, con las rutas de un árbol que ya no existe. Estado: [`ESTADO.md`](ESTADO.md).
 >
-> **Generado, no escrito a mano.** El árbol de §3 sale por script de la lista real de ficheros
-> (`go list` sobre `dev` @ `11766a5`, 2026-09-27) aplicándole el mapeo de §4. Los únicos
-> ficheros que no existen hoy son los marcados ✚.
+> **Generado, no escrito a mano.** El árbol de §3 sale de `go list` sobre `dev` @ `b1ad679c` (2026-10-11).
 
 ---
 
@@ -134,510 +132,134 @@ cuesta poco.
 
 ---
 
-## 3 · El árbol completo, al terminar (tras el relevo, F10 de `05` §6)
+## 3 · El árbol completo, tal como quedó tras el relevo
+
+> ✎ **2026-10-11 (F10-04b, T10.14)**: **regenerado desde el código**, sobre `dev` @ `b1ad679c`. Sustituye al dibujo del
+> 2026-09-27, que era una previsión fichero a fichero con el origen de cada uno y nunca se cotejó con lo construido
+> (deuda D-40, que esto cierra). Va por **paquete**, no por fichero: el detalle de un paquete se lee con `ls`.
+
+Comando (desde la raíz del repo; las dos etiquetas hacen que cuenten también los ficheros de `test/procesos/`):
+
+```bash
+GOTOOLCHAIN=go1.26.5 GOWORK=off go list -tags integracion,edgereal \
+  -f '{{.ImportPath}} {{len .GoFiles}} {{len .TestGoFiles}} {{len .XTestGoFiles}}' ./... \
+  | sed 's|^github.com/EduGoGroup/wapp-cloud-platform/||' \
+  | awk '{printf "%-62s %3d prod · %3d test\n", $1, $2, $3+$4}'
+```
+
+Regla de conteo: un paquete por línea, tal como lo ve `go list` (no entra `testdata/`); «prod» son sus `.go` que no
+terminan en `_test.go` —los paquetes `…helpertest`, que son suites de contrato, cuentan ahí— y «test», los `_test.go`
+del paquete más los del paquete externo `_test`. **Total: 108 paquetes, 608 ficheros de producción y 899 de test.**
 
 ```
-cmd/
-├── casebank/
-│   ├── main.go
-│   └── (+ 1 _test.go)
-├── debug_inferencia/                         utilidad fuera de banda
-│   └── main.go
-├── migrate/
-│   └── main.go
-├── prompts/
-│   └── main.go
-└── server/
-    ├── main.go                               ✎ importa internal/arranque en vez de internal/bootstrap
-    ├── integration_test.go                   ✎ ídem (EnrollServerCreds)
-    └── (+ 1 _test.go)
-
-internal/
-├── arranque/                                 ✚ el arranque nuevo, por módulo (sustituye a internal/bootstrap/ y bootstrap/arranque/)
-│   ├── orquestador.go                        ↦ lista `fases`, requiere() e hitos, heredados
-│   ├── contenedor.go                         ↦ ✎ campos agrupados por módulo
-│   ├── servir.go                             ↦
-│   ├── fase1_plataforma.go                   ✚ métricas · BD y migraciones · X25519 · cifrado PII y R2 (hoy fase1 + parte de fase3)
-│   ├── fase2_acceso.go                       ✚ plano de auth del IAM · JWKS · entitlements · platformadmin (hoy fase2)
-│   ├── fase3_edge.go                         ✚ PKI · clave del lease · enrolamiento · gateway gRPC (hoy parte de fase1 + fase4)
-│   ├── fase4_inferencia.go                   ✚ selector de vía LLM · prompts P2–P5 · degradación (hoy dentro de fase5)
-│   ├── fase5_captacion.go                    ↦ ✎ etapas P2→P4 · worker · aforo · intakeahead
-│   ├── fase6_solicitudes.go                  ↦ ✎ bandeja · notificador · recordatorios · CRM
-│   ├── fase7_conversacion.go                 ✚ Motor de Flujos, sus 4 módulos y los hooks del gateway (hoy fase7_flujos.go)
-│   ├── fase8_transporte.go                   ↦ los cuatro listeners y sus rutas
-│   ├── fase9_fondo.go                        ↦ las cinco goroutines
-│   ├── plataforma_database.go                ↦ de database.go
-│   ├── acceso_auth.go                        ↦ de auth.go (834 l: candidato a partirse)
-│   ├── edge_pki.go                           ↦ de pki.go
-│   ├── edge_lease.go                         ↦ de lease.go
-│   ├── inferencia_prompts.go                 ↦ de prompts.go
-│   ├── conversacion_flows.go                 ↦ de flows.go
-│   ├── conversacion_flowforkind.go           ↦ de flowforkind.go
-│   ├── transporte_http.go                    ↦ de http.go
-│   ├── transporte_rutas_admin.go             ↦ de rutas_admin.go
-│   ├── bridge_<x>.go                         ✚ adaptadores de tipos al código viejo (`05` §4.2); mueren al conmutar su último consumidor
-│   ├── huella_test.go                        ✚ la huella de contratos: rutas, rpc, métricas, variables
-│   └── (+ tests: los 20 de hoy, portados (11 son candados AST de cableado))
-├── modulos/                                  ✚ los módulos de negocio
-│   ├── fronteras_test.go                     ✚ candado: qué módulo puede importar a cuál (lista blanca de hoy congelada)
-│   ├── acceso/
-│   │   ├── entitlements/                     ← internal/entitlements
-│   │   │   ├── entitlements.go
-│   │   │   ├── middleware.go
-│   │   │   ├── postgres.go
-│   │   │   └── (+ 6 _test.go)
-│   │   ├── iam/
-│   │   │   ├── domain/                       ← internal/iam/domain
-│   │   │   │   ├── canje.go
-│   │   │   │   ├── entities.go
-│   │   │   │   ├── errors.go
-│   │   │   │   ├── invitation.go
-│   │   │   │   └── (+ 2 _test.go)
-│   │   │   ├── infra/
-│   │   │   │   ├── identity/                 ← internal/iam/infra/identity
-│   │   │   │   │   ├── client.go
-│   │   │   │   │   ├── m2m.go
-│   │   │   │   │   └── (+ 2 _test.go)
-│   │   │   │   ├── memory/                   ← internal/iam/infra/memory
-│   │   │   │   │   ├── active_tenant_store.go
-│   │   │   │   │   ├── audit_store.go
-│   │   │   │   │   ├── grant_store.go
-│   │   │   │   │   ├── invitation_store.go
-│   │   │   │   │   ├── membership_store.go
-│   │   │   │   │   ├── role_store.go
-│   │   │   │   │   ├── store.go
-│   │   │   │   │   └── (+ 1 _test.go)
-│   │   │   │   └── postgres/                 ← internal/iam/infra/postgres
-│   │   │   │       ├── active_tenant.go
-│   │   │   │       ├── audit.go
-│   │   │   │       ├── canje.go
-│   │   │   │       ├── grants.go
-│   │   │   │       ├── invitations.go
-│   │   │   │       ├── memberships.go
-│   │   │   │       ├── postgres.go
-│   │   │   │       ├── roles.go
-│   │   │   │       └── (+ 9 _test.go)
-│   │   │   ├── ports/
-│   │   │   │   ├── in/                       ← internal/iam/ports/in
-│   │   │   │   │   ├── active_tenant.go
-│   │   │   │   │   ├── canje.go
-│   │   │   │   │   └── usecases.go
-│   │   │   │   └── out/                      ← internal/iam/ports/out
-│   │   │   │       ├── active_tenant.go
-│   │   │   │       ├── canje.go
-│   │   │   │       └── repos.go
-│   │   │   ├── transport/
-│   │   │   │   └── http/                     ← internal/iam/transport/http
-│   │   │   │       ├── active_tenant.go
-│   │   │   │       ├── auth.go
-│   │   │   │       ├── canje.go
-│   │   │   │       ├── http.go
-│   │   │   │       ├── invitations.go
-│   │   │   │       ├── roles.go
-│   │   │   │       └── (+ 6 _test.go)
-│   │   │   └── usecase/                      ← internal/iam/usecase
-│   │   │       ├── active_tenant.go
-│   │   │       ├── audit.go
-│   │   │       ├── canje.go
-│   │   │       ├── config.go
-│   │   │       ├── context_token.go
-│   │   │       ├── delegated_auth.go
-│   │   │       ├── exchange.go
-│   │   │       ├── grants.go
-│   │   │       ├── invitations.go
-│   │   │       ├── memberships.go
-│   │   │       ├── roles.go
-│   │   │       └── (+ 11 _test.go)
-│   │   └── platformadmin/                    ← internal/platformadmin
-│   │       ├── access_requests.go
-│   │       ├── handlers.go
-│   │       ├── postgres.go
-│   │       ├── signup.go
-│   │       └── (+ 5 _test.go)
-│   ├── captacion/
-│   │   ├── anclaje/                          ← internal/intake/anclaje
-│   │   │   ├── anclaje.go
-│   │   │   └── (+ 1 _test.go)
-│   │   ├── casebank/                         ← internal/casebank
-│   │   │   ├── anonimizar.go
-│   │   │   ├── casebank.go
-│   │   │   ├── postgres.go
-│   │   │   ├── semilla.go
-│   │   │   └── (+ 3 _test.go)
-│   │   ├── evidence/                         ← internal/evidence
-│   │   │   ├── evidence.go
-│   │   │   └── (+ 1 _test.go)
-│   │   ├── intake/                           ← internal/intake
-│   │   │   ├── machine.go
-│   │   │   ├── machine_postgres.go
-│   │   │   ├── memory.go
-│   │   │   ├── postgres.go
-│   │   │   ├── reanalisis.go
-│   │   │   ├── store.go
-│   │   │   └── (+ 7 _test.go)
-│   │   ├── intakeahead/                      ← internal/intakeahead
-│   │   │   ├── calentamiento.go
-│   │   │   ├── intakeahead.go
-│   │   │   ├── saneo.go
-│   │   │   └── (+ 2 _test.go)
-│   │   ├── intentcfg/                        ← internal/intentcfg
-│   │   │   ├── store.go
-│   │   │   ├── store_postgres.go
-│   │   │   └── (+ 2 _test.go)
-│   │   ├── pipeline/                         ← internal/intake/pipeline
-│   │   │   ├── backoff.go
-│   │   │   ├── memoria.go
-│   │   │   ├── pipeline.go
-│   │   │   ├── plaza.go
-│   │   │   └── (+ 8 _test.go)
-│   │   ├── reanalisis/                       ← internal/reanalisis
-│   │   │   ├── reanalisis.go
-│   │   │   └── (+ 2 _test.go)
-│   │   └── stages/                           ← internal/intake/stages
-│   │       ├── draft.go
-│   │       ├── fechas.go
-│   │       ├── match.go
-│   │       ├── match_cascada.go
-│   │       ├── match_lineas.go
-│   │       ├── p2.go
-│   │       ├── p3.go
-│   │       ├── p4.go
-│   │       ├── plazo.go
-│   │       ├── tope.go
-│   │       └── (+ 17 _test.go)
-│   ├── catalogo/                             ✚ paquete nuevo `catalogo`: el modelo del catálogo sale del carrito
-│   │   ├── catalog.go                        ↦ de conversacion/modules/cart/catalog.go (Catalog, Article, Variant, ParseCatalog…); importa conversacion/model
-│   │   ├── (+ tests: sus tests salen del carrito con él)
-│   │   ├── catalogimport/                    ← internal/catalogimport
-│   │   │   ├── contract.go
-│   │   │   ├── diff.go
-│   │   │   ├── prompt.go
-│   │   │   ├── tabular.go
-│   │   │   ├── template.go
-│   │   │   ├── validator.go
-│   │   │   └── (+ 5 _test.go)
-│   │   └── indice/                           ← internal/intake/catalogo  ⚠️ único renombre de paquete: catalogo → indice
-│   │       ├── cache.go
-│   │       ├── indice.go
-│   │       ├── normalizador.go
-│   │       └── (+ 5 _test.go)
-│   ├── conversacion/
-│   │   ├── admin/                            ← internal/flujos/admin
-│   │   │   ├── doc.go
-│   │   │   ├── durable_flow.go
-│   │   │   ├── handlers.go
-│   │   │   ├── sessions.go
-│   │   │   ├── triggers.go
-│   │   │   └── (+ 7 _test.go)
-│   │   ├── content/                          ← internal/flujos/content
-│   │   │   ├── content.go
-│   │   │   ├── json.go
-│   │   │   ├── router.go
-│   │   │   ├── static.go
-│   │   │   └── (+ 3 _test.go)
-│   │   ├── engine/                           ← internal/flujos/engine
-│   │   │   ├── consulta.go
-│   │   │   ├── engine.go
-│   │   │   └── (+ 9 _test.go)
-│   │   ├── events/                           ← internal/flujos/events
-│   │   │   ├── dispatcher.go
-│   │   │   ├── events.go
-│   │   │   ├── kinds.go
-│   │   │   ├── menu.go
-│   │   │   ├── store.go
-│   │   │   ├── summary.go
-│   │   │   ├── thread_reader.go
-│   │   │   └── (+ 14 _test.go)
-│   │   ├── model/                            ← internal/flujos/model
-│   │   │   ├── model.go
-│   │   │   └── (+ 1 _test.go)
-│   │   ├── modules/                          ← internal/flujos/modules
-│   │   │   ├── coerce.go
-│   │   │   ├── consulta.go
-│   │   │   ├── numbered.go
-│   │   │   ├── ports.go
-│   │   │   ├── registry.go
-│   │   │   ├── (+ 4 _test.go)
-│   │   │   ├── cart/                         ← internal/flujos/modules/cart  ✎ importa catalogo e intakes.SanitizeNote
-│   │   │   │   ├── buyer.go
-│   │   │   │   ├── cart.go
-│   │   │   │   ├── consulta.go
-│   │   │   │   ├── effects.go
-│   │   │   │   ├── preresolutor.go
-│   │   │   │   ├── prime.go
-│   │   │   │   ├── projection.go
-│   │   │   │   ├── resume.go
-│   │   │   │   ├── revalidate.go
-│   │   │   │   ├── screens.go
-│   │   │   │   ├── state.go
-│   │   │   │   ├── troceo.go
-│   │   │   │   ├── validate.go
-│   │   │   │   ├── variants.go
-│   │   │   │   └── (+ 25 _test.go)
-│   │   │   ├── media/                        ← internal/flujos/modules/media
-│   │   │   │   ├── media.go
-│   │   │   │   └── (+ 1 _test.go)
-│   │   │   ├── menu/                         ← internal/flujos/modules/menu
-│   │   │   │   ├── menu.go
-│   │   │   │   └── (+ 1 _test.go)
-│   │   │   └── survey/                       ← internal/flujos/modules/survey
-│   │   │       ├── projection.go
-│   │   │       ├── survey.go
-│   │   │       └── (+ 2 _test.go)
-│   │   ├── runtime/                          ← internal/flujos/runtime
-│   │   │   ├── aggregator.go
-│   │   │   ├── event_effects.go
-│   │   │   ├── event_lifecycle.go
-│   │   │   ├── event_sink.go
-│   │   │   ├── events.go
-│   │   │   ├── exit_menu.go
-│   │   │   ├── incoming.go
-│   │   │   ├── keyedmutex.go
-│   │   │   ├── log_sink.go
-│   │   │   ├── persist_sink.go
-│   │   │   ├── resume.go
-│   │   │   ├── runtime.go
-│   │   │   ├── runtime_engine.go
-│   │   │   ├── self_numbers.go
-│   │   │   ├── send.go
-│   │   │   ├── source_composer.go
-│   │   │   ├── start.go
-│   │   │   ├── streak.go
-│   │   │   ├── summary_sources.go
-│   │   │   ├── tenant_resolver.go
-│   │   │   ├── thread.go
-│   │   │   ├── webhook_sink.go
-│   │   │   ├── welcome.go
-│   │   │   └── (+ 75 _test.go)
-│   │   ├── store/                            ← internal/flujos/store
-│   │   │   ├── repository_memory.go
-│   │   │   ├── repository_postgres.go
-│   │   │   ├── store.go
-│   │   │   └── (+ 18 _test.go)
-│   │   ├── trigger/                          ← internal/flujos/trigger
-│   │   │   ├── config_resolver.go
-│   │   │   ├── store.go
-│   │   │   ├── store_memory.go
-│   │   │   ├── store_postgres.go
-│   │   │   ├── trigger.go
-│   │   │   └── (+ 5 _test.go)
-│   │   └── turnoacotado/                     ← internal/turnoacotado
-│   │       ├── prompt.go
-│   │       ├── troceado.go
-│   │       ├── turnoacotado.go
-│   │       └── (+ 2 _test.go)
-│   ├── edge/
-│   │   ├── diagnostics/                      ← internal/diagnostics
-│   │   │   ├── diagnostics.go
-│   │   │   ├── postgres.go
-│   │   │   └── (+ 2 _test.go)
-│   │   ├── enroll/                           ← internal/gateway/enroll
-│   │   │   ├── ca.go
-│   │   │   ├── doc.go
-│   │   │   ├── edgecert.go
-│   │   │   ├── server.go
-│   │   │   ├── service.go
-│   │   │   ├── store.go
-│   │   │   ├── store_postgres.go
-│   │   │   └── (+ 3 _test.go)
-│   │   ├── filtercfg/                        ← internal/filtercfg
-│   │   │   ├── filtercfg.go
-│   │   │   └── (+ 2 _test.go)
-│   │   ├── fleet/                            ← internal/gateway/fleet
-│   │   │   ├── fleet.go
-│   │   │   ├── repository_postgres.go
-│   │   │   ├── (+ 6 _test.go)
-│   │   │   └── fleethelpertest/              ← internal/gateway/fleet/fleettest   (D-F1-10: sufijo helpertest)
-│   │   │       └── slowrepo.go
-│   │   ├── grpc/                             ← internal/gateway/grpc
-│   │   │   ├── auth.go
-│   │   │   ├── config_push.go
-│   │   │   ├── connect.go
-│   │   │   ├── diagnostics.go
-│   │   │   ├── greeting.go
-│   │   │   ├── inference.go
-│   │   │   ├── plaza.go
-│   │   │   ├── readiness.go
-│   │   │   ├── receipt_sink.go
-│   │   │   ├── send.go
-│   │   │   ├── server.go
-│   │   │   ├── types.go
-│   │   │   ├── worklane.go
-│   │   │   └── (+ 37 _test.go)
-│   │   ├── inferstats/                       ← internal/inferstats
-│   │   │   ├── inferstats.go
-│   │   │   └── (+ 1 _test.go)
-│   │   ├── ingest/                           ← internal/ingest
-│   │   │   ├── dedupe.go
-│   │   │   ├── postgres.go
-│   │   │   └── (+ 3 _test.go)
-│   │   ├── lease/                            ← internal/gateway/lease
-│   │   │   ├── lease.go
-│   │   │   ├── repository.go
-│   │   │   ├── repository_postgres.go
-│   │   │   ├── signingkey.go
-│   │   │   └── (+ 3 _test.go)
-│   │   ├── receipts/                         ← internal/receipts
-│   │   │   ├── memory.go
-│   │   │   ├── postgres.go
-│   │   │   ├── receipts.go
-│   │   │   ├── sink.go
-│   │   │   └── (+ 2 _test.go)
-│   │   └── session/                          ← internal/gateway/session
-│   │       ├── registry.go
-│   │       └── (+ 1 _test.go)
-│   ├── inferencia/
-│   │   ├── degradation/                      ← internal/degradation
-│   │   │   ├── degradation.go
-│   │   │   ├── postgres.go
-│   │   │   └── (+ 2 _test.go)
-│   │   ├── llmvia/                           ← internal/llmvia
-│   │   │   ├── llmvia.go
-│   │   │   ├── notify.go
-│   │   │   ├── (+ 8 _test.go)
-│   │   │   └── local/                        ← internal/llmvia/local
-│   │   │       ├── calentamiento.go
-│   │   │       ├── local.go
-│   │   │       └── (+ 2 _test.go)
-│   │   ├── prompts/                          ← internal/prompts
-│   │   │   ├── prompts.go
-│   │   │   ├── volcar.go
-│   │   │   └── (+ 1 _test.go)
-│   │   └── tenantllm/                        ← internal/tenantllm
-│   │       ├── postgres.go
-│   │       ├── tenantllm.go
-│   │       └── (+ 1 _test.go)
-│   └── solicitudes/
-│       ├── contracts/                        ← internal/contracts
-│       │   └── (+ 1 _test.go)
-│       ├── intakes/                          ← internal/intakes
-│       │   ├── approve.go
-│       │   ├── aprobadas.go
-│       │   ├── buyerdata.go
-│       │   ├── crm.go
-│       │   ├── customernote.go
-│       │   ├── deposit.go
-│       │   ├── discard.go
-│       │   ├── edit.go
-│       │   ├── intakes.go
-│       │   ├── literal.go
-│       │   ├── memory.go
-│       │   ├── metricas.go
-│       │   ├── note.go                       ↦ de cart/note.go: SanitizeNote es el contrato de dos columnas de la solicitud
-│       │   ├── notifier.go
-│       │   ├── postgres.go
-│       │   ├── reanalisis.go
-│       │   ├── requestinfo.go
-│       │   ├── revalidate.go
-│       │   ├── revisions.go
-│       │   ├── service.go
-│       │   ├── shipping.go
-│       │   ├── status.go
-│       │   ├── summary.go
-│       │   ├── vencimiento.go
-│       │   ├── (+ 50 _test.go)
-│       │   ├── quotetext/                    ← internal/intakes/quotetext
-│       │   │   ├── borrador.go
-│       │   │   ├── precios.go
-│       │   │   ├── quotetext.go
-│       │   │   ├── render.go
-│       │   │   └── (+ 8 _test.go)
-│       │   └── telemetria/                   ← internal/intakes/telemetria
-│       │       ├── telemetria.go
-│       │       └── (+ 1 _test.go)
-│       ├── integrations/                     ← internal/integrations
-│       │   ├── crud.go
-│       │   ├── gate.go
-│       │   ├── outbox_stats.go
-│       │   ├── postgres.go
-│       │   ├── store.go
-│       │   ├── worker.go
-│       │   ├── (+ 6 _test.go)
-│       │   ├── crmpush/                      ← internal/integrations/crmpush
-│       │   │   ├── desde_intakes.go
-│       │   │   ├── push.go
-│       │   │   └── (+ 3 _test.go)
-│       │   └── sigv1/                        ← internal/integrations/sigv1
-│       │       ├── sigv1.go
-│       │       └── (+ 1 _test.go)
-│       └── tenantvars/                       ← internal/tenantvars
-│           ├── memory.go
-│           ├── postgres.go
-│           ├── tenantvars.go
-│           └── (+ 1 _test.go)
-├── nucleo/                                   ✚ núcleo compartido, sin módulo
-│   └── contact/                              ← internal/flujos/contact
-│       ├── contact.go
-│       ├── repository_memory.go
-│       ├── repository_postgres.go
-│       ├── resolver.go
-│       ├── contacthelpertest/                ✚ la suite de contrato y el doble de estado (D-F1-10; sufijo `helpertest`)
-│       └── (+ 4 _test.go nuevos: los 6 viejos no se mueven, E-8)
-├── platform/                                 soporte transversal (no es módulo); no se mueve
-│   ├── config/
-│   │   ├── config.go
-│   │   └── (+ 1 _test.go)
-│   ├── crypto/
-│   │   ├── field_cipher.go
-│   │   ├── keyprovider.go
-│   │   ├── keyprovider_kms.go
-│   │   ├── kms_gcp.go
-│   │   ├── rekey.go
-│   │   └── (+ 5 _test.go)
-│   ├── httpapi/
-│   │   ├── admin.go                          ✎ deja de importar gateway/session (ErrSessionOffline)
-│   │   ├── audit_mw.go                       ✎ deja de importar iam/ports/in (AuditInput)
-│   │   ├── authmw.go
-│   │   ├── crypto.go
-│   │   ├── health.go
-│   │   ├── ratelimit.go
-│   │   └── (+ 9 _test.go)
-│   ├── logging/
-│   │   ├── logging.go
-│   │   └── (+ 1 _test.go)
-│   ├── metrics/
-│   │   ├── inferstats.go                     ✎ deja de importar edge/inferstats
-│   │   ├── metrics.go
-│   │   ├── (+ 4 _test.go)
-│   │   └── flowlifecycle/
-│   │       ├── collector.go
-│   │       └── (+ 1 _test.go)
-│   ├── ratelimit/
-│   │   ├── ratelimit.go
-│   │   └── (+ 1 _test.go)
-│   └── storage/
-│       ├── objectstore/
-│       │   ├── presign.go
-│       │   ├── r2_factory.go
-│       │   └── (+ 1 _test.go)
-│       └── postgres/
-│           ├── connect.go
-│           ├── health.go
-│           ├── tenant.go
-│           ├── tx.go
-│           ├── (+ 8 _test.go)
-│           └── migrations/                   🔒 no se mueve (runner full-replay)
-│               ├── embed.go
-│               ├── migrate.go
-│               ├── schema.go
-│               ├── version.go
-│               ├── (+ 3 _test.go)
-│               └── structure/
-│                   └── 0001_…sql … 0084_…sql 84 migraciones, intactas
-└── apipublica/                               ✚ D-10 (2026-09-27): la cara HTTP única NUEVA, por olas; sustituye a publicapi/
-    ├── apipublica.go · cadena.go · respuesta.go · plazos.go · limits.go · instantes.go      lo común
-    ├── autenticacion.go · roleplane.go · audit.go · entitlements.go                         F2 · acceso
-    ├── messages.go · sessions.go · health.go · sessionadmin.go · diagnostics.go · intents.go  F3 · edge
-    ├── tenantllm.go · degradationnotices.go                                                 F4 · inferencia
-    ├── intakes.go · intakes_llm_gate.go · export.go · summary.go · quotesuggestion.go ·
-    │   plazoescritura.go · tenantvariables.go · integrations.go · crmcallback.go ·
-    │   eventstelemetry.go · eventstelemetry_store.go                                        F6 · solicitudes
-    ├── reanalyze.go                                                                         F7 · captación
-    ├── flows.go · media.go · tenantcontent.go · catalogimport.go · catalogtabular.go ·
-    │   catalogtemplate.go · conversationevents.go · conversationeventcancel.go               F8 · conversación
-    ├── apipublicahelpertest/arnes.go
-    └── (+ 1 _test.go por fichero)   fichero a fichero, con su origen: plan/FX-cara-http/diseno.md §1
-                                     (internal/publicapi/ — 33 + 64 _test.go — se borra en F10)
+cmd/casebank                                                     1 prod ·   1 test
+cmd/cobertura-ficheros                                           1 prod ·   1 test
+cmd/debug_inferencia                                             1 prod ·   0 test
+cmd/migrate                                                      1 prod ·   0 test
+cmd/prompts                                                      1 prod ·   0 test
+cmd/server                                                       1 prod ·   1 test
+internal/apipublica                                             47 prod ·  78 test
+internal/apipublica/apipublicahelpertest                         1 prod ·   1 test
+internal/apipublica/eventstelemetryhelpertest                    3 prod ·   1 test
+internal/arranque                                               28 prod ·  34 test
+internal/arranque/huellatest                                     2 prod ·   3 test
+internal/candados                                               11 prod ·  12 test
+internal/modulos                                                 1 prod ·   5 test
+internal/modulos/acceso/entitlements                             3 prod ·   7 test
+internal/modulos/acceso/entitlements/entitlementshelpertest      2 prod ·   1 test
+internal/modulos/acceso/iam/domain                               4 prod ·   4 test
+internal/modulos/acceso/iam/infra/identity                       4 prod ·   7 test
+internal/modulos/acceso/iam/infra/memory                         8 prod ·   8 test
+internal/modulos/acceso/iam/infra/postgres                       8 prod ·  14 test
+internal/modulos/acceso/iam/ports/in                             3 prod ·   1 test
+internal/modulos/acceso/iam/ports/out                            3 prod ·   0 test
+internal/modulos/acceso/iam/ports/out/outhelpertest              8 prod ·   0 test
+internal/modulos/acceso/iam/transport/http                       6 prod ·   6 test
+internal/modulos/acceso/iam/usecase                             11 prod ·  15 test
+internal/modulos/acceso/platformadmin                            6 prod ·  10 test
+internal/modulos/acceso/platformadmin/platformadminhelpertest    7 prod ·   1 test
+internal/modulos/captacion/anclaje                               1 prod ·   4 test
+internal/modulos/captacion/casebank                              5 prod ·   7 test
+internal/modulos/captacion/casebank/casebankhelpertest           2 prod ·   1 test
+internal/modulos/captacion/evidence                              1 prod ·   1 test
+internal/modulos/captacion/intake                                7 prod ·  10 test
+internal/modulos/captacion/intake/intakehelpertest              10 prod ·   2 test
+internal/modulos/captacion/intakeahead                           4 prod ·   8 test
+internal/modulos/captacion/intentcfg                             2 prod ·   3 test
+internal/modulos/captacion/intentcfg/intentcfghelpertest         1 prod ·   0 test
+internal/modulos/captacion/pipeline                              6 prod ·  13 test
+internal/modulos/captacion/pipeline/pipelinehelpertest           1 prod ·   1 test
+internal/modulos/captacion/reanalisis                            4 prod ·   5 test
+internal/modulos/captacion/stages                               14 prod ·  31 test
+internal/modulos/catalogo                                        1 prod ·   4 test
+internal/modulos/catalogo/catalogimport                         11 prod ·  14 test
+internal/modulos/catalogo/indice                                 3 prod ·   8 test
+internal/modulos/conversacion/admin                              6 prod ·   6 test
+internal/modulos/conversacion/content                            4 prod ·   4 test
+internal/modulos/conversacion/engine                             2 prod ·   5 test
+internal/modulos/conversacion/events                            11 prod ·  13 test
+internal/modulos/conversacion/events/eventshelpertest           12 prod ·   1 test
+internal/modulos/conversacion/model                              1 prod ·   1 test
+internal/modulos/conversacion/modules                            5 prod ·   5 test
+internal/modulos/conversacion/modules/cart                      20 prod ·  28 test
+internal/modulos/conversacion/modules/media                      1 prod ·   1 test
+internal/modulos/conversacion/modules/menu                       1 prod ·   1 test
+internal/modulos/conversacion/modules/survey                     2 prod ·   2 test
+internal/modulos/conversacion/runtime                           40 prod ·  65 test
+internal/modulos/conversacion/runtime/runtimehelpertest          7 prod ·   3 test
+internal/modulos/conversacion/store                             12 prod ·  15 test
+internal/modulos/conversacion/store/storehelpertest             15 prod ·   0 test
+internal/modulos/conversacion/trigger                            5 prod ·   8 test
+internal/modulos/conversacion/trigger/triggerhelpertest          2 prod ·   0 test
+internal/modulos/conversacion/turnoacotado                       3 prod ·   3 test
+internal/modulos/edge/diagnostics                                2 prod ·   4 test
+internal/modulos/edge/diagnostics/diagnosticshelpertest          4 prod ·   1 test
+internal/modulos/edge/enroll                                     7 prod ·   8 test
+internal/modulos/edge/enroll/enrollhelpertest                    3 prod ·   1 test
+internal/modulos/edge/filtercfg                                  1 prod ·   1 test
+internal/modulos/edge/fleet                                      6 prod ·   9 test
+internal/modulos/edge/fleet/fleethelpertest                      7 prod ·   2 test
+internal/modulos/edge/grpc                                      21 prod ·  54 test
+internal/modulos/edge/inferstats                                 1 prod ·   1 test
+internal/modulos/edge/ingest                                     2 prod ·   4 test
+internal/modulos/edge/ingest/ingesthelpertest                    2 prod ·   1 test
+internal/modulos/edge/lease                                      4 prod ·   8 test
+internal/modulos/edge/lease/leasehelpertest                      4 prod ·   1 test
+internal/modulos/edge/receipts                                   3 prod ·   4 test
+internal/modulos/edge/receipts/receiptshelpertest                2 prod ·   1 test
+internal/modulos/edge/session                                    1 prod ·   2 test
+internal/modulos/inferencia/degradation                          2 prod ·   4 test
+internal/modulos/inferencia/degradation/degradationhelpertest    4 prod ·   1 test
+internal/modulos/inferencia/llmvia                               3 prod ·  10 test
+internal/modulos/inferencia/llmvia/local                         3 prod ·   4 test
+internal/modulos/inferencia/prompts                              2 prod ·   2 test
+internal/modulos/inferencia/tenantllm                            2 prod ·   3 test
+internal/modulos/inferencia/tenantllm/tenantllmhelpertest        4 prod ·   1 test
+internal/modulos/solicitudes/intakes                            42 prod ·  60 test
+internal/modulos/solicitudes/intakes/intakeshelpertest          10 prod ·   0 test
+internal/modulos/solicitudes/intakes/quotetext                   6 prod ·   9 test
+internal/modulos/solicitudes/intakes/telemetria                  1 prod ·   1 test
+internal/modulos/solicitudes/integrations                        8 prod ·  18 test
+internal/modulos/solicitudes/integrations/crmpush                2 prod ·   5 test
+internal/modulos/solicitudes/integrations/integrationshelpertest   7 prod ·   1 test
+internal/modulos/solicitudes/integrations/sigv1                  1 prod ·   1 test
+internal/modulos/solicitudes/tenantvars                          3 prod ·   4 test
+internal/modulos/solicitudes/tenantvars/tenantvarshelpertest     1 prod ·   0 test
+internal/nucleo/contact                                          4 prod ·   4 test
+internal/nucleo/contact/contacthelpertest                       10 prod ·   1 test
+internal/nucleo/errhelpertest                                    1 prod ·   1 test
+internal/platform/config                                         1 prod ·   1 test
+internal/platform/crypto                                         5 prod ·   4 test
+internal/platform/httpapi                                        6 prod ·   9 test
+internal/platform/logging                                        1 prod ·   1 test
+internal/platform/metrics                                        2 prod ·   4 test
+internal/platform/metrics/flowlifecycle                          1 prod ·   0 test
+internal/platform/metrics/inferencia                             1 prod ·   0 test
+internal/platform/ratelimit                                      1 prod ·   1 test
+internal/platform/storage/objectstore                            2 prod ·   1 test
+internal/platform/storage/postgres                               3 prod ·   3 test
+internal/platform/storage/postgres/migrations                    4 prod ·   1 test
+test/procesos                                                    1 prod · 158 test
 ```
 
 ---
