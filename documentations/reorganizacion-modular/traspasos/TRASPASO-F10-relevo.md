@@ -11,7 +11,7 @@
 > | 4 | Preparación de la prueba en UAT y SHA a desplegar | F10-02 (T10.3) | escrita el 2026-10-11; el SHA de `dev` lo fija F10-03 |
 > | 5 | El cambio de binario en UAT, la prueba en local y el veredicto | F10-03 (T10.4–T10.6) | escrita el 2026-10-11; **sin ventana de 24 h** (Jhoan); veredicto: **«sigue»** |
 > | 6 | El relevo en el repo | F10-04 (T10.7–T10.13, T10.23) | escrita el 2026-10-11; PR #82 **integrado**; T10.14 va en F10-04b |
-> | 7 | Cierre del relevo (UAT desde el commit del relevo) | F10-05 | pendiente |
+> | 7 | Cierre del relevo (UAT desde el commit del relevo) | F10-05 (T10.15–T10.17) | escrita el 2026-10-11; UAT corre `cmd/server` @ `21d527af`; **`CERRADO 2026-10-11`**; PR #83 **abierto, en revisión** |
 
 ## 1 · Verdad de campo antes del relevo (T10.1)
 
@@ -465,3 +465,90 @@ tests nuevos, el del techo del pool en P0 y los tres del colector.
 
 PR #82 integrado. **Siguiente sesión: F10-05, bloque D** (T10.15–T10.17), sin esperar a **F10-04b** (T10.14), por
 D-F10-12; luego T10.26 y, la última, T10.25.
+
+## 7 · Cierre del relevo: gates, procesos y UAT desde el commit del relevo (T10.15–T10.17)
+
+Sesión F10-05, **2026-10-11** (las horas, en UTC, caen ya en el 2026-10-12), bloque D. Rama `reorg/f10-05-cierre`,
+partida de `dev` @ `21d527af` (el merge del PR #82); solo documentación. **PR #83 abierto, en revisión.** T10.14 no
+estaba hecha y no se esperó (D-F10-12).
+
+### 7.1 · Gates y procesos contra el único binario (T10.15)
+
+Sobre `dev` @ `21d527af`, sin tocar nada: la tarea no produce código. Cada `rc` se leyó de la última línea de su log.
+
+| Comprobación | Resultado |
+|---|---|
+| `make toolchain` | `TOOLCHAIN_RC=0` · `TOOLCHAIN=OK` (go1.26.5, golangci-lint v2.12.2) |
+| `GOWORK=off make ci-local` | **`GATE_RC=0`** · 179 paquetes `ok` (159 de la caché de `go test`) · 0 `FAIL` · lint `0 issues.` |
+| Cobertura (informe, no bloquea) | `FICHEROS_EVALUADOS=418` · `POR_DEBAJO=7` |
+| `GOTOOLCHAIN=go1.26.5 GOWORK=off go test -v ./...` | rc=0 · 13.406 `--- PASS` · 0 `--- FAIL` · **0 `--- SKIP`** |
+| `CUENTA=3 make test-procesos` (Docker, testcontainers, contra `cmd/server`) | **`RC=0 · PASS=3915 FAIL=0 SKIP=0`** · 527 s |
+
+Regla de conteo de los procesos: `--- PASS` como cadena en todo el log, sub-tests incluidos; 3.915 = 3 × 1.305, la
+cifra de §6.4. De nivel superior son 372 (3 × 124).
+
+El `git push origin dev` que pedía el «Hecho cuando» de T10.15 **no se hizo**: `dev` ya tenía el relevo por el PR #82.
+
+### 7.2 · El despliegue en UAT (T10.16)
+
+`origin/dev` seguía en `21d527af` al desplegar. Jhoan dio el visto bueno al SHA antes del reinicio.
+
+| Hora (UTC) | Qué |
+|---|---|
+| 01:35:43 | Captura: `bin/server.modular-e82b6e92` (md5 igual al del proceso vivo y al de `bin/server`); `/root/metricas-antes-f10-05.txt` (19 familias); volcado `/root/backups/wapp-antes-f10-05-2026-10-12.dump` (rc=0, 5,0 MB); `cmd/migrate -status`: `version=0.48.0 content_hash=5d92bd7bde18cc74 al_dia=true` |
+| 01:44:42 | Checkout del VPS limpio; `git fetch && git checkout dev && git reset --hard origin/dev` → `21d527af`. `GOWORK=off go build -o bin/server.new ./cmd/server` y `-o bin/migrate.new ./cmd/migrate`, rc=0 los dos (go1.26.5). `bin/server.new`: `path …/cmd/server`, `vcs.revision=21d527af…`, `vcs.modified=false`. `migrate -status` con el binario nuevo: mismo `content_hash`, registrado y embebido |
+| 01:49:27 | `mv -f bin/migrate.new bin/migrate`, `mv -f bin/server.new bin/server` (renombrado, no `cp`: §5.3); `systemctl restart wapp-cloud` y `systemctl restart wapp-client-console wapp-platform-console`, rc=0 |
+
+`cmd/migrate -status` necesita el entorno del servicio: sin cargar el `EnvironmentFile` falla contra una base por
+defecto (`database=wapp_cloud`) que no es la de UAT. Se corrió con el `.env` cargado en un subshell.
+
+No se tocó la unidad systemd, el `.env` ni el Edge.
+
+### 7.3 · Verificación (runbook de UAT §6 y §9, y §4.4 de esta acta)
+
+| # | Resultado |
+|---|---|
+| §6 · qué corre | **`path github.com/EduGoGroup/wapp-cloud-platform/cmd/server`**, **`vcs.revision=21d527af849c38ec1c1acf42397bdffd716e53f1`**, `vcs.modified=false`; md5 de `/proc/$pid/exe` = `bin/server` |
+| §9 · claves | `clave pública del lease … key_source=file` y `clave pública de cifrado … key_source=config`, las dos de las 01:49:27 |
+| fases | 9 líneas `arranque: fase completada` |
+| salud | `:8100/healthz` `healthy`, postgres `healthy`; `:8104`, `:8106`, `:8107` → 200; las cinco unidades `active` |
+| Edge | stream caído a las 01:49:27, lease aplicado a las 01:49:30; la sesión `20f7234b…`, `online` en `fleet_sessions`. Antes, un `LeaseUpdate rechazado`: el mismo que salió en los dos reinicios de §5.4, no es de este binario |
+| métricas | falta una familia respecto de la captura: `wapp_receipts_total`, un `CounterVec` sin incrementar desde el arranque (T-4) |
+| errores | 0 `level=ERROR` y 0 `level=WARN` en las 33 líneas del cambio (la parada del binario anterior y el arranque de este). La parada: `shutdown gRPC: nada en vuelo; Stop() sin agotar el plazo` |
+
+### 7.4 · Lo de §5.7, mirado otra vez: sigue SIN VER
+
+Jhoan decidió en la sesión **mirar sin echar las palancas**: la receta pide el login de una administradora de la empresa
+de prueba contra la identidad real, y con las palancas echadas la sesión de WhatsApp real y viva del Edge de UAT
+(`20f7234b…`) deja de hablar con WhatsApp mientras duren.
+
+Lo que se vio, en solo lectura, 20 s después del arranque:
+
+- Ollama responde (`Ollama is running`, unidad `active`); el cajero del Edge sigue escribiendo su línea de contadores
+  cada 5 min.
+- `intakes`: 0 en los últimos 7 días (9 en total, el último del 2026-09-04). `intake_jobs`: 28 `done` y 17 `failed`,
+  todos de septiembre; ninguno en curso ni atascado. `webhook_outbox`: vacía.
+- Ni una línea de inferencia en el log del Cloud ni en el del Edge desde el arranque.
+
+Por tanto **no se vio, y no se da por bueno**:
+
+- La conversación con el WhatsApp falso **en UAT** y lo de la §6 de la receta de FW (el socket real, el login contra la
+  identidad real, la herencia de las palancas por `wapp-ctl -autostart`, la custodia de la DEK en el VPS).
+- **Una inferencia real** (cajero y Ollama) pedida por el binario del relevo. UAT no tiene tráfico: no hubo ninguna.
+- El `diff` de textos en UAT, las entregas al CRM, y cualquier medida en el tiempo: no hay ventana.
+- `make ci-docker`, `make test-procesos-edge-real` y el job `integration` de `ci.yml` no se corrieron en esta sesión.
+
+### 7.5 · Cómo queda UAT
+
+Cloud **`cmd/server` @ `21d527af`** (`dev`), Edge @ `5d6f660` sin tocar, palancas bajas, la sesión real escuchando.
+En `bin/`: `server.viejo-9493cea` (**se conserva hasta T10.22**) y `server.modular-e82b6e92`, el binario que corría
+hasta hoy y la marcha atrás inmediata (§4.5 con ese nombre). D-F10-2, cumplida: el relevo llegó a UAT antes del
+2026-10-18.
+
+### CERRADO 2026-10-11
+
+El relevo está hecho en el repo (§6) y corre en UAT (§7.3). Lo que queda de F10 no pasa por esta acta: T10.14
+(F10-04b), el bloque E (T10.18–T10.21, [`F10-05b`](../plan/sesiones/F10-05b-cli-fuera-del-repo.md)), T10.26, T10.25 y,
+solo a petición de Jhoan, `main` (T10.22). Lo de §7.4 sigue abierto como cosa **no vista**.
+
+PR #83 abierto, en revisión.
