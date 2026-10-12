@@ -1,6 +1,6 @@
 # F10 · Relevo — `cmd/server` pasa al arranque nuevo y lo viejo se borra
 
-> **Estado**: 🔧 **Bloque E, T10.18–T10.21, hecho (F10-05b, 2026-10-12, PR #85 integrado)**; quedan T10.26 y T10.25. **bloque A cerrado (F10-02, 2026-10-11, PR #75 integrado)**: verdad de campo limpia, dorada de la
+> **Estado**: 🔧 **T10.26 hecha (F10-05c, 2026-10-12), PR #86 abierto, en revisión**; queda T10.25. **Bloque E, T10.18–T10.21, hecho (F10-05b, 2026-10-12, PR #85 integrado)**. **bloque A cerrado (F10-02, 2026-10-11, PR #75 integrado)**: verdad de campo limpia, dorada de la
 > huella congelada, acta abierta e inventario de divergencias. **Bloque B cerrado (F10-03, 2026-10-11, PR #81 integrado)**:
 > el modular corre en UAT, la prueba funcional pasó en local, sin ventana de 24 h (Jhoan); veredicto: «sigue». **T10.14 hecha (F10-04b, 2026-10-11, PR #84 integrado): bloque C cerrado entero**. **Bloque C integrado, salvo T10.14 (F10-04, 2026-10-11, PR #82 integrado)**: el relevo de código está hecho (T10.7–T10.13 y T10.23); T10.14, la documentación del repo, va en un PR propio (F10-04b). Spec escrita el
 > 2026-09-28 sobre `dev` @ `1b18932`.
@@ -339,4 +339,42 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
     repita el gate sin `mmdc` verá un verde que no es tal.
 45. **No corrido en esta sesión**: `make ci-docker` en ningún repo; `make test-procesos` (no se tocó código de este
     repo: solo documentación). `make ci-local` de este repo, sí (bloque de la sesión en `ESTADO.md`).
+46. **T10.26 en números** (F10-05c, 2026-10-12). Medido antes de tocar con un escáner de `go/scanner`: **718** líneas de
+    comentario en **590** ficheros citaban una ruta vieja (el hallazgo 23 decía «unas 735»: contaba líneas de `grep`,
+    que incluyen literales). 304 eran una cabecera que solo decía «Porta `internal/…` @ sha» y se quitaron con un
+    script; las otras 414, en 302 ficheros, se reescribieron una a una. Donde el comentario remitía a algo vivo se puso
+    la ruta de hoy, comprobada; donde era procedencia, se quitó. `-987 +629` líneas, todas de comentario.
+47. 🟡 **«Recuento → 0» vale para los comentarios, no para los `.go` enteros.** Quedan **52 líneas** con una ruta vieja
+    dentro de un **literal**: 24 en `internal/candados/fronteras_test.go` y 15 en sus `testdata/` (los casos del candado
+    de fronteras, que sigue probando reglas sobre un árbol «viejo» de mentira), 7 en tests de cableado de
+    `internal/arranque` (rutas de import prohibidas y mensajes de error que aún dicen `bootstrap.go`), 2 en
+    `processimports_test.go`, 1 en `responsecontroller_test.go` y los 3 `Help` de `/metrics` (D-36). Tocarlos es tocar
+    código. **T10.25 pide «0 en todo el repo»**: o su recuento excluye estos literales, o antes hay una tarea que los
+    reescriba. Lo decide Jhoan.
+48. **`TestHuellaVieja` no es un comentario** (venía del hallazgo 36). El nombre está en un literal de
+    `internal/arranque/huellatest/golden.go:43`, que es quien escribe la cabecera de `testdata/huella-vieja.golden`.
+    Corregirlo es cambiar código y regenerar la dorada: no se tocó. Los otros dos del hallazgo 36, sí: la cabecera de
+    `cmd/server/main.go` dice los cuatro listeners y `lease` dice que `public.tenants` es del módulo `acceso`.
+49. **«Los binarios no cambian» no se puede cumplir, y por qué no importa.** Quitar una línea de comentario mueve el
+    número de línea de todo lo que hay debajo, y esos números van dentro del binario (trazas, `pclntab`). La
+    comprobación que sí prueba «ni una línea de código» es otra: la secuencia de tokens de cada `.go`, sin comentarios y
+    con las directivas `//go:` y `//nolint`, es **idéntica** en los 1.656 ficheros antes y después; `gofmt -l` vacío.
+    El efecto secundario fue real: **160 citas `fichero:línea`** de `documentations/*.md` apuntaban a líneas que se
+    movieron; se re-apuntaron con el diff exacto de cada fichero (192 citas a ficheros tocados, 32 no se movían, 0 sin
+    correspondencia). 🔴 **Las de la documentación de la raíz de wApp** (las que T10.18 dejó con número de línea)
+    quedan desfasadas en una o más líneas cuando este PR entre: se re-apuntan con el mismo método, después de fusionar.
+50. **Lo que sigue hablando del código borrado sin nombrar su ruta** (no entraba: el recuento mide rutas). Hay muchos
+    «el viejo», «en la cara vieja», «Nombres (E-11), viejo → nuevo», y citas a `plan/F*/diseno.md`, que solo existe
+    dentro de esta carpeta y se irá con T10.25. Y afirmaciones que el relevo dejó falsas, vistas al pasar y **no
+    tocadas**: `limits.go` de `apipublica` («hasta entonces lo usa solo su test»); `crmpush/contrato_test.go` («se
+    re-toca en F8»); `casebank/seed.go` («Ninguna de las dos copias…»); `config_resolver_normalize_test.go` («el que
+    corre en UAT»); `platform/config/config.go` (`offlinePersistTimeout`, `publicapi.SendBudgetFrom`);
+    `test/procesos/p0_arranque_test.go` (números de línea del arranque viejo); y una docena de cabeceras de
+    `internal/arranque` que solo dicen «desde F8 ya no cablea ningún paquete viejo».
+51. **Candados con reglas que ya no pueden morder.** `Mapa`, `Puentes` y la regla 3 de fronteras hablan de un árbol que
+    no existe (en `internal/modulos/fronteras_test.go` el `Mapa` está vacío). Y el barrido de
+    `inferencia/llmvia/c2_via_test.go` prometía cubrir todo `internal/` «desde F10»: sigue en `modulos`, `nucleo`,
+    `arranque` y `apipublica`. Es código: deuda, no de esta tarea.
+52. **No corrido**: `make test-procesos` (los 29 ficheros de `test/procesos` tocados cambian solo comentarios: mismos
+    tokens) ni `make ci-docker`. `make ci-local`, sí: `GATE_RC=0`.
 
