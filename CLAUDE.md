@@ -41,7 +41,7 @@ frontend**. Tamaño, medido el 2026-10-11 (`.go` de `cmd`, `internal` y `test`, 
    `dev` o `main` solo si Jhoan lo pide **expresamente** en la conversación: que una ficha o un prompt
    de sesión diga «push a `dev`» **no** cuenta. Vale también para los sub-agentes en *worktrees*: sus
    commits se integran en la rama. El PR lo integra Jhoan en GitHub: ninguna sesión fusiona en `dev` en
-   local (`plan/sesiones/PROTOCOLO-CLI.md` §2). 🔴 **La documentación no da por fusionado un PR abierto** (Jhoan, 2026-10-11; sustituye a la del 2026-10-10): mientras el PR está en revisión dice «PR #N abierto, en revisión», y **solo justo antes de fusionar** un último commit de la rama la pasa a «PR #N integrado», «fase cerrada» y «siguiente sesión». Sigue sin corregirse nada en `dev` después. Skill `pre-merge-docs`. (Regla de Jhoan, 2026-10-03, tras F1-06, que aterrizó en `dev`.)
+   local. 🔴 **La documentación no da por fusionado un PR abierto** (Jhoan, 2026-10-11; sustituye a la del 2026-10-10): mientras el PR está en revisión dice «PR #N abierto, en revisión», y **solo justo antes de fusionar** un último commit de la rama la pasa a «PR #N integrado», «fase cerrada» y «siguiente sesión». Sigue sin corregirse nada en `dev` después. Skill `pre-merge-docs`. (Regla de Jhoan, 2026-10-03, tras F1-06, que aterrizó en `dev`.)
 
 ## Antes de tocar nada
 
@@ -80,12 +80,13 @@ Lo que la reconstrucción dejó como **norma del código**:
 - **Las skills del repo**: `validar-antes-de-cerrar` (los gates) · `procesos-testcontainers` (los
   tests contra Postgres) · `pre-merge-docs` (qué dice la documentación mientras el PR está abierto y
   qué al fusionarlo) · `describir-pr` (el cuerpo de **todo** PR: objetivo, dónde encaja, resultado).
-- **El expediente** de la reconstrucción (método, decisiones, fases y sesiones) sigue en
-  [`documentations/reorganizacion-modular/`](documentations/reorganizacion-modular/README.md) hasta que se
-  archive fuera del repo; su estado, en [`ESTADO.md`](documentations/reorganizacion-modular/ESTADO.md).
-  🔴 Esa carpeta **cuenta cómo se hizo** y está llena de rutas que ya no existen: **no es fuente para
-  saber qué hay en el código**. Si te arrancaron con el prompt de una sesión del plan, su protocolo
-  (`plan/sesiones/PROTOCOLO-CLI.md`) te dice qué leer.
+- **Las normas en detalle** (qué va en inglés, cómo se parte un fichero, las excepciones de «un
+  fichero un test», las listas cerradas y cómo se añade un módulo):
+  [`constitucion.md`](documentations/constitucion.md) §5.1 y §5.2.
+- **El expediente** de la reconstrucción (método, decisiones, fases y sesiones) **ya no está en este
+  repo**: se archivó en la documentación de wApp. Qué fue y dónde está:
+  [`modular-reorganization.md`](documentations/modular-reorganization.md). 🔴 Describe código que ya no
+  existe: **no es fuente para saber qué hay hoy**.
 
 ## Índice de `documentations/`
 
@@ -98,4 +99,4 @@ Lo que la reconstrucción dejó como **norma del código**:
 | [`esquema-postgres.md`](documentations/esquema-postgres.md) | Las 45 tablas, el esquema **0.48.0** y el runner full-replay |
 | [`operacion.md`](documentations/operacion.md) | Arranque local, `make` targets, release y depuración |
 | [`deuda.md`](documentations/deuda.md) | Deuda viva con `fichero:línea` y el código muerto verificado |
-| [`reorganizacion-modular/`](documentations/reorganizacion-modular/README.md) | El expediente de la reconstrucción por módulos, ya hecha: **no describe el código de hoy** |
+| [`modular-reorganization.md`](documentations/modular-reorganization.md) | Ficha de la reconstrucción por módulos, ya hecha: qué fue y dónde está archivado su expediente |

@@ -8,6 +8,11 @@
 > al D-50; **41 abiertos** y **9 cerrados** (D-7, D-10, D-19, D-35, D-38, D-39, D-40, D-42 y
 > D-49). Aparte, la tabla de §5 lleva seis marcas heredadas de los planes, una de ellas cerrada.
 > Un identificador cerrado no se reutiliza ni se borra.
+>
+> **«El expediente»**: varias entradas dicen de qué hallazgo o decisión de la reconstrucción modular
+> salieron (`plan/F8-conversacion/README.md`, D-F7-13…). Esas rutas `plan/…` son del expediente de la
+> reconstrucción, que ya no está en este repo: dónde está archivado, en
+> [`modular-reorganization.md`](modular-reorganization.md).
 
 **Este repo no marca deuda con `TODO`.** El `grep -rnE '// TODO\b|FIXME|HACK\b|XXX'` sobre
 `cmd` e `internal`, sin tests, devuelve **7** líneas y ninguna es una marca: seis son la palabra
@@ -348,7 +353,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 - **Dónde**: `internal/apipublica/intents.go:237` a `:245` (el gate `llm_intent` está escrito a
   mano, no con `entitlements.RequireFeature`). Lo fija el proceso P9
   (`test/procesos/p9_diagnostico_config_push_test.go:245`). Decidida el 2026-10-09 (D-F7-13 de
-  `reorganizacion-modular/plan/DECISIONES.md`).
+  `plan/DECISIONES.md`).
 - **Consecuencia**: sin la feature, el 403 es `{"error":"el plan del tenant no incluye la clasificación de
   intenciones"}`: es el **único** endpoint con gate de plan que no responde
   `{"error":"feature_not_enabled","feature":"<clave>"}`, e incumple la norma de la documentación funcional de la raíz
@@ -411,7 +416,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 ### D-32 · 🟡 El sobre de P2 no escapa lo que escribe el cliente
 
 > Abierta el 2026-10-10 por decisión de Jhoan (D-F8-18; hallazgo 34a de
-> `reorganizacion-modular/plan/F8-conversacion/README.md`). **Deuda post-relevo.**
+> `plan/F8-conversacion/README.md`). **Deuda post-relevo.**
 
 - **Dónde**: `ComposeSourceText` (`internal/modulos/conversacion/runtime/source_composer.go:217`). El sobre que
   recibe P2 lleva secciones con cabecera (contexto y mensajes) y el texto del cliente se pega tal cual en la de
@@ -429,7 +434,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 ### D-33 · 🟡 El resolver de tenant no filtra por el estado de la sesión
 
 > Abierta el 2026-10-10 por decisión de Jhoan (D-F8-19; hallazgo 34f de
-> `reorganizacion-modular/plan/F8-conversacion/README.md`). **Deuda post-relevo.** No investigada a fondo.
+> `plan/F8-conversacion/README.md`). **Deuda post-relevo.** No investigada a fondo.
 
 - **Dónde**: `PostgresTenantResolver` (`internal/modulos/conversacion/runtime/tenant_resolver.go:24`). La consulta no
   mira `state` (lo dice su comentario, `:23`): una sesión `loggedout` resuelve su tenant y pesa en el perfil igual que
@@ -444,7 +449,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 ### D-34 · 🟡 Un `item_added` reentregado tras el cierre reescribe las líneas de la solicitud cerrada
 
 > Abierta el 2026-10-10 por decisión de Jhoan (D-F8-20; hallazgos 25 y 27 de
-> `reorganizacion-modular/plan/F8-conversacion/README.md`). **Deuda post-relevo.** La vía de entrada no está
+> `plan/F8-conversacion/README.md`). **Deuda post-relevo.** La vía de entrada no está
 > confirmada.
 
 - **Dónde**: el proyector del carrito, `internal/modulos/conversacion/modules/cart/projection.go:160`: la segunda
@@ -467,7 +472,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 
 - **Qué es**: el servidor responde hoy distinto, a propósito, en varios casos que un consumidor puede estar pintando
   mal o no tratando. El inventario está hecho, leyendo el código y **sin ejecutar el binario**:
-  [`reorganizacion-modular/plan/F10-relevo/divergencias-visibles.md`](reorganizacion-modular/plan/F10-relevo/divergencias-visibles.md)
+  `plan/F10-relevo/divergencias-visibles.md` del expediente
   (las visibles, una por una, en su §5; el recuento y su regla, en su §1).
 - **El caso que la abrió**: `POST …/reanalyze` devuelve **500** «no se pudo pedir el re-análisis de la solicitud»
   cuando falla la composición del literal (`internal/apipublica/reanalyze.go:387`). **No se miró** cómo lo muestra la
@@ -485,7 +490,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 ### D-37 · 🟡 El hilo y la cola no se escriben en un solo acto: un mensaje puede entrar en dos ventanas
 
 > Abierta el 2026-10-10 por decisión de Jhoan (hallazgo 59 (f) de
-> `reorganizacion-modular/plan/F8-conversacion/README.md`). **Deuda post-relevo.** **Deducida leyendo el
+> `plan/F8-conversacion/README.md`). **Deuda post-relevo.** **Deducida leyendo el
 > código, no vista ni reproducida.**
 
 - **Dónde**: el camino del entrante escribe el mensaje en el hilo (`conversation_events`) y **después** lo apunta en
@@ -504,7 +509,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 
 - Cerrada el 2026-10-11: `make test-procesos-edge-real` corre el carrito con el Cloud y el Edge reales y un WhatsApp
   falso (`TestEdgeReal_CartConversation`). Para hacerlo a mano y en UAT:
-  [`receta-uat.md`](reorganizacion-modular/plan/FW-whatsapp-enchufable/receta-uat.md). Lo que no cubre tiene su
+  `plan/FW-whatsapp-enchufable/receta-uat.md` del expediente. Lo que no cubre tiene su
   número: D-48.
 
 ---
@@ -520,14 +525,14 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 ### D-40 · ✅ CERRADA · El árbol de `04` §3 no estaba cotejado con el `internal/modulos` real
 
 - Cerrada el 2026-10-11 (D-F10-8): el árbol de
-  [`04-estructura-final.md`](reorganizacion-modular/04-estructura-final.md) §3 se regenera desde el código con
+  `04-estructura-final.md` §3 (del expediente) se regeneró desde el código con
   `go list`, en el mismo cambio que reescribe esta documentación contra el árbol.
 
 ---
 
 ### D-41 · 🟡 Un 404 del canje de la API key se lee como «la persona no está en el padrón»
 
-> Abierta el 2026-10-11 (hallazgo 65 de `reorganizacion-modular/plan/F9-procesos/README.md`). **Deuda post-relevo.**
+> Abierta el 2026-10-11 (hallazgo 65 de `plan/F9-procesos/README.md`). **Deuda post-relevo.**
 
 - **Qué hay hoy**: `mapExchangeError` (`internal/modulos/acceso/iam/infra/identity/m2m_wire.go:108`) devuelve el error
   crudo para los estados que no están en su tabla, y el traductor de la operación de negocio lo vuelve a traducir. Con
@@ -545,13 +550,13 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 
 - Cerrada el 2026-10-11, el mismo día que se abrió: los 135 ficheros leídos, 319 bloques → 85 promesas con su test,
   1 caso en su suite, 8 guardas ya decididas y 225 defensivas (hallazgos 71 y 72 de
-  `reorganizacion-modular/plan/F9-procesos/README.md`).
+  `plan/F9-procesos/README.md`).
 
 ---
 
 ### D-43 · 🟡 El arnés de procesos no arranca un servidor con otro entorno sobre una base existente
 
-> Abierta el 2026-10-11 (hallazgos 57, 42 y 70 de `reorganizacion-modular/plan/F9-procesos/README.md`). Decisión de
+> Abierta el 2026-10-11 (hallazgos 57, 42 y 70 de `plan/F9-procesos/README.md`). Decisión de
 > Jhoan: **no** se amplía ahora; se anota para hacerlo **si se le saca provecho más allá de un caso**.
 
 - **Qué hay hoy**: `opcionesServidor` (`test/procesos/servidor_test.go:56`) no admite variables de entorno extra y
@@ -569,7 +574,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 
 ### D-44 · 🟡 La bitácora del canje calla dos de sus fallos
 
-> Abierta el 2026-10-11 (hallazgo 73 de `reorganizacion-modular/plan/F9-procesos/README.md`). **Deuda post-relevo.**
+> Abierta el 2026-10-11 (hallazgo 73 de `plan/F9-procesos/README.md`). **Deuda post-relevo.**
 
 - **Qué hay hoy**: el rastro de `Exchange` (`internal/modulos/acceso/iam/usecase/exchange.go`) es una línea «ok» o
   «error». El fallo de `resolveGrants` (`:203` a `:206`) y el de firma (`:219` a `:222`) devuelven sin
@@ -581,7 +586,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 
 ### D-45 · Limpieza: comentarios que no dicen la verdad y ramas que no pueden ejecutarse
 
-> Abierta el 2026-10-11 (hallazgo 73 de `reorganizacion-modular/plan/F9-procesos/README.md`). Ninguna cambia
+> Abierta el 2026-10-11 (hallazgo 73 de `plan/F9-procesos/README.md`). Ninguna cambia
 > conducta. Las siete rutas existen hoy; **los comentarios y las ramas no se releyeron uno a uno en esta revisión**,
 > salvo el de `rekey.go`.
 
@@ -597,7 +602,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 
 ### D-46 · 🟡 El servidor sigue despachando a un Edge con el lease revocado, y da por mostrada la pantalla
 
-> Abierta el 2026-10-11 (hallazgo 34 de `reorganizacion-modular/plan/FW-whatsapp-enchufable/README.md`). Decisión de
+> Abierta el 2026-10-11 (hallazgo 34 de `plan/FW-whatsapp-enchufable/README.md`). Decisión de
 > Jhoan: **deuda post-relevo**.
 
 - **Qué hay hoy**: con el lease de un Edge revocado, un entrante sigue subiendo (el lease no gobierna lo que entra) y
@@ -617,7 +622,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 
 ### D-47 · 🟡 La primera pantalla del carrito no usa el `page_size` de la empresa
 
-> Abierta el 2026-10-11 (hallazgo 35 de `reorganizacion-modular/plan/FW-whatsapp-enchufable/README.md`). Decisión de
+> Abierta el 2026-10-11 (hallazgo 35 de `plan/FW-whatsapp-enchufable/README.md`). Decisión de
 > Jhoan: **deuda post-relevo**.
 
 - **Qué hay hoy**: `tenant_settings.page_size` lo siembra la política de reanudación al llegar cada mensaje de un
@@ -636,7 +641,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 
 ### D-48 · 🟡 El carrito con Edge real es un recorrido paralelo al del Edge falso, no la misma función
 
-> Abierta el 2026-10-11 (hallazgo 33 de `reorganizacion-modular/plan/FW-whatsapp-enchufable/README.md`). **Deuda de
+> Abierta el 2026-10-11 (hallazgo 33 de `plan/FW-whatsapp-enchufable/README.md`). **Deuda de
 > test.** Decisión de Jhoan: **deuda post-relevo**.
 
 - **Qué hay hoy**: dos funciones recorren el mismo carrito: `TestP3_CartConversation`
@@ -672,6 +677,12 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
   `responsecontroller_test.go`; y los 3 textos `Help` de `/metrics`.
 - **Por qué no se tocó**: son código, no comentarios. Reescribirlos pide decidir antes qué vigila el candado de
   fronteras ahora que ese árbol no existe (su `Mapa` está vacío en `internal/modulos/fronteras_test.go`).
+- **Fuera de ese recuento, y sin arreglo posible** (medido el 2026-10-12 con el patrón de rutas borradas de
+  `scripts/check-docs-tree.sh` sobre todo el repo, no solo los `.go`): **26** líneas en **18** migraciones de
+  `internal/platform/storage/postgres/migrations/structure/` (22 en comentarios `--` y 4 dentro de un
+  `COMMENT ON`, que además vive en la base) y **11** en `CHANGELOG.md`. Las migraciones no se editan: el runner
+  es full-replay por hash (I-CP-7) y cambiar un comentario cambia el hash. El `CHANGELOG.md` cuenta versiones ya
+  publicadas. Y una línea más en un dato de prueba, `internal/candados/testdata/cobertura/pasa/perfil.out`.
 - **Veredicto**: pendiente. Los 3 `Help` cambian texto observable: van con D-36. El resto, un commit por paquete.
 
 ---

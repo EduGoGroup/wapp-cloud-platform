@@ -40,8 +40,8 @@ var contractAdapterDirs = map[string]string{
 //     internal/modulos/acceso/iam/infra/postgres e internal/apipublica/eventstelemetryhelpertest →
 //     internal/apipublica.
 //
-// Añadir un par exige antes una decisión en
-// documentations/reorganizacion-modular/plan/DECISIONES.md.
+// Añadir un par exige antes una decisión escrita de Jhoan
+// (documentations/constitucion.md §5.1, «Las tres listas cerradas»).
 func ContractAdapterDirs() map[string]string {
 	// Clone y no el mapa: devolver la variable dejaría a cualquier llamante ampliar la
 	// excepción (o borrarla) para todos los demás.

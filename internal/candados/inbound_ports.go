@@ -25,9 +25,9 @@ var inboundPortDirsWithoutSuite = []string{
 //     los cubre el test del usecase que los implementa (D-F2-5, Jhoan, 2026-09-30; excepción
 //     aplicada en el candado el 2026-10-04).
 //
-// Añadir un directorio exige antes una decisión en
-// documentations/reorganizacion-modular/plan/DECISIONES.md; sin ella, el puerto lleva su
-// suite como manda 05 E-3.
+// Añadir un directorio exige antes una decisión escrita de Jhoan
+// (documentations/constitucion.md §5.1, «Las tres listas cerradas»); sin ella, el puerto
+// lleva su suite como manda E-3.
 func InboundPortDirsWithoutSuite() []string {
 	// Clone y no el slice: devolver la variable dejaría a cualquier llamante ampliar la
 	// excepción (o borrarla) para todos los demás.

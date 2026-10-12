@@ -50,8 +50,8 @@ func FileSize(fuentes []Fuente) []Violacion {
 // FileLinesLimit cuando nació E-13 (2026-10-04), con su techo: el número de líneas que tenían.
 // No se parten en la sesión que puso la regla (no eran suyos) y se parten cuando su fase o una
 // sesión dedicada los toque; mientras, no pueden crecer. Devuelve una copia nueva en cada
-// llamada. Quitar un fichero de la lista es lo esperado; añadir uno exige una decisión en
-// documentations/reorganizacion-modular/plan/DECISIONES.md.
+// llamada. Quitar un fichero de la lista es lo esperado; añadir uno exige una decisión
+// escrita de Jhoan (documentations/constitucion.md §5.1, «Las tres listas cerradas»).
 func OversizedFiles() map[string]int {
 	// Clone y no el mapa: devolver la variable dejaría a cualquier llamante ampliar la
 	// excepción (o subir un techo) para todos los demás.

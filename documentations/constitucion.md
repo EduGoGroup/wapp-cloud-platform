@@ -244,7 +244,7 @@ Ejemplo canónico: `internal/modulos/solicitudes/intakes/status.go:25`.
 
 En el código, los **nombres** (ficheros, tipos, funciones, variables, tests) van en **inglés** y
 los **comentarios** y la documentación en **español**
-([`05` E-11](reorganizacion-modular/05-metodo-contratos-y-tdd.md#e-11--nombres-en-inglés-en-español-solo-los-comentarios)).
+(E-11, [§5.1](#51--las-normas-que-dejó-la-reconstrucción)).
 Los textos observables —mensajes de error, claves de log, literales que viajan al usuario— son
 contrato y se conservan tal cual están, estén en el idioma que estén: no los «corrijas».
 
@@ -401,6 +401,124 @@ tabla y hace concluir que el dominio no está construido.
 - **Nada de `TODO`/`FIXME`.** La deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡, y se anota
   en `deuda.md`. No hay ni una marca `TODO:` o `FIXME` en el código (medido el 2026-10-11): las
   apariciones de `TODO` a grep pelado son la palabra española *todo* en mayúsculas.
+
+### 5.1 · Las normas que dejó la reconstrucción
+
+`internal/` se reconstruyó por módulos entre el 2026-09-27 y el 2026-10-11 (qué fue y dónde está
+su expediente: [`modular-reorganization.md`](modular-reorganization.md)). El método con el que se
+hizo terminó con ella; estas son las reglas suyas que **siguen obligando** a quien escriba código
+mañana. Conservan su identificador (`E-n`) porque los comentarios del código las citan así
+(«05 E-13», «E-9»): `05` era el documento del método, y lo que de él sigue vivo es esta sección.
+
+**E-3 · Un fichero, un test.** Por cada `x.go` de producción hay un `x_test.go` en el mismo
+directorio, y cubre el contrato de `x.go`, no el de sus vecinos. Lo vigila `TestUnFicheroUnTest`.
+Las excepciones se **comprueban**, no se listan:
+
+| Fichero | Qué lleva en su lugar |
+|---|---|
+| `doc.go` sin ninguna declaración | Nada |
+| Fichero solo de `//go:embed` | Lo prueba el test de quien lee lo embebido |
+| Fichero **solo de interfaces** (un puerto) | Una **suite de contrato** en el paquete hermano `<paquete>helpertest`: una función `Contrato(t *testing.T, …)` que cada implementación ejecuta desde su propio test. Sin esa suite, el puerto necesita test |
+| Puerto de **entrada** de un directorio de `candados.InboundPortDirsWithoutSuite` (`internal/candados/inbound_ports.go`; hoy solo `internal/modulos/acceso/iam/ports/in`) | Sin suite: lo cubre el test del caso de uso que lo implementa |
+
+Los paquetes `…helpertest` (suites y dobles de test) quedan fuera de este candado; un doble con
+lógica lleva igualmente su test.
+
+**E-5 · Ni un `t.Skip`.** Un test que no puede correr **falla**; no se salta, ni por falta de
+Postgres ni para aparcar algo a medias. Un `--- SKIP` bajo `rc=0` esconde lo que una pantalla en
+rojo enseña. Medido el 2026-10-12: cero llamadas reales en `cmd`, `internal` y `test`
+(`grep -rn 't\.Skip' --include='*_test.go' cmd internal test` da 14 líneas, todas en
+`internal/candados/sinbdviva*_test.go`, que es el candado que las prohíbe y las nombra para
+probarse).
+
+**E-6 · Los tests de fichero no tocan la base.** Lo que habla con Postgres se prueba en dos
+sitios: el **puerto** tiene su suite de contrato, que corre ya contra un doble en memoria del
+paquete `…helpertest`; y **la misma suite** corre contra el adaptador Postgres en
+`test/procesos/<paquete>_contrato_test.go`, con testcontainers. La suite se escribe una vez y
+sirve a las dos. El adaptador Postgres lleva además su test unitario con lo que se prueba sin
+base (constructor, validación de argumentos, mapeo de filas y de errores); su cobertura unitaria
+es baja a propósito. El doble en memoria **imita lo que hace Postgres en producción**: un doble
+que promete lo que producción no hace es peor que no tenerlo.
+
+**E-7 · El test prueba conducta.** Se prueba lo que el fichero promete, nunca cómo lo hace. Leer
+el código como texto (AST) queda para los candados y los tests de cableado del arranque.
+
+**E-9 · Todo exportado se nombra en su test, y la cobertura no bloquea.** Un símbolo exportado de
+`x.go` que no aparece en `x_test.go` hace fallar `TestExportadosCubiertos`. La cobertura, en
+cambio, es un **informe**: `make cobertura-ficheros` sale con `rc=0` aunque haya ficheros por
+debajo de su línea de referencia. La meta son tests que detecten un fallo de lógica, no una cifra.
+
+**E-11 · Nombres en inglés; en español, los comentarios.**
+
+| En **inglés** | En **español** |
+|---|---|
+| Nombres de fichero, de directorio y de paquete · tipos, interfaces, funciones, métodos, campos, variables, constantes y errores centinela · nombres de `Test…`, de los subtests (`t.Run`) y de las etiquetas de caso | Los comentarios · la documentación · los mensajes de commit · los **mensajes de fallo de los tests** (`t.Errorf`, `t.Fatalf`) |
+
+Tres cosas que **no** cambian: (1) los textos observables se copian literales aunque estén en
+español —el identificador va en inglés, el texto no se toca:
+`var ErrInvalidRef = errors.New("contact_ref inválida")`—; (2) lo ya escrito conserva su nombre:
+no hay renombres masivos ni «de paso»; (3) el vocabulario que nació en español se queda —los
+siete módulos, `nucleo`, `arranque`, `apipublica`, `candados`, `Contrato`, `Montaje`, el sufijo
+`_contrato` de los ficheros de una suite y la etiqueta de compilación `integracion`—. No tiene
+candado: el idioma lo vigila quien revisa.
+
+**E-13 · Tamaño de fichero.** Objetivo ≤ 500 líneas por `.go`, de producción **y** de test;
+tolerancia hasta 600 cuando partir rompería un tema que se lee de una vez; por encima de 600 se
+parte. Lo vigila `TestFileSize`. Cómo se parte:
+
+- por tema, **solo moviendo declaraciones** de primer nivel con su comentario, sin cambiar un byte;
+- cada trozo lleva el **sufijo de su origen** y una línea que lo dice: `postgres_test.go` →
+  `postgres_has_test.go`, `postgres_list_test.go`…;
+- un trozo de producción `x_<tema>.go` lleva su gemelo `x_<tema>_test.go` (E-3) y sus exportados
+  se nombran ahí (E-9); el `x_test.go` que conserva el nombre sigue nombrando todos los exportados
+  de `x.go`;
+- los trozos de una suite se llaman `<tema>_contrato.go`, no `contrato_<tema>.go`.
+
+Si al partir se mueven líneas, se re-apuntan las citas `fichero:línea` de esta documentación.
+
+**Las tres listas cerradas.** Son excepciones con nombre y apellido; **ampliar cualquiera pide una
+decisión escrita de Jhoan**, no un commit:
+
+| Lista | Dónde | Qué exime |
+|---|---|---|
+| `candados.OversizedFiles` | `internal/candados/filesize.go` | Los ficheros que ya pasaban de 600 líneas cuando nació E-13, cada uno con su techo: no pueden crecer |
+| `candados.InboundPortDirsWithoutSuite` | `internal/candados/inbound_ports.go` | Los directorios de puertos de entrada sin suite de contrato (E-3) |
+| `candados.ContractAdapterDirs` | `internal/candados/contract_adapters.go` | Los pares suite → adaptador en que el adaptador Postgres **no** vive en el paquete padre de su suite: el `*_contrato_test.go` de `test/procesos/` que importa la suite puede importar también ese adaptador. Fuera de eso, un proceso no importa dominio |
+
+**Más convenciones, sin candado.** Las vigila quien revisa:
+
+- **El SQL vive en ficheros `*postgres*`**, separado de la lógica del paquete.
+- **El reloj se inyecta** donde la lógica **decide** por el tiempo (vencimientos, ventanas,
+  rachas): es lo que deja probarla sin dormir. No es una prohibición de `time.Now()`.
+- **Apagarse no es un fallo.** Un trabajo de fondo cortado por la cancelación del contexto se
+  devuelve sin cobrarle el intento y sin una línea a `ERROR`.
+- **Al borrar código, su documentación se reescribe.** No se deja un apartado «(histórico)» ni dos
+  versiones de lo mismo: la doble información es lo que más desvía a quien lee, persona o modelo.
+  Si un documento o un comentario nombra una ruta que no existe, el que está mal es él.
+
+### 5.2 · Cómo se añade un módulo
+
+Un módulo nuevo es raro —los siete salieron de medir el código, no de un organigrama— y lo decide
+Jhoan. Si se decide, toca cinco sitios, y los candados avisan de los que falten:
+
+1. **La carpeta**: `internal/modulos/<módulo>/`, con su paquete o sus subpaquetes. Lo que vayan a
+   compartir dos módulos no va en ninguno de los dos: va en `internal/nucleo/`.
+2. **Las fronteras**: una entrada en la tabla `Capas` de `internal/modulos/fronteras_test.go` con
+   los módulos que **puede** importar (vacía si es hoja), y su nombre en `Conmutados` y en
+   `allModules` del mismo fichero. Cada import nuevo módulo→módulo es una arista que se añade ahí
+   a propósito: `TestFronteras` falla con cualquiera que no esté.
+3. **El cableado**: se construye en la fase de `internal/arranque/` que le corresponda (la lista
+   `fases` de `internal/arranque/orquestador.go`), nunca en `cmd/server`.
+4. **Lo que expone**: las rutas públicas se montan en `internal/apipublica/`, en un fichero de su
+   tema. Rutas, rpc, métricas y goroutines nuevas cambian la huella:
+   `internal/arranque/testdata/huella-vieja.golden` se actualiza **a propósito** y en el mismo
+   commit, nunca «para que pase» (`TestHuella`).
+5. **Los tests**: cada fichero nace con su gemelo (E-3) y sus exportados nombrados (E-9); si
+   habla con Postgres, su puerto trae suite de contrato y la corrida contra la base va a
+   `test/procesos/` (E-6).
+
+Y la documentación: la tabla de módulos y la de aristas de [`arquitectura.md`](arquitectura.md)
+§4.1, y lo que exponga, en [`contratos.md`](contratos.md).
 
 ---
 
