@@ -1,5 +1,10 @@
 # Reorganización modular de `internal/` — portal
 
+> ✅ **2026-10-11: relevo hecho en el repo y en UAT.** `cmd/server` corre sobre `internal/arranque`, el código anterior
+> está borrado (PR #82) y UAT corre ese binario (PR #83). La documentación de la pieza ya describe el árbol que existe
+> (T10.14). Queda lo de fuera del repo (bloque E), los comentarios del código (T10.26) y archivar esta carpeta
+> (T10.25). El estado al día vive en [`ESTADO.md`](ESTADO.md); lo de abajo es el resumen anterior.
+>
 > ✎ **2026-10-11: F6, F7 y F8 cerradas** (2026-10-08, 2026-10-09 y 2026-10-11). Los ocho módulos están reconstruidos y
 > conmutados en `cmd/server-modular` (`FaseActual = 8`, 0 adaptadores, 0 puentes de import, `Conmutados` completo).
 > Quedan **F9-D** (el cierre de los procesos) y **F10** (el relevo). El párrafo de abajo es el resumen anterior.
