@@ -10,7 +10,7 @@
 > | 3 | Capturas de referencia (`cmd/prompts`, `cmd/casebank`) | F10-02 (T10.1) | escrita el 2026-10-11 |
 > | 4 | Preparación de la prueba en UAT y SHA a desplegar | F10-02 (T10.3) | escrita el 2026-10-11; el SHA de `dev` lo fija F10-03 |
 > | 5 | El cambio de binario en UAT, la prueba en local y el veredicto | F10-03 (T10.4–T10.6) | escrita el 2026-10-11; **sin ventana de 24 h** (Jhoan); veredicto: **«sigue»** |
-> | 6 | El relevo en el repo | F10-04 (T10.7–T10.13, T10.23) | escrita el 2026-10-11; PR #82 **abierto, en revisión**; T10.14 va en F10-04b |
+> | 6 | El relevo en el repo | F10-04 (T10.7–T10.13, T10.23) | escrita el 2026-10-11; PR #82 **integrado**; T10.14 va en F10-04b |
 > | 7 | Cierre del relevo (UAT desde el commit del relevo) | F10-05 | pendiente |
 
 ## 1 · Verdad de campo antes del relevo (T10.1)
@@ -396,8 +396,8 @@ viejo para corregirse (D-FW-3), que además sigue en `main` y en el historial.
 
 ## 6 · El relevo en el repo (T10.7–T10.13 y T10.23)
 
-Sesión F10-04, **2026-10-11**, rama `reorg/f10-04-relevo` partida de `dev` @ `ddf8045d`. **PR #82 abierto, en
-revisión.** Por decisión de Jhoan en la sesión, T10.14 (la documentación del repo) sale a un PR propio, F10-04b.
+Sesión F10-04, **2026-10-11**, rama `reorg/f10-04-relevo` partida de `dev` @ `ddf8045d`. **PR #82
+integrado.** Por decisión de Jhoan en la sesión, T10.14 (la documentación del repo) sale a un PR propio, F10-04b.
 
 ### 6.1 · Los commits
 
@@ -463,5 +463,5 @@ tests nuevos, el del techo del pool en P0 y los tres del colector.
   2026-10-11; las 5 de producción que callan conducta prometida, los 17 `#nosec` y `nolintlint` se ven entonces
   (`deuda.md` D-31).
 
-PR #82 abierto, en revisión. Pendiente de fusionarlo; después, por D-F10-12, el bloque D de **F10-05** (T10.15–T10.17)
-sin esperar a **F10-04b** (T10.14); luego T10.26 y, la última, T10.25.
+PR #82 integrado. **Siguiente sesión: F10-05, bloque D** (T10.15–T10.17), sin esperar a **F10-04b** (T10.14), por
+D-F10-12; luego T10.26 y, la última, T10.25.

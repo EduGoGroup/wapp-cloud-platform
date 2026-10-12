@@ -149,7 +149,7 @@ Sesión: [`F8-06`](../sesiones/F8-06-cli-cara-http-y-conmutar.md) (💻: el tram
 
 Sesión: [`F10-04`](../sesiones/F10-04-cli-relevo.md).
 
-- [x] **TX.25 · relevo: se borra la cara vieja y el estrangulador** · 💻 · dep. F9 cerrada · cumple RX.6.c — hecha en `db5657b4` (F10-04, T10.9, 2026-10-11; PR #82, en revisión). `mudanzas.go` (producción) se queda; de `mudanzas_test.go` solo sobrevive `peticionDe`, en `face_routes_test.go`
+- [x] **TX.25 · relevo: se borra la cara vieja y el estrangulador** · 💻 · dep. F9 cerrada · cumple RX.6.c — hecha en `db5657b4` (F10-04, T10.9, 2026-10-11; PR #82, integrado). `mudanzas.go` (producción) se queda; de `mudanzas_test.go` solo sobrevive `peticionDe`, en `face_routes_test.go`
   - **Hecho cuando**: `internal/publicapi/` borrado (33 + 64 ficheros); `apipublica/estrangulador.go` y su test borrados; el arranque sirve `apipublica.Cara` directamente; `mudanzas_test.go` y `testdata/mapa.tsv` borrados (su trabajo terminó); la huella resuelve contra la `Cara`
   - **Gate**: `make ci-local; echo rc=$?` → `rc=0` · `ls internal/publicapi internal/apipublica/estrangulador.go` → «No such file»
   - **Commit**: parte de `relevo: …`
