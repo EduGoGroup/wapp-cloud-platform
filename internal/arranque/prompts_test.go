@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,9 +56,20 @@ func capturedLogLine(t *testing.T, logged string) string {
 func TestLoadPromptTemplates_InvalidTemplateAbortsTheBoot(t *testing.T) {
 	const valid, invalid = `"package_size": 30`, `"package_size": 0`
 	dir, paths := dumpedPromptsDir(t)
+	// Se lee y se reescribe a través de un os.Root anclado en el directorio volcado.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatalf("abriendo %s: %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("cerrando %s: %v", dir, err)
+		}
+	})
 	broken := 0
 	for _, path := range paths {
-		content, err := os.ReadFile(path) //nolint:gosec // ruta de un fichero que este test acaba de volcar en t.TempDir
+		name := filepath.Base(path)
+		content, err := root.ReadFile(name)
 		if err != nil {
 			t.Fatalf("leyendo %s: %v", path, err)
 		}
@@ -65,7 +77,7 @@ func TestLoadPromptTemplates_InvalidTemplateAbortsTheBoot(t *testing.T) {
 			continue
 		}
 		edited := strings.Replace(string(content), valid, invalid, 1)
-		err = os.WriteFile(path, []byte(edited), 0o600) //nolint:gosec // ídem: la misma ruta, dentro de t.TempDir
+		err = root.WriteFile(name, []byte(edited), 0o600)
 		if err != nil {
 			t.Fatalf("escribiendo %s: %v", path, err)
 		}

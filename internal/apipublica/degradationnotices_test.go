@@ -103,7 +103,7 @@ func TestMountDegradationNotices_NilMWPanicsAtMount(t *testing.T) {
 	v := recuperar(func() {
 		apipublica.MountDegradationNotices(apipublica.Nueva(), apipublica.Common{}, noticesDeps(&noticeListerSpy{}))
 	})
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountDegradationNotices") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountDegradationNotices") {
 		t.Errorf("MountDegradationNotices con MW nil: panic = %v; quiero un panic de cableado que nombre MountDegradationNotices", v)
 	}
 }

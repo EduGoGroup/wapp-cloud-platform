@@ -6,6 +6,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // Los DOS RELOJES de Push y de BoundedSend: el plazo propio (ErrPushTimeout) y el ctx del
@@ -133,7 +135,7 @@ func TestBoundedSend(t *testing.T) {
 	t.Run("returns the sender error unwrapped", func(t *testing.T) {
 		t.Parallel()
 		err := BoundedSend(context.Background(), &recordingSender{err: sendErr}, newSendText("hola"), time.Minute, "edge-1")
-		if err != sendErr { //nolint:errorlint // se afirma que llega SIN envolver
+		if !errhelpertest.IsBare(err, sendErr) {
 			t.Fatalf("BoundedSend devolvió %v, quiero el error del Sender tal cual", err)
 		}
 	})

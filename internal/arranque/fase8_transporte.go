@@ -96,7 +96,7 @@ func (faseTransporte) ejecutar(_ context.Context, c *contenedor) error {
 	// cada vía pasan por separado. Si algún día se apaga, se apaga en los dos.
 	c.filtersPusher = filtercfg.NewPusher(c.fleetRepo, c.gw)
 
-	publicSrv, cara, compuesto, authMW, auditor, err := buildPublicAPIServer(publicAPIDeps{
+	publicSrv, cara, authMW, auditor, err := buildPublicAPIServer(publicAPIDeps{
 		cfg:       c.cfg,
 		db:        c.db,
 		log:       c.log,
@@ -119,7 +119,7 @@ func (faseTransporte) ejecutar(_ context.Context, c *contenedor) error {
 	if err != nil {
 		return err
 	}
-	c.publicSrv, c.publicCara, c.publicCompuesto, c.authMW, c.auditor = publicSrv, cara, compuesto, authMW, auditor
+	c.publicSrv, c.publicCara, c.authMW, c.auditor = publicSrv, cara, authMW, auditor
 
 	c.httpSrv = servidorAdmin(c)
 
@@ -355,7 +355,7 @@ func crmStatusNotifierPort(n *intakes.Notifier) apipublica.CRMStatusNotifier {
 // de re-análisis, y ya NO depende de que haya bandeja (era el accidente de publicapi que D-F6-13
 // tuvo que rodear con un centinela); E1–E2, si hay store de intenciones y resolver de derechos.
 // Los cuatro punteros se construyen siempre en sus fases, así que las tres se montan siempre. Una
-// ausencia NO da error: la ruta no se monta y responde 404. Lo vigilan el candado de mudanzas y
+// ausencia NO da error: la ruta no se monta y responde 404. Lo vigilan face_routes_test.go y
 // reanalisis_cableado_test.go.
 func captureDepsOfTheNewFace(c *contenedor) captureFaceDeps {
 	return captureFaceDeps{
@@ -413,7 +413,7 @@ func configPusherPort(gw *edgegrpc.Server) apipublica.ConfigPusher {
 // derechos; I18, si hay almacén del evento y resolver; I19, si hay cancelador y resolver. Todos
 // estos punteros se construyen siempre en sus fases, así que las 19 se montan siempre. Una
 // ausencia NO da error: la ruta no se monta y responde el 404 de ruta inexistente, que desde
-// fuera es indistinguible del 404 al recurso ajeno. Lo vigila el candado de mudanzas.
+// fuera es indistinguible del 404 al recurso ajeno. Lo vigila face_routes_test.go.
 func conversationDepsOfTheNewFace(c *contenedor) conversationFaceDeps {
 	return conversationFaceDeps{
 		// I1–I4 e I11–I13 · definiciones, arranque y reglas de disparo.

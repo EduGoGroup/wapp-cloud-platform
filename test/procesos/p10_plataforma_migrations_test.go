@@ -15,21 +15,16 @@ import (
 )
 
 // Las migraciones por su puerta, cmd/migrate, como subproceso sobre una base clonada: la parte de
-// P10 que re-expresa los ficheros de internal/platform/storage/postgres (integration_test.go,
-// contacts_, drop_pii_claro_, profile_replay_ y replay_integration_test.go) y
-// migrations/replay_integration_test.go. No hay servidor: cmd/migrate es el mismo binario sea cual
-// sea el servidor bajo prueba, así que este test dice lo mismo en las dos pasadas.
+// P10 que sostiene las reglas del runner (internal/platform/storage/postgres/migrations) y del
+// esquema al que converge: el full-replay, su idempotencia, que no destruye datos y lo que deja en
+// el catálogo. De ese árbol, los tests que piden un Postgres son estos. No hay servidor: cmd/migrate
+// no depende de él.
 //
-// Los tests viejos llamaban a migrations.Migrate (y uno a applyStructure, privada) dentro del
-// proceso. Aquí la réplica completa se provoca como ocurre en producción: el runner reaplica TODO el
+// La réplica completa se provoca como ocurre en producción: el runner reaplica TODO el
 // directorio cuando el hash registrado no coincide con el embebido, así que se altera el hash de la
 // última fila de schema_version —el estado de una base cuya migración cambió sin subir la versión—
 // y se corre el binario. Las comprobaciones de p10_plataforma_schema_test.go se repiten tras cada
 // réplica: lo que se afirma no es una migración, es el estado al que CONVERGE el directorio entero.
-//
-// Lo que NO se lleva: TestIntegration_TenantRepositoryCRUD prueba postgres.NewTenantRepository,
-// que ningún binario construye (el alta de empresas va por POST /admin/tenants, P1 y P2): no hay
-// puerta por la que mirarlo.
 
 const (
 	// p10MigrateTimeout acota una corrida de cmd/migrate: la réplica completa tarda segundos.

@@ -26,7 +26,7 @@ var (
 )
 
 const (
-	m2mAPIKey = "ak_una-credencial-de-mentira" //nolint:gosec // credencial de mentira de un test
+	m2mAPIKey = "ak_una-credencial-de-mentira" //nolint:gosec // G101: credencial de mentira de un test
 	m2mEmail  = "nueva@tenant.example"
 	m2mUserID = "11111111-2222-3333-4444-555555555555"
 	// ensureOK es el 201 de /users/ensure con SUS nombres de campo.
@@ -316,7 +316,7 @@ func TestM2M_Signup_DoesNotPresentServiceToken(t *testing.T) {
 	if len(calls) != 1 || calls[0].method != http.MethodPost || calls[0].path != "/api/v1/auth/signup" || calls[0].bearer != "" {
 		t.Fatalf("llamadas = %+v, quería un POST /api/v1/auth/signup sin portador", calls)
 	}
-	want := map[string]any{"email": m2mEmail, "password": "una-frase-de-acceso-larga", "first_name": "Ana", "last_name": "Pérez"} //nolint:gosec // credencial de mentira de un test
+	want := map[string]any{"email": m2mEmail, "password": "una-frase-de-acceso-larga", "first_name": "Ana", "last_name": "Pérez"} //nolint:gosec // G101: credencial de mentira de un test
 	for k, v := range want {
 		if calls[0].body[k] != v {
 			t.Errorf("cuerpo[%s] = %v, quería %v", k, calls[0].body[k], v)

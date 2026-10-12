@@ -13,6 +13,7 @@ import (
 	"github.com/EduGoGroup/wapp-shared/textmatch"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/indice"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // cache_test.go cubre el constructor, el conteo, la huella y el
@@ -392,7 +393,7 @@ func TestNewFuenteContenido_ReaderErrorComesOutAsIs(t *testing.T) {
 	cause := errors.New("sin fila")
 	source := indice.NewFuenteContenido(&fakeReader{err: cause}, "")
 	doc, err := source.LeerCatalogo(context.Background(), "t1")
-	if err != cause { //nolint:errorlint // el contrato dice TAL CUAL: identidad, no envoltura
+	if !errhelpertest.IsBare(err, cause) {
 		t.Errorf("error = %v; el del lector sale tal cual", err)
 	}
 	if doc.Raw != nil || !doc.Sello.IsZero() {

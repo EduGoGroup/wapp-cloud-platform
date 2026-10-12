@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/trigger"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // Lo que este fichero NO prueba es lo que importa del adaptador —que su SQL hace contra
@@ -296,7 +297,7 @@ func TestPostgresStore_Get_Errors(t *testing.T) {
 	t.Run("no row", func(t *testing.T) {
 		store, _ := newPostgresStore(t)
 		got, err := store.Get(context.Background(), "tenant-1", "id-1")
-		if err != trigger.ErrTriggerNotFound { //nolint:errorlint // se afirma que sale SIN envolver
+		if !errhelpertest.IsBare(err, trigger.ErrTriggerNotFound) {
 			t.Errorf("err = %v, quería ErrTriggerNotFound tal cual", err)
 		}
 		if got != (trigger.Rule{}) {
@@ -335,7 +336,7 @@ func TestPostgresStore_Delete_Errors(t *testing.T) {
 	t.Run("no row affected", func(t *testing.T) {
 		store, fake := newPostgresStore(t)
 		fake.script(reply{affected: 0})
-		if err := store.Delete(context.Background(), "tenant-1", "id-1"); err != trigger.ErrTriggerNotFound { //nolint:errorlint // se afirma que sale SIN envolver
+		if err := store.Delete(context.Background(), "tenant-1", "id-1"); !errhelpertest.IsBare(err, trigger.ErrTriggerNotFound) {
 			t.Errorf("err = %v, quería ErrTriggerNotFound tal cual", err)
 		}
 	})

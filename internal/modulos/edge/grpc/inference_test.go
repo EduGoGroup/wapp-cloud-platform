@@ -15,6 +15,8 @@ import (
 	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // degradationReasons es el vocabulario de degradation.Reason, ESCRITO A MANO: `degradation`
@@ -213,7 +215,7 @@ func TestInferErrorCarriesItsReasonAndCause(t *testing.T) {
 	if ie.CommandID() != "cmd-1" || ie.SessionID() != "s-1" {
 		t.Errorf("InferError = (%q, %q), se esperaba (cmd-1, s-1)", ie.CommandID(), ie.SessionID())
 	}
-	if !errors.Is(err, cause) || ie.Unwrap() != cause { //nolint:errorlint // se afirma la identidad de la causa
+	if !errors.Is(err, cause) || !errhelpertest.IsBare(ie.Unwrap(), cause) {
 		t.Errorf("la causa no se ve a través del InferError: %v", err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/trigger"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // El peldaño de INTENCIÓN de ConfigResolver.Resolve (reglas kind='llm') y el camino de
@@ -286,7 +287,7 @@ func TestConfigResolver_ResolveLive_StoreErrors(t *testing.T) {
 		t.Run(string(k), func(t *testing.T) {
 			store := &stubStore{failOn: k, err: boom}
 			dec, err := trigger.NewConfigResolver(store).ResolveLive(context.Background(), tenant, "", "carrito")
-			if err != boom { //nolint:errorlint // se afirma que sale SIN envolver
+			if !errhelpertest.IsBare(err, boom) {
 				t.Errorf("err = %v, quería el del store tal cual", err)
 			}
 			requireDecision(t, "con error", dec, trigger.Decision{})

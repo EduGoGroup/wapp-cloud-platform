@@ -14,9 +14,9 @@ import (
 	"time"
 )
 
-// P10 · Plataforma (diseno.md §4, T9.35, D-F9-4). Re-expresa por las puertas reales las reglas de
-// los 9 ficheros de integración con BD de internal/platform/ (F10-relevo/diseno.md §6), que
-// sobreviven al relevo y hoy leen WAPP_TEST_DB_DSN. Las puertas de este proceso son tres:
+// P10 · Plataforma (diseno.md §4, T9.35, D-F9-4). Aquí viven, por las puertas reales, las reglas de
+// internal/platform/ que piden un Postgres: el relevo retiró los tests de integración de ese árbol
+// (F10, D-F10-5) y este proceso es quien las sostiene. Las puertas son tres:
 //
 //   - cmd/migrate como subproceso sobre una base clonada (p10_plataforma_migrations_test.go): el
 //     full-replay, su idempotencia y lo que deja en el catálogo;
@@ -27,8 +27,9 @@ import (
 //     propio servidor.
 //
 // Este fichero trae el mundo que comparten los subtests del servidor, las ayudas comunes y el
-// cierre. Lo que NO se pudo expresar sin ampliar el arnés está dicho en el comentario de cada
-// fichero y en el cuerpo del commit.
+// cierre. Las reglas que no caben por una puerta viven al lado, sin servidor y sobre una base
+// clonada: la rotación de KEK con dos keyrings en rekey_contrato_test.go y el colector con filas
+// previas o con dos réplicas en collector_contrato_test.go.
 
 const (
 	// p10PollEvery es cada cuánto se sondea lo que tarda segundos en ocurrir (el colector da una
@@ -72,7 +73,7 @@ func TestP10_Platform(t *testing.T) {
 	t.Parallel()
 	w := p10NewWorld(t)
 
-	// integration_test.go · TestIntegration_HealthCheck: el check «postgres» sano, visto en /healthz.
+	// El check «postgres» sano, visto en /healthz.
 	t.Run("postgres_health", func(t *testing.T) { p0HealthzAdmin(t, w.sc.S) })
 	t.Run("grants_seed", func(t *testing.T) { p10CheckGrantSeeds(t, w.sc.DB) })
 	t.Run("grants_role_plane", w.grantsRolePlane)

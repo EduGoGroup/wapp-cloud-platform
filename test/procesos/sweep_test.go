@@ -113,14 +113,24 @@ func isOrphanRunDir(path string, now time.Time, minAge time.Duration) bool {
 
 // hasSweepMarker dice si dir contiene el marcador de barrido: un fichero REGULAR llamado
 // sweepMarkerName (Lstat: un enlace simbólico a otro fichero no vale) cuyo contenido es exactamente
-// sweepMarkerSignature. Un error al mirarlo o al leerlo cuenta como «no».
-func hasSweepMarker(dir string) bool {
-	marker := filepath.Join(dir, sweepMarkerName)
-	info, err := os.Lstat(marker)
+// sweepMarkerSignature. Un error al mirarlo o al leerlo (o al cerrar el directorio) cuenta como «no».
+func hasSweepMarker(dir string) (marked bool) {
+	// Se mira y se lee a través de un os.Root anclado en dir: el marcador no puede resolverse
+	// fuera del directorio (ni por un enlace simbólico puesto entre el Lstat y la lectura).
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return false
+	}
+	defer func() {
+		if root.Close() != nil {
+			marked = false
+		}
+	}()
+	info, err := root.Lstat(sweepMarkerName)
 	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(sweepMarkerSignature)) {
 		return false
 	}
-	content, err := os.ReadFile(marker) //nolint:gosec // G304: ruta fija del arnés bajo un directorio que ya pasó el patrón y Lstat
+	content, err := root.ReadFile(sweepMarkerName)
 	return err == nil && string(content) == sweepMarkerSignature
 }
 
@@ -195,7 +205,7 @@ func sweepPlant(t *testing.T, root string, now time.Time, f sweepFixture) string
 	t.Helper()
 	dir := filepath.Join(root, f.name)
 	sweepMust(t, "sweepPlant "+f.name, os.MkdirAll(filepath.Join(dir, "home"), 0o700))
-	for _, binary := range []string{"migrate", "servidor-nuevo"} {
+	for _, binary := range []string{"migrate", "servidor"} {
 		sweepMust(t, "sweepPlant "+f.name, os.WriteFile(filepath.Join(dir, binary), []byte("binario"), 0o600))
 	}
 	if f.marker != "" {

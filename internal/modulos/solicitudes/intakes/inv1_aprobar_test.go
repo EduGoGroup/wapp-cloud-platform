@@ -24,10 +24,8 @@ package intakes_test
 // que cada directorio barrido tenga ficheros de producción que leer, que el control
 // POSITIVO encuentre la llamada legítima, y que la encuentre UNA sola vez.
 //
-// Nació tras `//go:build pendiente` (T6.9): el control positivo exige exactamente una
-// llamada en `internal/apipublica`, y la cara HTTP nueva no servía todavía la aprobación
-// ni la pregunta. Perdió la etiqueta en T6.25 (conmutar(solicitudes)), cuando G5 y G6
-// pasaron a servirse por ella.
+// El control positivo exige exactamente una llamada en `internal/apipublica`: la cara HTTP
+// sirve la aprobación y la pregunta (G5 y G6) desde T6.25 (conmutar(solicitudes)).
 //
 // Las listas de directorios son las de la fase F6 y se re-tocan en F7 y F8 (D-F6-2),
 // con la guarda anti-hueco intacta.
@@ -89,14 +87,14 @@ var ownersDoor = filepath.Join("..", "..", "..", "apipublica")
 //     no lo es.
 //
 // F7 sustituyó los tres de `intake` viejo por `../../captacion/{intake,pipeline,stages}`
-// y añadió `../../captacion/{reanalisis,intakeahead}` (F7 `diseno.md` §6). F8 sustituirá
+// y añadió `../../captacion/{reanalisis,intakeahead}` (F7 `diseno.md` §6). El relevo (F10) sustituyó
 // los dos de `flujos` por `../../conversacion/{runtime,modules/cart}`.
 //
 // Si uno de ellos deja de existir o de tener ficheros, el barrido CORTA en vez de dar
 // verde: significa que el código se mudó y este candado se quedó mirando a la pared.
 var automaticFlows = []string{
-	filepath.Join("..", "..", "..", "flujos", "runtime"),
-	filepath.Join("..", "..", "..", "flujos", "modules", "cart"),
+	filepath.Join("..", "..", "conversacion", "runtime"),
+	filepath.Join("..", "..", "conversacion", "modules", "cart"),
 	filepath.Join("..", "..", "captacion", "intake"),
 	filepath.Join("..", "..", "captacion", "pipeline"),
 	filepath.Join("..", "..", "captacion", "stages"),

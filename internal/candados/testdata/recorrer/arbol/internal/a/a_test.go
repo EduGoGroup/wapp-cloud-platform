@@ -1,4 +1,4 @@
-//go:build pendiente
+//go:build otraetiqueta
 
 package a
 

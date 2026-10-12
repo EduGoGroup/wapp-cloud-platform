@@ -450,3 +450,37 @@ func TestPostgres_Read_SQLIsTheOldOneByteForByte(t *testing.T) {
 		requirePgSQL(t, fake, wantGetHeaderSQL, wantGetItemsSQL, "", wantGetBuyerDataSQL)
 	})
 }
+
+// composedOrderBy es la cláusula de orden tal como se COMPONÍA en ejecución antes de que las
+// consultas se precompusieran como constantes (era intakeOrderBy). Vive aquí solo como oráculo.
+func composedOrderBy(sort, prefix string) string {
+	if sort == SortOldest {
+		return ` ORDER BY ` + prefix + `created_at ASC, ` + prefix + `id ASC`
+	}
+	return ` ORDER BY ` + prefix + `created_at DESC, ` + prefix + `id DESC`
+}
+
+// TestPostgres_Read_PrecomposedQueriesAreTheComposedOnes: las CUATRO consultas precompuestas (la
+// página y el export, en sus dos órdenes) son byte a byte las que salían de concatenar las piezas
+// en ejecución, y son las que llegan a la base. Un sort desconocido es el de por defecto.
+func TestPostgres_Read_PrecomposedQueriesAreTheComposedOnes(t *testing.T) {
+	for _, sort := range []string{"", SortNewest, SortOldest, "'; DROP"} {
+		effective := Filter{Sort: sort}.Normalized().Sort
+		wantPage := listIntakesSelect + composedOrderBy(effective, "") + listIntakesPage
+		wantExport := listIntakeDetailsHead + composedOrderBy(effective, "") + listIntakeDetailsBody +
+			composedOrderBy(effective, "p.") + listIntakeDetailsItems
+
+		store, fake := newFakePostgres(t)
+		fake.script(pgOne(int64(1)), pgOne(pgIntakeRow(StatusOpen, 1)...))
+		if _, _, err := store.List(t.Context(), pgTenant, Filter{Sort: sort}); err != nil {
+			t.Fatalf("List(sort=%q): error inesperado %v", sort, err)
+		}
+		requirePgSQL(t, fake, wantCountSQL, wantPage)
+
+		store, fake = newFakePostgres(t)
+		if _, err := store.ListDetails(t.Context(), pgTenant, Filter{Sort: sort}, 5); err != nil {
+			t.Fatalf("ListDetails(sort=%q): error inesperado %v", sort, err)
+		}
+		requirePgSQL(t, fake, wantExport)
+	}
+}

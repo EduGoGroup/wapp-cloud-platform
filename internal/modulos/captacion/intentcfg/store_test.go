@@ -12,6 +12,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/intentcfg/intentcfghelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // Este test es EXTERNO (package intentcfg_test): intentcfghelpertest importa intentcfg, así que
@@ -136,8 +137,7 @@ func TestNewMemoryStore_IsEmpty(t *testing.T) {
 // envolver (el Postgres sí lo envuelve; por eso el puerto pide errors.Is).
 func TestMemoryStore_Get_NotFound_IsTheBareSentinel(t *testing.T) {
 	_, err := intentcfg.NewMemoryStore().Get(context.Background(), "tenant-x")
-	//nolint:errorlint // se afirma la identidad a propósito: el contrato dice «sin envolver».
-	if err != intentcfg.ErrNotFound {
+	if !errhelpertest.IsBare(err, intentcfg.ErrNotFound) {
 		t.Errorf("Get sobre un store vacío: err=%v, quería ErrNotFound sin envolver", err)
 	}
 }

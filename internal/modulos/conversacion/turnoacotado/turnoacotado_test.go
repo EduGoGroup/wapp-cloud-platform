@@ -20,6 +20,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/turnoacotado"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // El selector de vía NUEVO satisface el puerto tal cual: si hiciera falta un
@@ -213,8 +214,7 @@ func TestResolveQuery_VerdictTable(t *testing.T) {
 // en flow_state.
 func TestResolveQuery_NeverReturnsClientText(t *testing.T) {
 	t.Parallel()
-	// gosec ve un RUT y grita G101; es texto de una clienta, no una credencial.
-	const clientText = "quiero la doble para Juan Pérez, RUT 12.345.678-9" //nolint:gosec
+	const clientText = "quiero la doble para Juan Pérez, RUT 12.345.678-9"
 	for _, raw := range []string{
 		`{"usable":true,"value":"` + clientText + `","reason":"ok"}`,
 		`{"usable":true,"value":2,"reason":"` + clientText + `"}`,
@@ -267,7 +267,7 @@ func TestResolveQuery_TransportFailurePropagatesIntact(t *testing.T) {
 	failure := errors.New("ollama caído")
 	v, err := newResolver(t, &fakeTurner{err: failure, failFrom: 1}).
 		ResolveQuery(context.Background(), "t", "s", fourOptionMenu("la doble"))
-	if err != failure { //nolint:errorlint // se afirma que NO se envuelve: identidad, no errors.Is
+	if !errhelpertest.IsBare(err, failure) {
 		t.Fatalf("err = %v, quiero el fallo de la vía sin envolver", err)
 	}
 	if v.Code != "" || v.Reason != "" || v.Codes != nil {

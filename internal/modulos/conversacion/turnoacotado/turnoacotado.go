@@ -211,7 +211,7 @@ func (r *Resolver) ResolveQuery(ctx context.Context, tenantID, sessionID string,
 type modelReply struct {
 	Usable bool `json:"usable"`
 	Value  *int `json:"value"`
-	//nolint:unused // Se decodifica a propósito y NO se lee: ver el ⚠️ de verdictOf().
+	// Se decodifica a propósito y NO se lee: ver el ⚠️ de verdictOf().
 	Reason string `json:"reason"`
 }
 

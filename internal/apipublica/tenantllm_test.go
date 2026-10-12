@@ -39,7 +39,6 @@ const (
 
 	// llmKey tiene la forma de una clave de proveedor, pero no es una credencial: es un valor
 	// de test.
-	//nolint:gosec // no es una credencial: es el valor de un test
 	llmKey   = "sk-ant-api03-clave-de-prueba-0123456789"
 	llmModel = "claude-modelo-de-prueba"
 
@@ -215,7 +214,7 @@ func TestMountTenantLLM_AllThreeOrNone(t *testing.T) {
 func TestMountTenantLLM_NilMWPanicsAtMount(t *testing.T) {
 	d := apipublica.TenantLLMDeps{TenantLLM: newLLMStore(), Entitlements: withFeatures(entitlements.FeatureAPILLM)}
 	v := recuperar(func() { apipublica.MountTenantLLM(apipublica.Nueva(), apipublica.Common{}, d) })
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountTenantLLM") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountTenantLLM") {
 		t.Errorf("MountTenantLLM con MW nil: panic = %v; quiero un panic de cableado que nombre MountTenantLLM", v)
 	}
 }

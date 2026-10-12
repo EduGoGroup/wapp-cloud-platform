@@ -45,14 +45,14 @@ type baseClonada struct {
 	DSN     string
 }
 
-// nombreDeBase recibe el nombre de un proceso y devuelve el de su base, proc_<proceso>_<binario>.
+// nombreDeBase recibe el nombre de un proceso y devuelve el de su base, proc_<proceso>.
 // Falla si el proceso no es [a-z0-9_]+ o si el nombre resultante pasa de 63 bytes, el límite de
 // un identificador de Postgres.
 func nombreDeBase(proceso string) (string, error) {
 	if !patronNombreProceso.MatchString(proceso) {
 		return "", fmt.Errorf("el nombre de proceso %q no cumple [a-z0-9_]+", proceso)
 	}
-	nombre := "proc_" + proceso + "_" + binarioElegido()
+	nombre := "proc_" + proceso
 	if len(nombre) > maxNombreBase {
 		return "", fmt.Errorf("el nombre de base %q mide %d bytes y el máximo es %d", nombre, len(nombre), maxNombreBase)
 	}
@@ -227,8 +227,8 @@ func TestArnes_NombreDeBase(t *testing.T) {
 		{"espacio", "p0 arranque", false},
 		{"comillas_e_inyeccion", `a"; DROP DATABASE postgres; --`, false},
 		{"acento", "arranqué", false},
-		{"en_el_limite", string(slices.Repeat([]byte("a"), maxNombreBase-len("proc__"+binarioElegido()))), true},
-		{"un_byte_de_mas", string(slices.Repeat([]byte("a"), maxNombreBase-len("proc__"+binarioElegido())+1)), false},
+		{"en_el_limite", string(slices.Repeat([]byte("a"), maxNombreBase-len("proc_"))), true},
+		{"un_byte_de_mas", string(slices.Repeat([]byte("a"), maxNombreBase-len("proc_")+1)), false},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
@@ -238,7 +238,7 @@ func TestArnes_NombreDeBase(t *testing.T) {
 				if err != nil {
 					t.Fatalf("nombreDeBase(%q): %v", c.proceso, err)
 				}
-				if esperado := "proc_" + c.proceso + "_" + binarioElegido(); nombre != esperado {
+				if esperado := "proc_" + c.proceso; nombre != esperado {
 					t.Fatalf("nombreDeBase(%q) = %q, quería %q", c.proceso, nombre, esperado)
 				}
 				return
@@ -259,7 +259,7 @@ func TestArnes_BasePorProceso(t *testing.T) {
 	if a.Nombre == b.Nombre {
 		t.Fatalf("dos procesos recibieron la misma base %q", a.Nombre)
 	}
-	if esperado := "proc_arnes_a_" + binarioElegido(); a.Nombre != esperado {
+	if esperado := "proc_arnes_a"; a.Nombre != esperado {
 		t.Fatalf("la base del proceso arnes_a se llama %q, quería %q", a.Nombre, esperado)
 	}
 	dbA, dbB := a.Abrir(t), b.Abrir(t)

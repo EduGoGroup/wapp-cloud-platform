@@ -9,6 +9,7 @@ import (
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
@@ -89,7 +90,7 @@ func cancelledContext() context.Context {
 // D-F3-2 · trampa T-3: el centinela ES el de platform (identidad), no un gemelo.
 func TestErrSessionOfflineIsThePlatformSentinel(t *testing.T) {
 	t.Parallel()
-	if ErrSessionOffline != httpapi.ErrSessionOffline { //nolint:errorlint // se afirma IDENTIDAD, no envoltura
+	if !errhelpertest.IsBare(ErrSessionOffline, httpapi.ErrSessionOffline) {
 		t.Fatal("ErrSessionOffline no es la misma variable que httpapi.ErrSessionOffline")
 	}
 	if !errors.Is(ErrSessionOffline, httpapi.ErrSessionOffline) {
@@ -223,7 +224,7 @@ func TestPushReturnsTheSenderErrorUnwrapped(t *testing.T) {
 	reg.Register("s1", &recordingSender{err: sendErr})
 
 	err := reg.Push(context.Background(), "s1", newSendText("hola"))
-	if err != sendErr { //nolint:errorlint // se afirma que llega SIN envolver
+	if !errhelpertest.IsBare(err, sendErr) {
 		t.Fatalf("Push devolvió %v, quiero el error del Sender tal cual", err)
 	}
 }

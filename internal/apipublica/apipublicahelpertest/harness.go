@@ -43,7 +43,7 @@ const (
 // Material de firma: no es una credencial, es el secreto HS256 de un test.
 const (
 	tokenIssuer = "wapp-test"
-	//nolint:gosec // no es una credencial: es material de firma de un test
+	//nolint:gosec // G101: no es una credencial: es material de firma de un test
 	tokenSecret = "secret-hs256-de-test-apipublica"
 	tokenTTL    = time.Hour
 )

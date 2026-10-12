@@ -195,19 +195,18 @@ func NewCollector(db *sql.DB, onCount func(name, eventKind, reason string, delta
 // proceso (bootstrap.go) — mismo molde que integrations.Worker.Run: un solo
 // Ctrl+C también para este colector, sin un segundo mecanismo de shutdown.
 //
-// El advisory lock se libera SIEMPRE al salir (defer con context.Background(),
-// no con ctx: para cuando este defer corre, ctx ya está cancelado casi
-// siempre, y el unlock necesita su propio contexto vivo para tener
-// oportunidad real de ejecutarse). Un lock de sesión que no se suelta deja a
+// El advisory lock se libera SIEMPRE al salir (defer con el ctx DESACOPLADO de
+// su cancelación, context.WithoutCancel, no con ctx a secas: para cuando este
+// defer corre, ctx ya está cancelado casi siempre, y el unlock necesita un
+// contexto vivo para tener oportunidad real de ejecutarse). Un lock de sesión que no se suelta deja a
 // este colector muerto para TODO el clúster —nadie más puede ganarlo— hasta
 // que Postgres recicle esa conexión.
 func (c *Collector) Run(ctx context.Context) {
-	//nolint:contextcheck // context.Background() a propósito, igual que el defer
-	// shutdownAll de bootstrap.go: este defer corre cuando ctx YA está cancelado
-	// casi siempre (es la razón de existir de Run() saliendo), y derivar el
-	// unlock de ese mismo ctx muerto le quitaría al `SELECT pg_advisory_unlock`
-	// cualquier oportunidad real de llegar a Postgres.
-	defer c.releaseLeadership(context.Background())
+	// context.WithoutCancel a propósito, igual que el shutdownAll del arranque: este
+	// defer corre cuando ctx YA está cancelado casi siempre (es la razón de existir
+	// de Run() saliendo), y heredar la cancelación de ese ctx muerto le quitaría al
+	// `SELECT pg_advisory_unlock` cualquier oportunidad real de llegar a Postgres.
+	defer c.releaseLeadership(context.WithoutCancel(ctx))
 
 	ticker := time.NewTicker(c.pollInterval)
 	defer ticker.Stop()

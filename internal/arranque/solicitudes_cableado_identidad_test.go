@@ -5,7 +5,7 @@ package arranque
 // solicitudes_cableado_test.go por tamaño (E-13). Sobre el arranque nuevo REAL (el contenedor de
 // la huella) afirma que cada pieza de solicitudes recibe LAS MISMAS instancias que el contenedor,
 // que la cara HTTP nueva sirve G1–G18 con ellas, que las rutas de solicitudes y de captación las
-// resuelve la cara nueva en el compuesto real (la vieja murió en F8, conmutar(conversacion)) y que
+// resuelve la cara del arranque real y que
 // el plazo de escritura de G7 sale del plazo del generador, que es el suelo del pipeline NUEVO
 // (T-13).
 
@@ -146,28 +146,22 @@ const (
 	listIntakeRoute = "GET /api/v1/intakes"                 // G1
 )
 
-// TestCableado_TheNewFaceResolvesRequestsAndCapture (FX TX.18 y TX.21; F8 ·
-// conmutar(conversacion)): H1, E1, E2 y la bandeja (G1) las registra la cara nueva del arranque
-// real, y el compuesto del :8103 las RESUELVE en ella, con su mismo patrón.
-//
-// Hasta F8 este test afirmaba lo mismo por el otro lado: que las deps de la cara vieja
-// (depsDeLaAPIPublica) llevaban a nil los doce campos de solicitudes y captación y que el
-// publicapi viejo REAL, montado con ellas, no registraba ninguna de las cuatro. Las dos cosas
-// murieron con la cara vieja —el arranque ya no importa publicapi—, así que queda lo que eso
-// protegía: que cada ruta tiene UN dueño en el compuesto, y es la nueva.
+// TestCableado_TheNewFaceResolvesRequestsAndCapture (FX TX.18 y TX.21; F10 · T10.9): H1, E1, E2
+// y la bandeja (G1) las registra la cara del arranque real, y esa cara —la que sirve el :8103—
+// las RESUELVE con su mismo patrón: ningún comodín de otra ruta se las lleva.
 func TestCableado_TheNewFaceResolvesRequestsAndCapture(t *testing.T) {
 	c := contenedorDeHuella(t, "minimo")
-	if c.publicCara == nil || c.publicCompuesto == nil {
-		t.Fatal("la fase 8 no guardó la cara nueva y el compuesto del :8103 en el contenedor")
+	if c.publicCara == nil {
+		t.Fatal("la fase 8 no guardó la cara del :8103 en el contenedor")
 	}
 
 	served := c.publicCara.Patrones()
 	for _, route := range []string{reanalyzeRoute, getIntentsRoute, putIntentsRoute, listIntakeRoute} {
 		if !slices.Contains(served, route) {
-			t.Errorf("la cara nueva del arranque real NO registra %s: la ruta habría desaparecido del :8103", route)
+			t.Errorf("la cara del arranque real NO registra %s: la ruta habría desaparecido del :8103", route)
 		}
-		if face, pattern := c.publicCompuesto.Resolver(peticionDe(route)); face != "nueva" || pattern != route {
-			t.Errorf("%s resuelve (%q, %q) en el compuesto; se espera (\"nueva\", %q)", route, face, pattern, route)
+		if _, pattern := c.publicCara.Handler(peticionDe(route)); pattern != route {
+			t.Errorf("%s resuelve con el patrón %q en la cara; se espera %q", route, pattern, route)
 		}
 	}
 }

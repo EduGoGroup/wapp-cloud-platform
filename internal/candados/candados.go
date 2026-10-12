@@ -158,7 +158,7 @@ func isContractSuiteFile(f Fuente) bool {
 //
 // Promesas:
 //   - parsea con go/parser y parser.ParseComments; las etiquetas de compilación se ignoran
-//     (un test con `//go:build pendiente` se devuelve como cualquier otro);
+//     (un test tras una etiqueta, p. ej. `//go:build otraetiqueta`, se devuelve como cualquier otro);
 //   - salta todo directorio llamado "testdata" que encuentre al recorrer (a cualquier
 //     profundidad), como la toolchain de Go; la propia raiz puede estar dentro de un
 //     testdata —así se recorren los árboles de prueba—, lo que se salta es lo que cuelga
@@ -195,7 +195,7 @@ func parseFiles(vistos map[string]string) ([]Fuente, error) {
 	fset := token.NewFileSet()
 	fuentes := make([]Fuente, 0, len(claves))
 	for _, ruta := range claves {
-		// ParseFile no evalúa las etiquetas de compilación: un test con `//go:build pendiente`
+		// ParseFile no evalúa las etiquetas de compilación: un test tras `//go:build otraetiqueta`
 		// se parsea como cualquier otro, que es justo lo que promete el contrato.
 		archivo, err := parser.ParseFile(fset, vistos[ruta], nil, parser.ParseComments)
 		if err != nil {

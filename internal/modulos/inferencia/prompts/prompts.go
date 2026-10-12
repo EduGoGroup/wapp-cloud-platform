@@ -235,7 +235,7 @@ func Cargar(dir string) (Cargadas, error) {
 				ErrPromptsDir, previous, name, stage, Extension)
 		}
 		path := filepath.Join(dir, name)
-		raw, err := os.ReadFile(path) //nolint:gosec // ruta de configuración del operador, no de un usuario
+		raw, err := os.ReadFile(path) //nolint:gosec // G304: ruta de configuración del operador, no de un usuario
 		if err != nil {
 			return Cargadas{}, fmt.Errorf("%w: no se puede leer %s: %w", ErrPromptsDir, path, err)
 		}

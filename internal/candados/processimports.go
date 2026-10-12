@@ -15,10 +15,6 @@ const (
 	internalDir = "internal"
 	// locksPackage es este paquete: lo importan los ficheros-candado de test/procesos.
 	locksPackage = "internal/candados"
-	// constructorArgsPackage es el paquete de los ARGUMENTOS del constructor de un adaptador
-	// Postgres (el FieldCipher y el KeyProvider): una suite de contrato los necesita para
-	// construirlo (D-F1-8).
-	constructorArgsPackage = "internal/platform/crypto"
 	// processContractSuffix distingue al fichero que corre una suite de contrato contra
 	// Postgres (H9.5). «contrato» es vocabulario del método (05 E-11, excepción 3).
 	processContractSuffix = "_contrato_test.go"
@@ -33,6 +29,23 @@ const (
 var processLockPaths = []string{
 	"test/procesos/domain_imports_test.go",
 	"test/procesos/sin_bd_viva_test.go",
+}
+
+// contractPlatformPackages son los ÚNICOS paquetes de internal/platform que un *_contrato_test.go
+// puede importar (regla 3c), por ruta EXACTA: ni un padre, ni un hermano, ni un subdirectorio suyo
+// heredan el permiso. La lista es corta a propósito y cada entrada lleva su motivo; ampliarla es
+// cambiar esta variable, a la vista de quien revise.
+var contractPlatformPackages = []string{
+	// Los ARGUMENTOS del constructor de un adaptador Postgres (el FieldCipher y el KeyProvider):
+	// una suite de contrato los necesita para construirlo (D-F1-8). Y la rotación de KEK
+	// (Rekey, PendingByKeyID), que no se reconstruye y cuyas reglas con dos keyrings no caben por
+	// la puerta del servidor (test/procesos/rekey_contrato_test.go).
+	"internal/platform/crypto",
+	// El colector de flow_events: sus reglas de arranque del cursor, de elección de líder entre
+	// réplicas y de liberación del lock piden DOS colectores sobre la misma base o filas previas
+	// al arranque, y el arnés no levanta dos servidores sobre una base
+	// (test/procesos/collector_contrato_test.go, D-F10-5).
+	"internal/platform/metrics/flowlifecycle",
 }
 
 // helperTestRoots son los árboles donde vive una suite de contrato …helpertest (05 E-3).
@@ -70,7 +83,11 @@ var helperTestRoots = []string{"internal/modulos", "internal/nucleo"}
 //     <nombre>.<símbolo> sobre el nombre local del import (el alias, o el último elemento
 //     de la ruta) debe empezar por «New». Importarlo con punto o en blanco es una
 //     violación: no se vería qué usa;
-//     c. internal/platform/crypto: los argumentos de ese constructor.
+//     c. los paquetes de internal/platform de la lista cerrada contractPlatformPackages, por
+//     ruta exacta: internal/platform/crypto (los argumentos de ese constructor, y la rotación
+//     de KEK) e internal/platform/metrics/flowlifecycle (el colector de flow_events, cuyas
+//     reglas entre réplicas no caben por la puerta del servidor). De ellos se usa cualquier
+//     símbolo exportado: son lo que el fichero prueba. Ningún otro paquete de platform pasa.
 //
 // «Solo constructores» es la regla barata: NewMemoryResolver pasa igual que
 // NewPostgresResolver. Tampoco se resuelven tipos ni ámbitos: una variable local que se llame
@@ -160,15 +177,16 @@ func judgeProcessFile(modulo string, f Fuente) []string {
 			}
 		case !isContract:
 			motivos = append(motivos, "importa "+imp.rel+": un proceso entra por las puertas reales y no importa nada de "+
-				"internal/ (solo los *_contrato_test.go, y solo su suite …helpertest, el constructor del puerto y crypto)")
-		case isHelperTestImport(imp.rel) || imp.rel == constructorArgsPackage:
+				"internal/ (solo los *_contrato_test.go, y solo su suite …helpertest, el constructor del puerto y "+
+				strings.Join(contractPlatformPackages, " o ")+")")
+		case isHelperTestImport(imp.rel) || slices.Contains(contractPlatformPackages, imp.rel):
 			// Regla 3a y 3c.
 		case ports[imp.rel]:
 			motivos = append(motivos, judgePortUse(f.Archivo, imp)...)
 		default:
 			motivos = append(motivos, "importa "+imp.rel+": una suite de contrato solo importa su …helpertest (bajo "+
 				strings.Join(helperTestRoots, " o ")+"), el paquete del puerto que ese helpertest prueba y "+
-				constructorArgsPackage)
+				strings.Join(contractPlatformPackages, " o "))
 		}
 	}
 	return motivos

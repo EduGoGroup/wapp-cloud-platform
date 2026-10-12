@@ -2,7 +2,7 @@
 
 > **Estado**: 🔧 **bloque A cerrado (F10-02, 2026-10-11, PR #75 integrado)**: verdad de campo limpia, dorada de la
 > huella congelada, acta abierta e inventario de divergencias. **Bloque B cerrado (F10-03, 2026-10-11, PR #81 integrado)**:
-> el modular corre en UAT, la prueba funcional pasó en local, sin ventana de 24 h (Jhoan); veredicto: «sigue». Falta el bloque C (F10-04). Spec escrita el
+> el modular corre en UAT, la prueba funcional pasó en local, sin ventana de 24 h (Jhoan); veredicto: «sigue». **Bloque C integrado, salvo T10.14 (F10-04, 2026-10-11, PR #82 integrado)**: el relevo de código está hecho (T10.7–T10.13 y T10.23); T10.14, la documentación del repo, va en un PR propio (F10-04b). Spec escrita el
 > 2026-09-28 sobre `dev` @ `1b18932`.
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 > **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §6 (fila F10), §4.1 (cero puentes de import), §4.2 (cero
@@ -180,3 +180,47 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
     dos. El `diff` de §2.3 · 6 no puede salir vacío sin tráfico.
 14. **`make ci-docker` no se corrió.** `ci-local` sí: `GATE_RC=0` sobre `e82b6e92`, 0 SKIP.
 
+### F10-04 · bloque C (2026-10-11)
+
+15. **El orden de la spec no deja el árbol verde entre commits: T10.10 va antes que T10.9.** `arquitectura.md` §3 borra
+    primero la cara vieja (commit 4) y después el arranque viejo (commit 5), «cada uno deja `dev` verde». No puede ser:
+    `internal/bootstrap/arranque` era lo único que importaba `internal/publicapi`, así que con la cara borrada el árbol
+    no compila. Se invirtió: `ae4c0291` (T10.10) y después `db5657b4` (T10.9). Y tres candados del árbol viejo leían la
+    fuente de `publicapi` (los dos INV1 de `internal/intakes` y el C2 de `internal/llmvia`): se retiraron en T10.9, un
+    commit antes que el resto de sus paquetes; sus gemelos del árbol nuevo siguen.
+16. **El candado de fronteras clasificaba `cmd/server`, `cmd/casebank` y `cmd/prompts` como árbol viejo.** En cuanto
+    importan `internal/arranque` o `internal/modulos`, salta la regla 5. La spec no lo decía. Pasan al árbol nuevo en
+    T10.7.
+17. **`internal/platform` sí se toca**, contra `reglas.md` §1: cuatro tests suyos importaban paquetes viejos
+    (`iam/ports/in`, `gateway/session`, `inferstats`). Los tres de `httpapi` usaban alias del propio paquete; el del
+    colector de inferencia pasa a un agregado fijo, porque `platform` no puede importar `internal/modulos`. Y se borró
+    `internal/platform/storage/postgres/tenant.go`: no tenía ningún llamador salvo el test que se borraba.
+18. **Un test del arranque viejo no tenía gemelo**: el del techo del pool (`WAPP_DB_MAX_OPEN_CONNS` → `/metrics`, con
+    base de datos). «Sus reglas viven ya en `internal/arranque`» era cierto para los nueve de cableado y para I-CP-5,
+    no para este. Portado a P0 (`TestP0_PoolCeilingComesFromTheEnvironment`); con el mutante que deja de pasar el techo
+    a la conexión cae con «`wapp_db_max_open = 25`, quería 7».
+19. **P10 no re-expresaba los 25 tests con base de datos de `platform`, sino 21.** La rotación de KEK la cubre
+    `rekey_contrato_test.go`, no P10. Los 4 restantes: tres reglas del colector de `flow_events` sobre la elección de
+    líder (una, deuda D-43; las otras dos, declaradas solo en una cabecera) y `TenantRepository` (hallazgo 17). Las tres
+    del colector se portaron a `test/procesos/collector_contrato_test.go`, sin servidor y sobre una base clonada, y
+    cada una cae con su mutante; el candado de imports de los procesos admite para ello un paquete más de `platform`.
+    `internal/platform/metrics/flowlifecycle` se queda sin tests propios: lo ejercen los procesos.
+20. **T10.23 no puede cerrarse sin Jhoan, y el inventario se quedaba corto.** De 95 `//nolint` quedan 45 con motivo: la
+    tarea pide que los apruebe Jhoan. Y hay **17 `#nosec`** (4 en producción), la directiva propia de `gosec`, que el
+    `grep` de `//nolint` no veía. No se tocaron. Todo, en `deuda.md` D-31.
+21. **T10.14 es una reescritura, no un re-apuntado**, y sale a un PR propio (F10-04b, decisión de Jhoan en la sesión).
+    El patrón de `diseno.md` §4 solo ve las menciones con prefijo `internal/`; quedan fuera `publicapi.go:770`,
+    `bootstrap/http.go:168` y ≈190 citas `fichero:línea`. La tabla de `04` §4 mapea directorios, pero los ficheros se
+    partieron (E-13) y se renombraron (E-11). **Mientras ese PR no entre, la documentación de la pieza, `CLAUDE.md` y
+    cinco skills nombran rutas y targets que ya no existen.**
+22. **La definición de hecho dice «cinco directorios» en `internal/`; son seis.** `candados` se queda (D-F10-10).
+    `reglas.md` §4 y la ficha de la sesión no se corrigieron al decidirlo.
+23. **Queda sin decidir qué pasa con los comentarios del código.** Unas 735 líneas de comentario del árbol que sobrevive
+    citan rutas viejas (`internal/flujos/…`), sobre todo como procedencia. Y tres textos `Help` de
+    `internal/platform/metrics/metrics.go` nombran ficheros borrados: salen por `/metrics`, así que son texto observable
+    (deuda D-36). `portal-reorganizacion/` nombra `cmd/server-modular`. No se tocó nada de esto.
+    ✎ **2026-10-11 · D-F10-14 (Jhoan)**: los comentarios se limpian en un PR propio, entre el bloque D y T10.25 (T10.26).
+    `portal-reorganizacion/` se mira en T10.25.
+24. **No corrido**: `make ci-docker`; el job `integration` de `ci.yml` (solo su sintaxis); `CUENTA=3` de los procesos (se
+    corrió con 1; es T10.15). Y nada en UAT, donde sigue un binario de `cmd/server-modular`, directorio que ya no
+    existe: lo del acta §5.7 sigue sin ver.

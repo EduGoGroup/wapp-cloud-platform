@@ -159,7 +159,7 @@ func TestMountTenantVariables_NilMWPanicsAtMount(t *testing.T) {
 		apipublica.MountTenantVariables(apipublica.Nueva(), apipublica.Common{},
 			apipublica.TenantVariablesDeps{TenantVariables: newTenantVarStore()})
 	})
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountTenantVariables") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountTenantVariables") {
 		t.Errorf("MountTenantVariables con MW nil: panic = %v; quiero un panic de cableado que nombre MountTenantVariables", v)
 	}
 	// Sin almacén no hay ruta que encadenar: MW nil no es un fallo.

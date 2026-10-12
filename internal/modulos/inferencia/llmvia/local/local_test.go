@@ -13,6 +13,7 @@ import (
 
 	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // El gateway NUEVO satisface el transporte SIN adaptador: es lo que garantiza que la vía
@@ -316,7 +317,7 @@ func TestTransportErrorComesBackIntact(t *testing.T) {
 			cause := &transportError{reason: edgegrpc.ReasonOllamaDown}
 			f := &fakeFrame{out: validOutput, err: cause}
 			got, err := sc.call(context.Background(), newProvider(t, f), llm.Options{})
-			if err != error(cause) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
+			if !errhelpertest.IsBare(err, cause) {
 				t.Fatalf("el error del transporte no volvió tal cual: %v", err)
 			}
 			var withReason interface{ Motivo() string }

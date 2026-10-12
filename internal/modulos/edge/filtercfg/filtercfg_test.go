@@ -10,6 +10,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/filtercfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // fixedSource es un filtercfg.Source de prueba: devuelve la foto que se le dio, o el
@@ -412,7 +413,7 @@ func TestPusher_PushProfile_PushError_ComesBackUnwrapped(t *testing.T) {
 	p := filtercfg.NewPusher(src, spy)
 
 	err := p.PushProfile(context.Background(), "tenant-a", "s-1", fleet.ProfileActive)
-	if err != cause { //nolint:errorlint // la promesa es la IDENTIDAD: un error envuelto también pasaría errors.Is.
+	if !errhelpertest.IsBare(err, cause) {
 		t.Fatalf("err = %v, quería exactamente %v, sin envolver", err, cause)
 	}
 	if len(spy.calls) != 1 {

@@ -235,7 +235,7 @@ func TestMountIntents_NilMWPanicsAtMount(t *testing.T) {
 			Intents: newIntentsStore(), Entitlements: withFeatures(entitlements.FeatureLLMIntent),
 		})
 	})
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountIntents") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountIntents") {
 		t.Errorf("MountIntents con MW nil: panic = %v; quiero un panic de cableado que nombre MountIntents", v)
 	}
 	// Sin las dependencias no hay ruta que encadenar: MW nil no es un fallo.

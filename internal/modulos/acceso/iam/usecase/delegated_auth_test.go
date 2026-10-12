@@ -281,7 +281,7 @@ func TestDelegatedRefresh_RotatesInIdentityAndReexchanges(t *testing.T) {
 func TestDelegatedRefresh_IdentityRejectionPropagatesWithoutExchange(t *testing.T) {
 	f := newDelegatedFixture(t, quietLogger())
 	f.identity.refreshErr = domain.ErrRefreshInvalid
-	if _, err := f.svc.Refresh(context.Background(), in.RefreshInput{RefreshToken: "rft_quemado"}); !errors.Is(err, domain.ErrRefreshInvalid) { //nolint:gosec // token de mentira de un test
+	if _, err := f.svc.Refresh(context.Background(), in.RefreshInput{RefreshToken: "rft_quemado"}); !errors.Is(err, domain.ErrRefreshInvalid) { //nolint:gosec // G101: token de mentira de un test
 		t.Fatalf("err = %v; quiere ErrRefreshInvalid", err)
 	}
 	if len(f.exchange.seen) != 0 {
@@ -329,7 +329,7 @@ func TestDelegatedLogout_AllSessionsRevokesWithoutCarryingUserID(t *testing.T) {
 func TestDelegatedLogout_AllSessionsWithDeadRefreshRevokesNothing(t *testing.T) {
 	f := newDelegatedFixture(t, quietLogger())
 	f.identity.refreshErr = domain.ErrRefreshInvalid
-	err := f.svc.Logout(context.Background(), in.LogoutInput{RefreshToken: "rft_quemado", AllSessions: true}) //nolint:gosec // token de mentira de un test
+	err := f.svc.Logout(context.Background(), in.LogoutInput{RefreshToken: "rft_quemado", AllSessions: true}) //nolint:gosec // G101: token de mentira de un test
 	if !errors.Is(err, domain.ErrRefreshInvalid) {
 		t.Fatalf("err = %v; quiere ErrRefreshInvalid", err)
 	}

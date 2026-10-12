@@ -19,6 +19,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/turnoacotado"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // chunked arma la consulta CON TROZOS que el carrito eleva: las opciones son el
@@ -335,7 +336,7 @@ func TestChunking_FailureWithNothingResolvedPropagates(t *testing.T) {
 	for _, failFrom := range []int{1, 2} {
 		f := &fakeTurner{replies: []string{inconclusiveReply}, err: failure, failFrom: failFrom}
 		v, err := newResolver(t, f).ResolveQuery(context.Background(), "t1", "s1", chunked("napolitanas", "completos", "gaseosas"))
-		if err != failure { //nolint:errorlint // se afirma que NO se envuelve: identidad, no errors.Is
+		if !errhelpertest.IsBare(err, failure) {
 			t.Fatalf("falla en la %d: err = %v, quiero el fallo de la vía intacto", failFrom, err)
 		}
 		if v.Codes != nil || v.Code != "" || v.Reason != "" {

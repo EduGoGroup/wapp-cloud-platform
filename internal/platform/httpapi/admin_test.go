@@ -14,7 +14,6 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
@@ -499,7 +498,7 @@ func TestSendMessageHandler_AckNotOK(t *testing.T) {
 }
 
 func TestSendMessageHandler_Offline(t *testing.T) {
-	snd := &fakeSender{err: fmt.Errorf("push: %w", session.ErrSessionOffline)}
+	snd := &fakeSender{err: fmt.Errorf("push: %w", httpapi.ErrSessionOffline)}
 	h := httpapi.SendMessageHandler(snd, testLogger())
 
 	body := `{"session_id":"s-x","to":"549110","text":"hola"}`

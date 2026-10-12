@@ -19,8 +19,8 @@ import (
 // arranca un segundo servidor con otro keyring sobre la base en la que el primero cifró (hallazgo
 // 57 de F9). Aquí no hay servidor: se llama a la lógica directamente sobre una base clonada, y cada
 // ring (rekey_fixtures_contrato_test.go) es el servidor antes o después de cambiar el keyring.
-// Re-expresa los tres Test* de internal/platform/crypto/rekey_integration_test.go, que corre contra
-// un Postgres vivo y que F10 borra.
+// Es el ÚNICO sitio donde la rotación corre contra Postgres: internal/platform/crypto solo tiene
+// tests sin base, y la puerta (POST /admin/crypto/rekey) la mira p10_plataforma_rekey_test.go.
 //
 // 🔴 NO ES UNA SUITE DE CONTRATO AL USO, Y SE DICE: rekey.go no se reconstruye, así que no hay
 // puerto ni …helpertest. El fichero se llama *_contrato_test.go porque es la única forma de que el

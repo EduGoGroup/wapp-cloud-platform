@@ -59,16 +59,13 @@ var (
 	// conexiones (closeTemplate). La base de un proceso se pide con nuevaBase.
 	urlInstancia *url.URL
 
-	// binElegido es el binario bajo prueba, «viejo» o «nuevo», ya validado.
-	binElegido string
-
-	// binarios guarda la ruta de cada ejecutable compilado, por clave «migrate» y el binario
-	// elegido. Se escribe una vez en TestMain antes de m.Run y después solo se lee.
+	// binarios guarda la ruta de cada ejecutable compilado, por clave «migrate» y
+	// «servidor». Se escribe una vez en TestMain antes de m.Run y después solo se lee.
 	binarios map[string]string
 )
 
-// TestMain levanta UN Postgres para toda la corrida, compila una vez cmd/migrate y el servidor
-// elegido, migra la base `plantilla` con el subproceso migrate y corre los tests. Si algo de eso
+// TestMain levanta UN Postgres para toda la corrida, compila una vez cmd/migrate y el
+// servidor, migra la base `plantilla` con el subproceso migrate y corre los tests. Si algo de eso
 // no se puede, la corrida FALLA (código ≠ 0): no se salta nada. Está partido en ejecutar para que
 // corran los defer antes de os.Exit.
 func TestMain(m *testing.M) {
@@ -76,21 +73,17 @@ func TestMain(m *testing.M) {
 }
 
 // ejecutar es el cuerpo de TestMain: recibe el *testing.M y devuelve el código de salida del
-// proceso. Devuelve 2 si WAPP_PROCESOS_BINARIO no vale «viejo» o «nuevo» o si GOWORK no vale
-// «off» (las dos cosas se miran al entrar, antes de arrancar nada, y se dicen las dos si fallan
-// las dos), 1 si no se pudo levantar Postgres, compilar o migrar, y el código de m.Run en otro caso.
+// proceso. Devuelve 2 si GOWORK no vale «off» (se mira al entrar, antes de arrancar nada), 1 si no se pudo levantar Postgres, compilar o migrar, y el código de m.Run en otro caso.
 //
 // Pasada la entrada, y antes de levantar nada, barre del directorio temporal del sistema los
 // directorios de corrida que dejaron huérfanos las corridas que murieron sin llegar a su defer
 // (sweepOrphanRunDirs, en sweep_test.go, con las condiciones que hacen seguro ese borrado). Un
 // barrido que falla se dice por stderr y no cambia el código de salida.
 func ejecutar(m *testing.M) int {
-	cual, err := validarBinario(os.Getenv("WAPP_PROCESOS_BINARIO"))
-	if err := errors.Join(err, requireGoworkOff(os.Getenv("GOWORK"))); err != nil {
+	if err := requireGoworkOff(os.Getenv("GOWORK")); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	binElegido = cual
 
 	sweepOrphanRunDirs(os.TempDir(), time.Now(), os.RemoveAll, stderrf)
 
@@ -114,16 +107,6 @@ func ejecutar(m *testing.M) int {
 	return m.Run()
 }
 
-// validarBinario recibe el valor de WAPP_PROCESOS_BINARIO y devuelve el binario elegido. Falla,
-// con el mensaje que ve el desarrollador, si el valor no es exactamente «viejo» o «nuevo»
-// (también si está vacío): sin binario no hay nada que probar y no se adivina uno (R9.4.a).
-func validarBinario(valor string) (string, error) {
-	if valor != "viejo" && valor != "nuevo" {
-		return "", fmt.Errorf("procesos: WAPP_PROCESOS_BINARIO debe ser «viejo» o «nuevo» (vale %q)", valor)
-	}
-	return valor, nil
-}
-
 // requireGoworkOff recibe el valor de la variable de entorno GOWORK y devuelve nil solo si es
 // exactamente «off». En cualquier otro caso —vacía, «auto», la ruta de un go.work— devuelve el
 // error con el mensaje que ve el desarrollador (D-F9-7). El arnés compila el servidor y cmd/migrate
@@ -141,16 +124,8 @@ func requireGoworkOff(value string) error {
 	return nil
 }
 
-// binarioElegido devuelve el binario bajo prueba, «viejo» o «nuevo», ya validado por TestMain.
-// Es lo único que los procesos saben de la elección: nombran su base y su servidor con él, pero
-// jamás ramifican por él (R9.8.b).
-func binarioElegido() string {
-	return binElegido
-}
-
-// rutaBinario recibe «viejo», «nuevo» o «migrate» y devuelve la ruta absoluta del ejecutable ya
-// compilado por TestMain. De «viejo»/«nuevo» solo existe el elegido: pedir el otro, o una clave
-// desconocida, devuelve la cadena vacía (quien la ejecute falla con un error claro de exec).
+// rutaBinario recibe «servidor» o «migrate» y devuelve la ruta absoluta del ejecutable ya
+// compilado por TestMain. Una clave desconocida devuelve la cadena vacía (quien la ejecute falla con un error claro de exec).
 func rutaBinario(cual string) string {
 	return binarios[cual]
 }
@@ -275,17 +250,16 @@ func raizDelModulo() (string, error) {
 }
 
 // compilarBinarios recibe la raíz del módulo y el directorio temporal, y compila en este último
-// cmd/migrate y el servidor elegido (./cmd/server si viejo, ./cmd/server-modular si nuevo),
+// cmd/migrate y el servidor (./cmd/server),
 // dejando sus rutas en binarios. Se compila UNA vez por corrida; el tiempo de cada build se
 // vuelca a stderr. Falla con la salida del compilador si `go build` falla.
 func compilarBinarios(raiz, dir string) error {
 	paquetes := map[string]struct{ paquete, fichero string }{
-		"migrate": {"./cmd/migrate", "migrate"},
-		"viejo":   {"./cmd/server", "servidor-viejo"},
-		"nuevo":   {"./cmd/server-modular", "servidor-nuevo"},
+		"migrate":  {"./cmd/migrate", "migrate"},
+		"servidor": {"./cmd/server", "servidor"},
 	}
 	binarios = make(map[string]string, 2)
-	for _, cual := range []string{"migrate", binElegido} {
+	for _, cual := range []string{"migrate", "servidor"} {
 		destino := filepath.Join(dir, paquetes[cual].fichero)
 		inicio := time.Now()
 		if err := compilar(raiz, paquetes[cual].paquete, destino); err != nil {
@@ -306,7 +280,7 @@ func compilar(raiz, paquete, destino string) error {
 	ctx, cancelar := context.WithTimeout(context.Background(), topeCompilar)
 	defer cancelar()
 
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", destino, paquete) //nolint:gosec // argumentos fijos del arnés, sin entrada externa
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", destino, paquete) //nolint:gosec // G204: argumentos fijos del arnés, sin entrada externa
 	cmd.Dir = raiz
 	// cmd.Env se queda en nil a propósito: go build necesita el entorno de Go del desarrollador.
 	if salida, err := cmd.CombinedOutput(); err != nil {
@@ -332,7 +306,7 @@ func migrarPlantilla(dir string) error {
 
 	inicio := time.Now()
 	var salida bytes.Buffer
-	cmd := exec.CommandContext(ctx, rutaBinario("migrate")) //nolint:gosec // binario compilado por este mismo arnés
+	cmd := exec.CommandContext(ctx, rutaBinario("migrate")) //nolint:gosec // G204: binario compilado por este mismo arnés
 	cmd.Dir = home
 	cmd.Env = append([]string{
 		"PATH=" + os.Getenv("PATH"),
@@ -388,8 +362,7 @@ const topeEntryCheck = 30 * time.Second
 // TestArnes_GoworkOff prueba que el arnés exige GOWORK=off (D-F9-7). La función pura acepta solo
 // «off», letra por letra, y el mensaje nombra la variable y el valor que vio. Y de punta a punta:
 // el propio binario de test, reejecutado con otro GOWORK (o sin él), sale de TestMain con código 2
-// y ese mensaje ANTES de levantar nada —ni Postgres ni un build—; si además WAPP_PROCESOS_BINARIO
-// no vale, dice las dos cosas. No necesita Docker más que para la corrida que lo contiene.
+// y ese mensaje ANTES de levantar nada —ni Postgres ni un build—. No necesita Docker más que para la corrida que lo contiene.
 func TestArnes_GoworkOff(t *testing.T) {
 	t.Parallel()
 	t.Run("requireGoworkOff", func(t *testing.T) {
@@ -409,19 +382,15 @@ func TestArnes_GoworkOff(t *testing.T) {
 		}
 	})
 
-	const goworkMsg, binaryMsg = "procesos: GOWORK debe ser «off»", "procesos: WAPP_PROCESOS_BINARIO debe ser"
+	const goworkMsg = "procesos: GOWORK debe ser «off»"
 	cases := []struct {
-		name    string
-		env     []string // lo que se añade al entorno mínimo del subproceso
-		want    []string // lo que debe decir stderr
-		wantNot []string // lo que no debe decir
+		name string
+		env  []string // lo que se añade al entorno mínimo del subproceso
+		want []string // lo que debe decir stderr
 	}{
-		{"sin GOWORK", []string{"WAPP_PROCESOS_BINARIO=viejo"}, []string{goworkMsg, `(vale "")`}, []string{binaryMsg}},
-		{"GOWORK con la ruta de un go.work", []string{"WAPP_PROCESOS_BINARIO=nuevo", "GOWORK=/ruta/al/go.work"},
-			[]string{goworkMsg, `(vale "/ruta/al/go.work")`}, []string{binaryMsg}},
-		{"GOWORK y el binario mal a la vez", []string{"WAPP_PROCESOS_BINARIO=otro", "GOWORK=auto"},
-			[]string{goworkMsg, `(vale "auto")`, binaryMsg}, nil},
-		{"GOWORK=off y el binario mal", []string{"WAPP_PROCESOS_BINARIO=otro", "GOWORK=off"}, []string{binaryMsg}, []string{goworkMsg}},
+		{"sin GOWORK", nil, []string{goworkMsg, `(vale "")`}},
+		{"GOWORK con la ruta de un go.work", []string{"GOWORK=/ruta/al/go.work"}, []string{goworkMsg, `(vale "/ruta/al/go.work")`}},
+		{"GOWORK=auto", []string{"GOWORK=auto"}, []string{goworkMsg, `(vale "auto")`}},
 	}
 	for _, c := range cases {
 		t.Run("TestMain: "+c.name, func(t *testing.T) {
@@ -437,7 +406,7 @@ func TestArnes_GoworkOff(t *testing.T) {
 			}
 			// «Postgres» lo dicen tanto el contenedor listo como el fallo al levantarlo: si aparece,
 			// TestMain pasó de la comprobación de entrada.
-			for _, w := range append(c.wantNot, "Postgres", "compilado") {
+			for _, w := range []string{"Postgres", "compilado"} {
 				if strings.Contains(stderr, w) {
 					t.Errorf("stderr dice %q y no debía:\n%s", w, stderr)
 				}
@@ -461,7 +430,7 @@ func rerunTestMain(t *testing.T, extra []string) (code int, stderr string) {
 	ctx, cancelar := context.WithTimeout(t.Context(), topeEntryCheck)
 	defer cancelar()
 	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, self, "-test.run=^$") //nolint:gosec // el propio binario de test, con argumentos fijos
+	cmd := exec.CommandContext(ctx, self, "-test.run=^$") //nolint:gosec // G204: el propio binario de test, con argumentos fijos
 	cmd.Env = append([]string{
 		"PATH=" + os.Getenv("PATH"),
 		"TMPDIR=" + os.TempDir(),

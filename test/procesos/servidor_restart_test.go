@@ -58,7 +58,7 @@ func serverRestart(t *testing.T, s *servidor) (previousLog string) {
 	for attempt := 1; ; attempt++ {
 		err := s.serverRelaunch(t.Context(), old.cmd)
 		if err == nil {
-			t.Logf("servidor reiniciado (%s) y listo en %s sobre la base %s: admin=%s publica=%s enrolar=%s conectar=%s", binarioElegido(),
+			t.Logf("servidor reiniciado y listo en %s sobre la base %s: admin=%s publica=%s enrolar=%s conectar=%s",
 				time.Since(start).Round(time.Millisecond), s.Base.Nombre, s.AdminAddr, s.PublicaAddr, s.EnrolarAddr, s.ConectarAddr)
 			return previousLog
 		}
@@ -84,7 +84,7 @@ func serverRestart(t *testing.T, s *servidor) (previousLog string) {
 // servidor, y la espera a que esté listo. Devuelve el error de lanzar, el de salir antes de estar
 // listo (errSalioAntes) o el de no estarlo a tiempo.
 func (s *servidor) serverRelaunch(ctx context.Context, previous *exec.Cmd) error {
-	cmd := exec.Command(previous.Path) //nolint:gosec // el mismo binario que compiló este arnés
+	cmd := exec.Command(previous.Path) //nolint:gosec // G204: el mismo binario que compiló este arnés
 	cmd.Dir = previous.Dir
 	cmd.Env = slices.Clone(previous.Env)
 	proceso, err := iniciarProceso(cmd, topeParadaServidor)

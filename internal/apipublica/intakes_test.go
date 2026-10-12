@@ -205,7 +205,7 @@ func TestMountIntakes_NilMWPanicsAtMount(t *testing.T) {
 	v := recuperar(func() {
 		apipublica.MountIntakes(apipublica.Nueva(), apipublica.Common{}, intakeDeps(&intakeServiceSpy{}, entitlements.FeatureCartBasic))
 	})
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountIntakes") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountIntakes") {
 		t.Errorf("MountIntakes con MW nil: panic = %v; quiero un panic de cableado que nombre MountIntakes", v)
 	}
 }

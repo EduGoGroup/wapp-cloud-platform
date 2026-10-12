@@ -18,6 +18,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm/tenantllmhelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // El resolutor del carrito recibe el selector POR INTERFAZ, con esta firma.
@@ -193,7 +194,7 @@ func TestTurno_ARouteFailureNotifiesTheOwnerAndCountsAsTurn(t *testing.T) {
 		llmvia.WithFrame(&fakeFrame{err: failure}), book.option(), llmvia.WithDegradacionObservada(falls.count))
 
 	raw, err := s.Turno(context.Background(), testTenant, "s-1", turnRequest())
-	if err != error(failure) || raw != "" { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
+	if !errhelpertest.IsBare(err, failure) || raw != "" {
 		t.Fatalf("Turno = (%q, %v), quería (\"\", el error del transporte intacto)", raw, err)
 	}
 	requireOneNotice(t, book, falls, llmvia.OrigenTurno, tenantllm.ViaLocal, degradation.ReasonTimeout)

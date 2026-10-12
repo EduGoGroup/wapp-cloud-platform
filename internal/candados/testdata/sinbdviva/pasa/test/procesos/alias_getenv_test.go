@@ -9,9 +9,9 @@ import (
 // siendo legítimo, se llame como se llame el paquete en el fichero. Lo mismo con testing:
 // Verbose no salta nada.
 func TestGetenvBehindAlias(t *tt.T) {
-	binary := e.Getenv("WAPP_PROCESOS_BINARIO")
+	binary := e.Getenv("WAPP_PROCESOS_EDGE_DIR")
 	if binary == "" {
-		t.Fatal("falta el binario del servidor: un proceso que no puede correr falla")
+		t.Fatal("falta el repo del Edge: un proceso que no puede correr falla")
 	}
 	if tt.Verbose() {
 		t.Log("binario", binary)

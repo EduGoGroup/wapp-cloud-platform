@@ -15,6 +15,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm/tenantllmhelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // requireOneNotice afirma UN aviso escrito y UNA caída contada, con ese origen, esa vía y
@@ -48,7 +49,7 @@ func TestFor_AFailureWhileConsumingTheAdapterNotifiesTheOwner(t *testing.T) {
 	got := classify(context.Background(), p)
 	// El error tiene que seguir trayendo su motivo: el decorador NO lo envuelve.
 	var withReason interface{ Motivo() string }
-	if got != error(failure) || !errors.As(got, &withReason) || withReason.Motivo() != "breaker_open" { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
+	if !errhelpertest.IsBare(got, failure) || !errors.As(got, &withReason) || withReason.Motivo() != "breaker_open" {
 		t.Fatalf("P1 = %v, quería el error del transporte intacto, con su motivo", got)
 	}
 	requireOneNotice(t, book, falls, llmvia.OrigenPipeline, tenantllm.ViaLocal, degradation.ReasonBreakerOpen)

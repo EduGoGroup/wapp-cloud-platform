@@ -140,7 +140,7 @@ func edgeRealCompile(dir, revision, dest string) error {
 	// entorno de Go del desarrollador (GOWORK=off y GOTOOLCHAIN los pone `make`). El destino linux se
 	// añade con env(1), sin leer ni copiar ese entorno. El Edge que CORRE no hereda nada de aquí: su
 	// entorno se arma desde cero en edgeRealEnv.
-	cmd := exec.CommandContext(ctx, "env", "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0", //nolint:gosec // argumentos del arnés (la revisión y el destino los calcula él), sin entrada externa
+	cmd := exec.CommandContext(ctx, "env", "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0", //nolint:gosec // G204: argumentos del arnés (la revisión y el destino los calcula él), sin entrada externa
 		"go", "build", "-trimpath", "-ldflags", "-X main.Version="+revision, "-o", dest, "./cmd/agent")
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {

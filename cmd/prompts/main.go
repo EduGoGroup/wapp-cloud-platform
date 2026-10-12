@@ -26,13 +26,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/prompts"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/prompts"
 	"github.com/EduGoGroup/wapp-shared/llm"
 )
 
 func main() {
 	if err := run(); err != nil {
-		// Sin prefijo propio: los errores de internal/prompts ya vienen envueltos en
+		// Sin prefijo propio: los errores de internal/modulos/inferencia/prompts ya vienen envueltos en
 		// ErrPromptsDir, que empieza por "prompts:". Añadir otro dejaba la salida en
 		// "prompts: prompts: ...", que se lee como un bug del comando.
 		fmt.Fprintln(os.Stderr, err)

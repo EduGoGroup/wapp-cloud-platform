@@ -1,18 +1,15 @@
-// Package apipublica es la cara `/api/v1` NUEVA de wApp (D-10): la única cara HTTP pública del
-// árbol reconstruido, levantada delante del `internal/publicapi` viejo en vez de moverlo.
+// Package apipublica es la cara `/api/v1` de wApp (D-10): la única cara HTTP pública, la que
+// sirve el :8103 entero.
 //
-// Crece por olas: cada fase de la reconstrucción (F2…F8) muda aquí sus rutas según el mapa
-// (plan/FX-cara-http/mapa-de-rutas.md) y el arranque nuevo llama a un `Montar<Área>` más. En F0
-// no registra nada. Hasta que cierre F8 convive con la cara vieja a través del estrangulador
-// (estrangulador.go): lo que esta cara registra lo sirve ella; lo que NO registra cae al
-// `publicapi` viejo, intacto. En F10 se borran el estrangulador y el paquete viejo.
+// Lleva las 73 rutas del mapa (plan/FX-cara-http/mapa-de-rutas.md), un `Mount<Área>` por área,
+// que el arranque llama al construirla. Va sola: lo que no registra recibe el 404 de ruta
+// inexistente (o el 405 con Allow) de su propio ServeMux.
 //
 // Las cadenas por ruta (Authenticate → RequirePermission → gate de feature → handler, con su
 // access-log y su auditoría) viven AQUÍ, en el fichero de cada área, no en el arranque: el
-// arranque solo compone las caras y las envuelve una vez con métrica y rate limit.
+// arranque solo construye la cara y la envuelve una vez con métrica y rate limit.
 //
-// No porta ningún fichero viejo: la Cara y el estrangulador nacen nuevos (RX.5.d los exime de la
-// cabecera E-10).
+// No porta ningún fichero viejo: la Cara nace nueva (RX.5.d la exime de la cabecera E-10).
 package apipublica
 
 import (
@@ -20,9 +17,10 @@ import (
 	"slices"
 )
 
-// Cara es la cara nueva: un *http.ServeMux propio y la lista de patrones que se le registraron
+// Cara es la cara: un *http.ServeMux propio y la lista de patrones que se le registraron
 // por Handle, en el orden en que se registraron. La lista existe porque un ServeMux no se puede
-// enumerar: el candado de mudanzas comprueba con ella que la cara no sirve un patrón de más.
+// enumerar: el candado de rutas del arranque comprueba con ella que la cara no sirve un patrón
+// de más.
 //
 // Una Cara se construye con Nueva; su valor cero no está listo para usarse.
 //
@@ -60,7 +58,7 @@ func (c *Cara) Handle(patron string, h http.Handler) {
 // el slice devuelto (asignar o añadir) no altera la cara: la siguiente llamada da la lista
 // original. Una cara sin registros da longitud 0.
 func (c *Cara) Patrones() []string {
-	// Clone y no el slice propio: el candado de mudanzas (u otro llamador) podría ordenarlo o
+	// Clone y no el slice propio: el candado de rutas (u otro llamador) podría ordenarlo o
 	// ampliarlo, y eso no debe reescribir lo que la cara registró. Sin registros, Clone de nil
 	// es nil: longitud 0, como promete el contrato.
 	return slices.Clone(c.patrones)

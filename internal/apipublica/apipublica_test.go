@@ -2,6 +2,7 @@ package apipublica_test
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -10,6 +11,51 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 )
+
+// cuerpo404 es lo que escribe el 404 del ServeMux (http.NotFound): la huella lo usa para dar una
+// ruta por no montada.
+const cuerpo404 = "404 page not found\n"
+
+// contador es un handler que cuenta sus llamadas y, si escribir, responde estado + cuerpo.
+type contador struct {
+	llamadas int
+	estado   int
+	cuerpo   string
+	vista    *http.Request // la última petición recibida (el puntero, no una copia)
+}
+
+func (c *contador) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	c.llamadas++
+	c.vista = r
+	if c.estado != 0 {
+		w.WriteHeader(c.estado)
+	}
+	if c.cuerpo != "" {
+		escribir(w, c.cuerpo)
+	}
+}
+
+// escribir escribe s en w. Un ResponseRecorder no falla al escribir: si fallara, el test no
+// sabría qué está midiendo, así que es un panic y no un error ignorado.
+func escribir(w http.ResponseWriter, s string) {
+	if _, err := io.WriteString(w, s); err != nil {
+		panic("escribir en la respuesta de prueba: " + err.Error())
+	}
+}
+
+// servir hace una petición httptest sobre h y devuelve la respuesta grabada.
+func servir(h http.Handler, metodo, destino string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(metodo, destino, nil))
+	return rec
+}
+
+// recuperar ejecuta f y devuelve el valor de su panic (nil si no hubo).
+func recuperar(f func()) (valor any) {
+	defer func() { valor = recover() }()
+	f()
+	return nil
+}
 
 // TestNueva_SinPatrones: una cara recién hecha no tiene patrones.
 func TestNueva_SinPatrones(t *testing.T) {
@@ -174,42 +220,5 @@ func TestServeHTTP_DelegaEnElMux(t *testing.T) {
 	want := servir(ref, http.MethodDelete, "/api/v1/x/42")
 	if got.Code != want.Code || got.Header().Get("Allow") != want.Header().Get("Allow") {
 		t.Errorf("DELETE = %d Allow=%q; quiero %d Allow=%q", got.Code, got.Header().Get("Allow"), want.Code, want.Header().Get("Allow"))
-	}
-}
-
-// TestCaraVacia_TodoALaVieja (T0.16, R0.6.a): una cara vacía compuesta delante del mux viejo deja
-// pasar TODA petición al viejo sin tocarla: mismo estado, cuerpo y cabeceras que el mux viejo
-// solo, también en su 404 y en su 405 con Allow.
-func TestCaraVacia_TodoALaVieja(t *testing.T) {
-	vieja := http.NewServeMux()
-	vieja.HandleFunc("GET /api/v1/entitlements", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Vieja", "1")
-		escribir(w, `{"plan":"basic"}`)
-	})
-	vieja.HandleFunc("POST /api/v1/intakes/{id}/quote-suggestion", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		escribir(w, r.PathValue("id"))
-	})
-	vieja.HandleFunc("/admin/", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusTeapot)
-	})
-	x := apipublica.Componer(apipublica.Nueva(), vieja)
-
-	for _, p := range []struct{ metodo, destino string }{
-		{http.MethodGet, "/api/v1/entitlements"},
-		{http.MethodPost, "/api/v1/intakes/7/quote-suggestion"},
-		{http.MethodPatch, "/admin/cualquier/cosa"},
-		{http.MethodGet, "/no-existe"},              // 404 del mux viejo
-		{http.MethodDelete, "/api/v1/entitlements"}, // 405 del mux viejo, con Allow
-	} {
-		t.Run(p.metodo+" "+p.destino, func(t *testing.T) {
-			got := servir(x, p.metodo, p.destino)
-			want := servir(vieja, p.metodo, p.destino)
-			if got.Code != want.Code || got.Body.String() != want.Body.String() || !reflect.DeepEqual(got.Header(), want.Header()) {
-				t.Errorf("%s %s = %d %v %q; quiero lo del viejo: %d %v %q", p.metodo, p.destino,
-					got.Code, got.Header(), got.Body.String(), want.Code, want.Header(), want.Body.String())
-			}
-		})
 	}
 }

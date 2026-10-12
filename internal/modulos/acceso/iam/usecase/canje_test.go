@@ -132,7 +132,7 @@ func TestRedeemInvitation_RepoOutcomesPropagate(t *testing.T) {
 // De punta a punta con el doble: la empresa sale de la FILA, no de quien llama.
 func TestRedeemInvitation_CompanyComesFromInvitationRow(t *testing.T) {
 	store := memory.NewStore().WithClock(tickingClock())
-	const token = "WAPP-INV-0123456789abcdef0123456789abcdef" //nolint:gosec // token de mentira de un test
+	const token = "WAPP-INV-0123456789abcdef0123456789abcdef" //nolint:gosec // G101: token de mentira de un test
 	store.Invitations.Seed(domain.Invitation{
 		TenantID:  testTenantB,
 		TokenHash: domain.HashInvitationToken(token),

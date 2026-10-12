@@ -246,7 +246,7 @@ func TestMountTenantContent_NilMWPanicsAtMount(t *testing.T) {
 	v := recuperar(func() {
 		apipublica.MountTenantContent(apipublica.Nueva(), apipublica.Common{}, apipublica.TenantContentDeps{Content: tenantContentNewSpy()})
 	})
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountTenantContent") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountTenantContent") {
 		t.Errorf("MountTenantContent con MW nil: panic = %v; quiero un panic de cableado que nombre MountTenantContent", v)
 	}
 }

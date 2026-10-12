@@ -280,8 +280,8 @@ func TestMountAuth_WiringPanics(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			v := recuperar(func() { apipublica.MountAuth(apipublica.Nueva(), h.Common(), tc.deps) })
-			if v == nil || esPendiente(v) {
-				t.Errorf("MountAuth %s: panic = %v; quiero un panic de cableado al montar (no nil, no pendiente)", tc.name, v)
+			if v == nil {
+				t.Errorf("MountAuth %s: panic = %v; quiero un panic de cableado al montar (no nil)", tc.name, v)
 			}
 		})
 	}

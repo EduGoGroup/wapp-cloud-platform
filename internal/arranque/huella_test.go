@@ -1,17 +1,15 @@
 package arranque
 
 // huella_test.go es el candado de huella del arranque nuevo (F0 · T0.15, 05 §5): dice si
-// este arranque expone EXACTAMENTE lo mismo que el viejo.
+// este arranque expone EXACTAMENTE lo mismo que exponía el viejo, congelado en una dorada.
 //
-//   - TestHuella: el mismo contenedor que huella_vieja_test.go, sobre ESTE paquete, comparado
-//     con la dorada que escribió el viejo (testdata/huella-vieja.golden): rutas por listener,
+//   - TestHuella: el contenedor de huella de ESTE paquete, comparado
+//     con la dorada que escribió el arranque viejo antes de borrarse (testdata/huella-vieja.golden): rutas por listener,
 //     rpc y familias wapp_* de /metrics en los dos perfiles, y —desde F10 · T10.2— la parte
 //     estática (las sentencias `go` y los hooks de *metrics.Metrics), más la lectura de
 //     entorno del árbol nuevo, que debe ser vacía fuera de internal/platform/config. Este
-//     fichero NO tiene camino de escritura: solo TestHuellaVieja -args -actualizar escribe la
-//     dorada (R0.5.g).
-//   - TestHuellaEstatica: MIENTRAS EXISTA el arranque viejo, la misma parte estática comparada
-//     además con su fuente viva. Muere con él en el relevo (T10.10); la dorada se queda.
+//     fichero NO tiene camino de escritura, y desde el relevo (F10 · T10.10) nadie la tiene:
+//     cambiar la dorada es cambiar un contrato hacia fuera y pide una decisión escrita.
 //   - TestHuellaBites: el candado muerde. Quitar una ruta, añadir otra o perder una goroutine
 //     da una diferencia contra la dorada.
 //
@@ -45,38 +43,19 @@ import (
 const (
 	// raizDelRepo es la raíz del módulo vista desde este paquete.
 	raizDelRepo = "../.."
-	// doradaDeHuella es la dorada que escribe TestHuellaVieja (diseno.md §6.4).
+	// doradaDeHuella es la dorada que escribió el arranque viejo (diseno.md §6.4).
 	doradaDeHuella = "testdata/huella-vieja.golden"
 	// staticProfile es el perfil de la dorada que guarda la parte estática.
 	staticProfile = "estatica"
-	// arranqueViejo es el directorio del oráculo, para la parte estática.
-	arranqueViejo = "../bootstrap/arranque"
 )
 
 // arbolNuevo son los directorios del árbol nuevo que no pueden leer entorno (R0.5.f); los
 // que aún no existen se saltan.
-var arbolNuevo = []string{"cmd/server-modular", "internal/arranque", "internal/apipublica", "internal/modulos", "internal/nucleo"}
+var arbolNuevo = []string{"cmd/server", "internal/arranque", "internal/apipublica", "internal/modulos", "internal/nucleo"}
 
 // TestHuella compara la huella de este arranque (ejecución y estática) con la dorada del viejo.
 func TestHuella(t *testing.T) {
 	compararConLaDorada(t, append(huellasDeEjecucion(t), staticFootprint(t)))
-}
-
-// TestHuellaEstatica compara, sobre la fuente de los dos arranques, las goroutines que
-// lanzan y los hooks de métricas que cablean. Solo tiene qué comparar mientras el arranque
-// viejo existe: el relevo (T10.10) borra este test con él, y TestHuella sigue comparando lo
-// mismo contra la dorada.
-func TestHuellaEstatica(t *testing.T) {
-	if _, err := os.Stat(arranqueViejo); errors.Is(err, fs.ErrNotExist) {
-		t.Logf("huella estática: %s ya no existe; la comparación viva la sustituye la dorada (TestHuella)", arranqueViejo)
-		return
-	}
-	viejo, nuevo := estaticaDe(t, arranqueViejo, metodosDeMetrics()), staticFootprint(t)
-	viejo.Perfil = staticProfile
-	for _, linea := range huellatest.Diferencia(viejo, nuevo) {
-		t.Errorf("huella estática: %s", linea)
-	}
-	t.Logf("huella estática: goroutines=%d hooks=%d entorno=%d", len(nuevo.Goroutines), len(nuevo.Hooks), len(nuevo.Entorno))
 }
 
 // TestHuellaBites prueba que el candado muerde: la huella medida casa con la dorada, y cada
@@ -176,16 +155,6 @@ func metodosDeMetrics() []string {
 }
 
 // ─── Contenedor de huella (diseno.md §6.3) ───────────────────────────────────────────────
-//
-// 🔴 ESTE BLOQUE ES EL MISMO TEXTO en internal/bootstrap/arranque/huella_vieja_test.go y en
-// internal/arranque/huella_test.go: el tipo contenedor es privado a cada paquete y no se
-// puede compartir, así que se escribe dos veces. Una diferencia entre las dos copias es un
-// defecto de la huella, no una adaptación (compárense con `diff`).
-//
-// 🔀 F3 · conmutar(edge): el texto del bloque sigue siendo el mismo, pero ya no nombra lo mismo.
-// El `enroll` de este fichero es internal/modulos/edge/enroll (el NUEVO: el contenedor de este
-// paquete guarda su *enroll.CA) y el del fichero viejo sigue siendo internal/gateway/enroll: la
-// única diferencia entre las dos copias es esa línea de import.
 //
 // Arma el arranque SIN red y SIN Postgres, con las fases 2–8 REALES:
 //
@@ -414,7 +383,7 @@ func differencesFromGolden(t *testing.T, tiene []huellatest.Huella) []string {
 	t.Helper()
 	quiere, err := huellatest.ReadGolden(doradaDeHuella)
 	if err != nil {
-		t.Fatalf("huella: leyendo la dorada %s: %v (solo TestHuellaVieja -args -actualizar la escribe)", doradaDeHuella, err)
+		t.Fatalf("huella: leyendo la dorada %s: %v (no se regenera: cambiarla es cambiar un contrato)", doradaDeHuella, err)
 	}
 	porPerfil := make(map[string]huellatest.Huella, len(quiere))
 	for _, h := range quiere {

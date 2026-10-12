@@ -107,7 +107,7 @@ func TestMountEventTelemetry_NilMWPanicsAtMount(t *testing.T) {
 	v := recuperar(func() {
 		apipublica.MountEventTelemetry(apipublica.Nueva(), apipublica.Common{}, apipublica.EventTelemetryDeps{EventTelemetry: &telemetryReaderSpy{}})
 	})
-	if v == nil || esPendiente(v) || !strings.Contains(fmt.Sprint(v), "MountEventTelemetry") {
+	if v == nil || !strings.Contains(fmt.Sprint(v), "MountEventTelemetry") {
 		t.Errorf("MountEventTelemetry con MW nil: panic = %v; quiero un panic de cableado que nombre MountEventTelemetry", v)
 	}
 }

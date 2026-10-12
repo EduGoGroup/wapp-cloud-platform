@@ -28,8 +28,8 @@ type Puente struct {
 // Reglas es la tabla de fronteras. Vive en Go, en internal/modulos/fronteras_test.go
 // (diseno.md §4.1): tipada y diffable, sin parser propio.
 //
-//   - Capas: módulo nuevo → módulos nuevos que PUEDE importar, además de platform, nucleo y
-//     pendiente, que todo el árbol nuevo puede importar. Un módulo sin entrada no puede
+//   - Capas: módulo nuevo → módulos nuevos que PUEDE importar, además de platform y nucleo,
+//     que todo el árbol nuevo puede importar. Un módulo sin entrada no puede
 //     importar ningún otro.
 //   - Mapa: prefijo viejo ("internal/iam") → módulo ("acceso"), según 04 §4. Gana el prefijo
 //     más largo que case en frontera de «/».
@@ -59,10 +59,10 @@ type Reglas struct {
 //
 // Clasificación (por prefijo en frontera de «/»):
 //   - árbol NUEVO: internal/modulos, internal/nucleo, internal/apipublica,
-//     internal/pendiente, internal/candados, internal/arranque, cmd/server-modular y
+//     internal/candados, internal/arranque, cmd/server, cmd/casebank, cmd/prompts y
 //     cmd/cobertura-ficheros;
 //   - platform: internal/platform. Es código viejo, pero todo el árbol nuevo puede
-//     importarlo, igual que nucleo y pendiente;
+//     importarlo, igual que nucleo;
 //   - VIEJO: cualquier otra ruta del módulo.
 //
 // El módulo de una ruta internal/modulos/<m>/… es <m>. La arista de una violación se
@@ -80,16 +80,14 @@ type Reglas struct {
 //     tiene un adaptador vivo y que no entra en Conmutados hasta que muera (05 §4.2);
 //  4. un fichero de internal/apipublica importa CUALQUIER paquete viejo, aunque haya un
 //     Puente que lo declare (la cara nueva solo habla con lo nuevo);
-//  5. un fichero VIEJO importa algo del árbol nuevo. Única excepción: el test
-//     internal/bootstrap/arranque/huella_vieja_test.go puede importar
-//     internal/arranque/huellatest;
+//  5. un fichero VIEJO importa algo del árbol nuevo;
 //  6. un Puente declarado que ningún fichero de fuentes usa —ninguno cuyo directorio case
 //     con Desde importa Hacia— (puente muerto: se borra), o
 //     cuyo Muere está en FasesCerradas. Estas violaciones no tienen fichero culpable: su
 //     Fichero es el Desde del puente y su Motivo nombra "Desde → Hacia".
 //
 // Un mismo import da como mucho UNA violación: la regla 4 manda sobre la 2 (apipublica sin
-// puente no da dos). Importar platform, nucleo, pendiente, el propio módulo o un módulo de
+// puente no da dos). Importar platform, nucleo, el propio módulo o un módulo de
 // Capas[m] nunca es violación.
 func Fronteras(modulo string, fuentes []Fuente, r Reglas) []Violacion {
 	vs := make([]Violacion, 0)
@@ -126,10 +124,11 @@ var arbolNuevo = []string{
 	"internal/modulos",
 	"internal/nucleo",
 	"internal/apipublica",
-	"internal/pendiente",
 	"internal/candados",
 	"internal/arranque",
-	"cmd/server-modular",
+	"cmd/server",
+	"cmd/casebank",
+	"cmd/prompts",
 	"cmd/cobertura-ficheros",
 }
 
@@ -138,10 +137,6 @@ const (
 	prefijoPlatform   = "internal/platform"
 	prefijoArranque   = "internal/arranque"
 	prefijoApipublica = "internal/apipublica"
-	// La única arista viejo → nuevo admitida (regla 5): la huella del arranque viejo compara
-	// contra el mismo contenedor que la del nuevo (diseno.md §6).
-	huellaVieja = "internal/bootstrap/arranque/huella_vieja_test.go"
-	huellatest  = "internal/arranque/huellatest"
 )
 
 // bajo dice si ruta es prefijo o cuelga de él en frontera de «/»: "internal/iam" cubre
@@ -185,7 +180,7 @@ func juzgarImport(ruta, dir, rel string, r Reglas) string {
 	arista := dir + " → " + rel
 	if !esNuevo(ruta) {
 		// platform es código viejo a estos efectos: tampoco puede importar el árbol nuevo.
-		if esNuevo(rel) && (ruta != huellaVieja || rel != huellatest) {
+		if esNuevo(rel) {
 			return "regla 5: " + arista + ": código viejo que importa el árbol nuevo"
 		}
 		return ""

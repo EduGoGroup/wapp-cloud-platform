@@ -94,6 +94,10 @@ func p0Metricas(t *testing.T, s *servidor) {
 			t.Errorf("%s: tipo %q (declarada: %v), quería %q", m.nombre, tipo, hay, m.tipo)
 		}
 	}
+	// 25 LITERAL y no la constante del pool: es el número que el operador lee en /metrics.
+	if got := p0PoolCeiling(exp); got != 25 {
+		t.Errorf("sin WAPP_DB_MAX_OPEN_CONNS, wapp_db_max_open = %v, quería 25 (el techo por defecto del pool)", got)
+	}
 	if !p0HayPeticionAdmin(exp) {
 		t.Errorf("no hay muestra de wapp_http_requests_total{listener=admin, route=/healthz, status=200} ≥ 1")
 	}
@@ -133,4 +137,38 @@ func p0Huerfanas(exp p0Exposicion) []string {
 		}
 	}
 	return huerfanas
+}
+
+// p0PoolCeiling devuelve el valor de la muestra wapp_db_max_open de la exposición, o -1 si no
+// hay ninguna. No falla.
+func p0PoolCeiling(exp p0Exposicion) float64 {
+	for _, m := range exp.Muestras {
+		if m.Nombre == "wapp_db_max_open" {
+			return m.Valor
+		}
+	}
+	return -1
+}
+
+// TestP0_PoolCeilingComesFromTheEnvironment recorre el cable entero del techo del pool:
+// WAPP_DB_MAX_OPEN_CONNS → configuración → la apertura de la base en el arranque → /metrics. Cada
+// tramo tiene su test unitario (internal/platform/config, storage/postgres y metrics), pero
+// ninguno ve la línea del arranque que copia el valor de la configuración a la conexión: si se
+// borra, los tres siguen verdes y el operador que arranca con 7 lee 25 sin ningún aviso. El 7 no
+// coincide con ningún valor por defecto del pool (25 y 5), así que solo puede venir del entorno.
+// El caso sin variable lo afirma el subtest «metricas» de TestP0_Arranque.
+func TestP0_PoolCeilingComesFromTheEnvironment(t *testing.T) {
+	t.Parallel()
+	s := arrancar(t, opcionesServidor{Proceso: "p0_pool", MaxConexionesBD: 7})
+	r := s.Admin("").Get(t, "/metrics", nil)
+	if r.Codigo != http.StatusOK {
+		t.Fatalf("GET :8100/metrics = %d, quería 200\ncuerpo: %s", r.Codigo, recortar(r.Cuerpo))
+	}
+	exp, err := p0ParsearExposicion(string(r.Cuerpo))
+	if err != nil {
+		t.Fatalf("/metrics no está en el formato de exposición de Prometheus: %v", err)
+	}
+	if got := p0PoolCeiling(exp); got != 7 {
+		t.Errorf("con WAPP_DB_MAX_OPEN_CONNS=7, wapp_db_max_open = %v, quería 7: el arranque no pasa el techo de la configuración a la conexión", got)
+	}
 }

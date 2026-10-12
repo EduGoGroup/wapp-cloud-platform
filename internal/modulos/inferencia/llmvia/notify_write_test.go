@@ -14,6 +14,7 @@ import (
 	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/degradation"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // ctxSpy es un Notifier que mira CON QUÉ se le llama: el estado del contexto, su plazo y el
@@ -47,17 +48,17 @@ func TestNotice_SurvivesTheDeadContext(t *testing.T) {
 	dead, cancel := context.WithCancel(context.Background())
 	cancel() // el llamante ya se rindió
 
-	for name, fail := range map[string]func(s *Selector) error{
-		"pipeline door": func(s *Selector) error {
+	for name, fail := range map[string]func(t *testing.T, s *Selector) error{
+		"pipeline door": func(t *testing.T, s *Selector) error {
 			// For va con un ctx VIVO a propósito: el que llega muerto es el de la llamada al
 			// provider, que es la que se quiere ver fallar y avisar.
-			p, err := s.For(context.Background(), rigTenant, "") //nolint:contextcheck // ver arriba: el ctx muerto es el de la P1
+			p, err := s.For(context.Background(), rigTenant, "") //nolint:contextcheck // el caso ES el contexto: For va con uno vivo y solo la llamada al provider recibe el cancelado
 			if err != nil {
-				return nil //nolint:nilerr // sin provider no hay fallo del pipeline que devolver: el test falla en «quería el error del transporte»
+				t.Fatalf("For: %v", err)
 			}
 			return classify(dead, p)
 		},
-		"turn door": func(s *Selector) error {
+		"turn door": func(_ *testing.T, s *Selector) error {
 			_, err := s.Turno(dead, rigTenant, "s-1", rigTurn())
 			return err
 		},
@@ -66,7 +67,7 @@ func TestNotice_SurvivesTheDeadContext(t *testing.T) {
 			t.Parallel()
 			r := newRig(&reasonError{edgegrpc.ReasonTimeout})
 			spy := &ctxSpy{created: true}
-			if err := fail(r.selector(t, WithNotifier(spy))); err == nil {
+			if err := fail(t, r.selector(t, WithNotifier(spy))); err == nil {
 				t.Fatal("quería el error del transporte")
 			}
 			if spy.calls != 1 {
@@ -96,7 +97,7 @@ func TestNotice_RecordFailureOnlyGoesToTheLog(t *testing.T) {
 	spy := &ctxSpy{err: broken}
 
 	_, err := r.selector(t, WithNotifier(spy)).Turno(context.Background(), rigTenant, "s-1", rigTurn())
-	if err != error(failure) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
+	if !errhelpertest.IsBare(err, failure) {
 		t.Fatalf("Turno = %v, quería el error del transporte y no el del aviso", err)
 	}
 	if len(r.falls.falls) != 1 {

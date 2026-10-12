@@ -78,7 +78,7 @@ func TestExchange_AuditFailureDoesNotAbort(t *testing.T) {
 
 func TestExchange_IdentityDownIsNotARejectedCredential(t *testing.T) {
 	svc, _ := newStubbedExchange(t, &stubIdentityVerifier{err: fmt.Errorf("%w: sin claves frescas", identityauth.ErrJWKSUnavailable)})
-	_, err := svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: "token.que.no.se.puede.juzgar"}) //nolint:gosec // token de mentira de un test
+	_, err := svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: "token.que.no.se.puede.juzgar"}) //nolint:gosec // G101: token de mentira de un test
 	if !errors.Is(err, domain.ErrIdentityUnavailable) || errors.Is(err, domain.ErrIdentityTokenInvalid) {
 		t.Fatalf("err = %v; quiere ErrIdentityUnavailable y no ErrIdentityTokenInvalid", err)
 	}

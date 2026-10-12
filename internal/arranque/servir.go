@@ -39,12 +39,11 @@ type grpcServer struct {
 // queda bloqueado hasta que llega una señal de parada o falla un servidor. Es lo
 // último que hace el arranque y lo único que no construye nada.
 //
-// shutdownAll parte de context.Background() a propósito: corre cuando ctx ya está
-// cancelado, y derivar de él abortaría el cierre gracioso al instante.
-//
-//nolint:contextcheck // el porqué está en el párrafo de arriba
+// shutdownAll recibe el ctx y lo DESACOPLA de su cancelación (context.WithoutCancel): corre
+// cuando ctx ya está cancelado, y heredar esa cancelación abortaría el cierre gracioso al
+// instante.
 func servir(ctx context.Context, c *contenedor) error {
-	return serveAndWait(ctx.Done(), c.log,
+	return serveAndWait(ctx, c.log,
 		httpServer{srv: c.httpSrv, name: "admin/health"},
 		httpServer{srv: c.publicSrv, name: "API pública"},
 		grpcServer{gs: c.enrollGS, lis: c.enrollLis, addr: c.cfg.GRPCEnrollAddr, name: "Enrollment (TLS de servidor)"},
@@ -52,7 +51,7 @@ func servir(ctx context.Context, c *contenedor) error {
 	)
 }
 
-func serveAndWait(done <-chan struct{}, log sharedlogger.Logger, admin, public httpServer, enroll, connect grpcServer) error {
+func serveAndWait(ctx context.Context, log sharedlogger.Logger, admin, public httpServer, enroll, connect grpcServer) error {
 	errCh := make(chan error, 4)
 	go serveGRPC(errCh, log, enroll)
 	go serveGRPC(errCh, log, connect)
@@ -60,14 +59,14 @@ func serveAndWait(done <-chan struct{}, log sharedlogger.Logger, admin, public h
 	go serveHTTP(errCh, log, public)
 
 	select {
-	case <-done:
+	case <-ctx.Done():
 		log.Info("señal de parada recibida, cerrando")
 	case serveErr := <-errCh:
 		log.Error("fallo de un servidor", "error", serveErr)
-		shutdownAll(admin.srv, public.srv, enroll.gs, connect.gs, connect.inFlight, log)
+		shutdownAll(ctx, admin.srv, public.srv, enroll.gs, connect.gs, connect.inFlight, log)
 		return serveErr
 	}
-	shutdownAll(admin.srv, public.srv, enroll.gs, connect.gs, connect.inFlight, log)
+	shutdownAll(ctx, admin.srv, public.srv, enroll.gs, connect.gs, connect.inFlight, log)
 	log.Info("servidor detenido limpiamente")
 	return nil
 }
@@ -90,8 +89,11 @@ func serveHTTP(errCh chan<- error, log sharedlogger.Logger, s httpServer) {
 // contador del gateway (D-F3-13): solo lo recibe la parada del CloudLink. El servidor de
 // enrolamiento NO lo recibe nunca: sus rpc son unarias, terminan solas, y su GracefulStop no
 // tiene espera en vacío que recortar.
-func shutdownAll(httpSrv, publicSrv *http.Server, enrollGS, connectGS grpcStopper, connectInFlight func() int, log sharedlogger.Logger) {
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+//
+// El plazo del cierre es SUYO (shutdownTimeout) y no hereda la cancelación de ctx, que para
+// cuando esto corre ya llegó casi siempre: de ctx solo se conservan los valores.
+func shutdownAll(ctx context.Context, httpSrv, publicSrv *http.Server, enrollGS, connectGS grpcStopper, connectInFlight func() int, log sharedlogger.Logger) {
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		log.Error("error en shutdown HTTP admin", "error", err)

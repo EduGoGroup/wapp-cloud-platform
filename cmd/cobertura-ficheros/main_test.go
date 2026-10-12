@@ -54,7 +54,7 @@ func sinRetiradas(t *testing.T, salida string) {
 }
 
 // TestEjecutarPasa: el árbol sin ficheros por debajo (uno justo al 80 %, un adaptador Postgres
-// marcado que ahora SE MIDE, un rojo y uno sin sentencias) sale con rc=0 y el resumen exacto.
+// marcado que ahora SE MIDE y uno sin sentencias) sale con rc=0 y el resumen exacto.
 func TestEjecutarPasa(t *testing.T) {
 	raiz := fixture("pasa")
 	rc, salida := correr(t, "-perfil", filepath.Join(raiz, "perfil.out"), "-raiz", raiz,
@@ -97,9 +97,6 @@ func TestEjecutarInforma(t *testing.T) {
 	)
 	if strings.Contains(salida, "BAJO internal/modulos/m/falso/falso.go") {
 		t.Errorf("falso.go está al 90 %%: no va por debajo, y la marca ya no es motivo:\n%s", salida)
-	}
-	if strings.Contains(salida, "rojo.go") {
-		t.Errorf("un fichero en rojo no se evalúa:\n%s", salida)
 	}
 	sinRetiradas(t, salida)
 }

@@ -1,7 +1,7 @@
 // Command cobertura-ficheros es el INFORME de cobertura POR FICHERO de la reconstrucción
 // modular (05 §5 y E-9; F0 T0.9): lee un perfil de `go test -coverprofile`, recorre los
 // ficheros de producción del alcance e imprime el porcentaje de sentencias cubiertas de cada
-// fichero en verde. Nació como candado (D-12: ≥ 80 % o rc=1); desde P2 (Jhoan, 2026-10-03) NO
+// fichero. Nació como candado (D-12: ≥ 80 % o rc=1); desde P2 (Jhoan, 2026-10-03) NO
 // bloquea: un fichero por debajo se cuenta y se nombra, pero el comando sale con rc=0. La
 // lógica vive en internal/candados (probada contra árboles de prueba); este comando solo la
 // cablea e imprime la tabla.
