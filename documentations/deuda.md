@@ -677,6 +677,12 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
   `responsecontroller_test.go`; y los 3 textos `Help` de `/metrics`.
 - **Por qué no se tocó**: son código, no comentarios. Reescribirlos pide decidir antes qué vigila el candado de
   fronteras ahora que ese árbol no existe (su `Mapa` está vacío en `internal/modulos/fronteras_test.go`).
+- **Fuera de ese recuento, y sin arreglo posible** (medido el 2026-10-12 con el patrón de rutas borradas de
+  `scripts/check-docs-tree.sh` sobre todo el repo, no solo los `.go`): **26** líneas en **18** migraciones de
+  `internal/platform/storage/postgres/migrations/structure/` (22 en comentarios `--` y 4 dentro de un
+  `COMMENT ON`, que además vive en la base) y **11** en `CHANGELOG.md`. Las migraciones no se editan: el runner
+  es full-replay por hash (I-CP-7) y cambiar un comentario cambia el hash. El `CHANGELOG.md` cuenta versiones ya
+  publicadas. Y una línea más en un dato de prueba, `internal/candados/testdata/cobertura/pasa/perfil.out`.
 - **Veredicto**: pendiente. Los 3 `Help` cambian texto observable: van con D-36. El resto, un commit por paquete.
 
 ---
