@@ -1,6 +1,6 @@
 # F10 · Relevo — `cmd/server` pasa al arranque nuevo y lo viejo se borra
 
-> **Estado**: 🔧 **T10.26 hecha (F10-05c, 2026-10-12), PR #86 abierto, en revisión**; queda T10.25. **Bloque E, T10.18–T10.21, hecho (F10-05b, 2026-10-12, PR #85 integrado)**. **bloque A cerrado (F10-02, 2026-10-11, PR #75 integrado)**: verdad de campo limpia, dorada de la
+> **Estado**: 🔧 **T10.26 hecha (F10-05c, 2026-10-12), PR #86 integrado**; queda T10.25. **Bloque E, T10.18–T10.21, hecho (F10-05b, 2026-10-12, PR #85 integrado)**. **bloque A cerrado (F10-02, 2026-10-11, PR #75 integrado)**: verdad de campo limpia, dorada de la
 > huella congelada, acta abierta e inventario de divergencias. **Bloque B cerrado (F10-03, 2026-10-11, PR #81 integrado)**:
 > el modular corre en UAT, la prueba funcional pasó en local, sin ventana de 24 h (Jhoan); veredicto: «sigue». **T10.14 hecha (F10-04b, 2026-10-11, PR #84 integrado): bloque C cerrado entero**. **Bloque C integrado, salvo T10.14 (F10-04, 2026-10-11, PR #82 integrado)**: el relevo de código está hecho (T10.7–T10.13 y T10.23); T10.14, la documentación del repo, va en un PR propio (F10-04b). Spec escrita el
 > 2026-09-28 sobre `dev` @ `1b18932`.
