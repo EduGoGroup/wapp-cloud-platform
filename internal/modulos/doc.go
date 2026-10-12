@@ -1,10 +1,10 @@
-// Package modulos es la raíz del árbol de la reconstrucción modular de wapp-cloud-platform
-// (documentations/reorganizacion-modular/05-metodo-contratos-y-tdd.md): internal/ se
-// RECONSTRUYE en internal/modulos/<módulo>/, no se mueve. Cada fichero nuevo nace con su
-// contrato sin lógica y un test que lo cubre, en rojo, antes que la lógica; el código viejo no
-// se toca y sigue siendo la referencia.
+// Package modulos es la raíz de los módulos de negocio de wapp-cloud-platform: cada capacidad
+// vive en internal/modulos/<módulo>/, con su frontera. Las normas con las que se escribe aquí
+// (un fichero un test, exportados cubiertos, tamaño, idioma) y cómo se añade un módulo están en
+// documentations/constitucion.md §5.1 y §5.2; quién puede importar a quién, en la tabla Capas
+// de fronteras_test.go.
 //
-// Los siete módulos de D-5 (plan/DECISIONES.md; correspondencia viejo→nuevo en 04 §4):
+// Los siete módulos (entre paréntesis, los paquetes que agrupa cada uno):
 //
 //   - acceso: identidad y gobierno multi-empresa (iam + platformadmin + entitlements).
 //   - edge: el túnel con cada Edge y lo que sube por él (gateway, diagnostics, inferstats,
@@ -19,7 +19,7 @@
 //   - solicitudes: las solicitudes resultantes y lo que las entrega (intakes, integrations,
 //     contracts, tenantvars).
 //
-// F0 no crea ningún módulo: este paquete solo aloja los tres candados del árbol
-// (fronteras_test.go, un_fichero_un_test_test.go, exportados_cubiertos_test.go), que recorren
-// el árbol real y exigen cero violaciones con la lógica de internal/candados.
+// Este paquete no tiene lógica: solo aloja los candados del árbol (fronteras_test.go,
+// un_fichero_un_test_test.go, exportados_cubiertos_test.go, file_size_test.go,
+// no_pending_test.go), que recorren el árbol real con la lógica de internal/candados.
 package modulos

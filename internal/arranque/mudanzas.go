@@ -3,9 +3,9 @@ package arranque
 // mudanzas.go — qué rutas del :8103 monta la cara (internal/apipublica): las 73.
 //
 // Fichero nuevo del arranque nuevo (no es copia del viejo: F0 · TX.4, D-10). La cara creció
-// por olas, y cada fase mudó aquí SUS rutas según el mapa de
-// documentations/reorganizacion-modular/plan/FX-cara-http/mapa-de-rutas.md (los ids A1…I19
-// de los comentarios son los de ese mapa). Desde F8 las monta todas y desde F10 (T10.9 · FX
+// por olas, y cada fase mudó aquí SUS rutas según el mapa de rutas de la reconstrucción
+// (los ids A1…I19 de los comentarios son los de ese mapa; el expediente está archivado:
+// documentations/modular-reorganization.md). Desde F8 las monta todas y desde F10 (T10.9 · FX
 // TX.25) va sola en el :8103 (http.go).
 //
 // El candado (face_routes_test.go) exige que la cara del arranque real registre EXACTAMENTE
