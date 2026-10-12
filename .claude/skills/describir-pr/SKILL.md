@@ -158,5 +158,5 @@ Desbloquea F2-02: los usecases se prueban contra los dobles de memoria que nacen
 
 ## Relacionadas
 
-`validar-antes-de-cerrar` (los gates que van en la tabla) · `reconstruir-modulo` (cierre de fase) ·
-`traspaso-web-local` (si algo lo cierra el otro entorno, el PR lo enlaza en «Pendiente»).
+`validar-antes-de-cerrar` (los gates que van en la tabla) · `pre-merge-docs` (qué dice la documentación mientras el
+PR está abierto y qué al fusionarlo).
