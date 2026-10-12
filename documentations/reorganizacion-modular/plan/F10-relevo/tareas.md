@@ -96,18 +96,18 @@ tarea, directo en `dev`, en este orden (`arquitectura.md` §3). No necesita Dock
 
 ## Bloque D · cierre local · sesión F10-05 · T10.15–T10.17 · necesita Docker y UAT (SSH)
 
-- [ ] **T10.15 · Gates y procesos contra el único binario** · dep. T10.14 · necesita Docker · ✎ 2026-10-11 (F10-04): T10.14 salió a F10-04b. ✎ **2026-10-11 · D-F10-12 (Jhoan): F10-05 no espera a F10-04b**; la dependencia de T10.14 deja de valer para el bloque D: nada de T10.15–T10.17 lee la documentación del repo, y D-F10-2 pide el relevo en UAT antes del 2026-10-18
+- [x] **T10.15 · Gates y procesos contra el único binario** · dep. T10.14 · necesita Docker — hecha el 2026-10-11 (F10-05; PR #83, integrado), sobre `dev` @ `21d527af`, sin commit propio (no produce código): `GATE_RC=0`, 0 `--- SKIP` con `-v`, `CUENTA=3 make test-procesos` `RC=0 · PASS=3915 FAIL=0 SKIP=0`; acta §7.1. ✎ El `git push origin dev` no se hizo: `dev` ya tenía el relevo por el PR #82 · ✎ 2026-10-11 (F10-04): T10.14 salió a F10-04b. ✎ **2026-10-11 · D-F10-12 (Jhoan): F10-05 no espera a F10-04b**; la dependencia de T10.14 deja de valer para el bloque D: nada de T10.15–T10.17 lee la documentación del repo, y D-F10-2 pide el relevo en UAT antes del 2026-10-18
   - **Hecho cuando**: `make ci-local` GATE_RC=0 con la toolchain fijada; `CUENTA=3 make test-procesos` `RC=0`, 0 SKIP, 0 FAIL; `git push origin dev` con su `rc` leído
-- [ ] **T10.16 · UAT desde el commit del relevo** · dep. T10.15 · cumple R10.6.a, R10.2.b · necesita UAT (SSH)
+- [x] **T10.16 · UAT desde el commit del relevo** · dep. T10.15 · cumple R10.6.a, R10.2.b · necesita UAT (SSH) — hecha el 2026-10-11 (F10-05; PR #83, integrado), sin commit propio: UAT corre `cmd/server` @ `21d527af` desde las 01:49:27 UTC del 2026-10-12, `vcs.modified=false`, claves `file` y `config`; acta §7.2–§7.3. ✎ Se compiló a `bin/server.new` y se renombró (acta §5.3), no `go build -o bin/server`; queda además `bin/server.modular-e82b6e92`
   - **Hecho cuando**: `git checkout dev && git reset --hard origin/dev`; `GOWORK=off go build -o bin/server ./cmd/server`; `systemctl restart wapp-cloud` + las dos consolas; §6 (`path …/cmd/server`, `vcs.revision` = SHA del relevo) y §9 (líneas de clave) del runbook verificados; `bin/server.viejo-*` se conserva hasta T10.22
-- [ ] **T10.17 · Acta `CERRADO`** · dep. T10.16
+- [x] **T10.17 · Acta `CERRADO`** · dep. T10.16 — hecha en `d096ce50` (F10-05, 2026-10-11; PR #83, integrado): acta §7, `CERRADO 2026-10-11`. Lo de §5.7 sigue sin ver (§7.4)
   - **Ficheros**: `traspasos/TRASPASO-F10-relevo.md` (`CERRADO <fecha>`), `ESTADO.md`
   - **Commit**: `docs(reorganizacion-modular): relevo cerrado en el repo y en UAT`
 
-## Bloque E · fuera del repo · sesión F10-05 · T10.18–T10.21 · necesita la raíz de wApp y los repos hermanos
+## Bloque E · fuera del repo · sesión F10-05b (✎ 2026-10-11: ficha propia) · T10.18–T10.21 · necesita la raíz de wApp y los repos hermanos
 
 Cada tarea en **su** repo, con **su** gate, commit a `dev`. La tabla de mapeo es la de `04` §4 más D-9 y
-D-10 (`diseno.md` §3.1). Si F10-05 no cabe en ~90 min, el punto limpio de corte es tras T10.17.
+D-10 (`diseno.md` §3.1). ✎ 2026-10-11: «commit a `dev`» es rama y PR en cada repo (regla 6).
 
 - [ ] **T10.18 · La documentación del ecosistema** · dep. T10.17 · cumple R10.7.b
   - **Hecho cuando**: el recuento de `diseno.md` §3.1 (1.124 menciones hoy) → 0 fuera de lo histórico; `make check-docs` de la raíz verde
