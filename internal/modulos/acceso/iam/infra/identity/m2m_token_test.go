@@ -356,7 +356,7 @@ func TestM2M_ColdBurstProducesSingleExchange(t *testing.T) {
 		t.Errorf("llamadas de negocio = %d, quería %d", len(b), burst)
 	}
 	for _, bearer := range b {
-		if bearer != "svc-token-1" { //nolint:gosec // token de mentira de un test
+		if bearer != "svc-token-1" { //nolint:gosec // G101: token de mentira de un test
 			t.Errorf("portador = %q, quería el único token canjeado", bearer)
 		}
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm/tenantllmhelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // Los dos puertos los satisfacen los tipos de producción (y el doble), sin adaptador.
@@ -347,7 +348,7 @@ func TestWithNotifier_WithoutItTheProviderIsNotWrapped(t *testing.T) {
 			if _, bare := p.(*local.Provider); bare == tc.wrapped {
 				t.Errorf("provider = %T; ¿envuelto? quería %v", p, tc.wrapped)
 			}
-			if got := classify(context.Background(), p); got != error(failure) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
+			if got := classify(context.Background(), p); !errhelpertest.IsBare(got, failure) {
 				t.Errorf("P1 = %v, quería el error del transporte intacto", got)
 			}
 		})
@@ -448,7 +449,7 @@ func TestWarm_NeverNotifiesNorCounts(t *testing.T) {
 	s := newSelector(t, tenantllmhelpertest.NewMemoria(),
 		llmvia.WithFrame(&fakeFrame{err: failure}), book.option(), llmvia.WithDegradacionObservada(falls.count))
 
-	if err := s.Warm(context.Background(), testTenant, "s-1", classifyInput()); err != error(failure) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
+	if err := s.Warm(context.Background(), testTenant, "s-1", classifyInput()); !errhelpertest.IsBare(err, failure) {
 		t.Fatalf("Warm = %v, quería el error del transporte intacto", err)
 	}
 	requireSilence(t, book, falls)

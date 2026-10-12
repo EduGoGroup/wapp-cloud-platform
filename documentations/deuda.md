@@ -345,28 +345,44 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   la cara nueva lo rompe contra el viejo. Al corregirlo, cambian con él el aserto de P9 y los tests de
   `internal/apipublica` que fijan la prosa y el 500.
 
-### D-31 · 🟡 145 `//nolint` en el repo: avisos silenciados, no arreglados
+### D-31 · 🟡 45 `//nolint` y 17 `#nosec`: lo que queda silenciado, pendiente de aprobación
 
 > Abierta el 2026-10-10 por decisión de Jhoan al cerrar F8-03: **«limpio» es sin avisos silenciados**, no «el linter no
-> informa de nada». Los 17 de los tests de `cart` se arreglaron en el acto (`d3f6c31b`); el resto se revisa **al final
-> del plan**, no antes.
+> informa de nada». Eran 145 `//nolint` en el repo. **Revisada el 2026-10-11 en F10-04 (T10.23)**, con el código viejo
+> ya borrado: de los 95 que quedaban se arreglaron 50. Los 45 restantes están **pendientes de que Jhoan los apruebe**.
 
-- **Dónde** (medido el 2026-10-10 sobre `d3f6c31b` con `grep -rn '//nolint' --include='*.go'`, una línea = una
-  supresión): **145** en el repo. En el árbol nuevo (`internal/modulos`, `nucleo`, `arranque`, `apipublica`), **90**: 70
-  en tests y 20 en producción; por linter, `gosec` 40, `errorlint` 34, `nilerr` 5, `contextcheck` 3, `gocritic` 2,
-  `errcheck` 2 y uno de `unused`, `staticcheck`, `nilnil` y `gocyclo`. Los otros **55** viven en el código viejo y en el
-  resto del repo, y mueren en su mayoría con el relevo. En producción, 34 en todo el repo. **Dos** no llevan motivo
-  escrito (uno en el árbol nuevo).
-- **Consecuencia**: `make lint` da `0 issues.` y sin embargo hay 145 avisos que nadie ve. Cada uno es una regla del
-  linter apagada en una línea; los de `gosec` y `errorlint` son los que más pesan, porque un aviso real nuevo en esa
-  misma línea tampoco saldría. Y hay un punto ciego que los fabrica: el linter compila con la etiqueta `integracion`
-  (`.golangci.yml`), así que **no mira los tests con `//go:build pendiente`**; sus avisos aparecen de golpe al pasar a
-  verde, cuando lo cómodo es silenciarlos (hallazgo 28 de `reorganizacion-modular/plan/F8-conversacion/README.md`).
-- **Veredicto**: deuda de calidad, no defecto. **Se paga en F10**, tarea **T10.23** de
-  `reorganizacion-modular/plan/F10-relevo/tareas.md`, después de que muera el código viejo (T10.11) y la etiqueta
-  `pendiente` (T10.12): con el viejo fuera quedan menos y el punto ciego ya no existe. Cada supresión se arregla o, si
-  no se puede sin cambiar lo que se prueba o se promete, queda con motivo y aprobada por Jhoan. **Mientras tanto**: en
-  lo que se escriba nuevo no se añade un `//nolint` sin plantearlo antes.
+- **Regla**: un aviso se arregla. Una supresión solo se queda si arreglarla obliga a cambiar lo que se prueba o lo que
+  el código promete; entonces lleva linter, regla y motivo **en su misma línea**. No se añade ninguna sin plantearlo.
+- **Lo arreglado (50)**: 28 `errorlint` (los tests que afirman que un centinela sale sin envolver usan
+  `errhelpertest.IsBare`, de `internal/nucleo/errhelpertest`), 11 `gosec` G304 en tests (lectura anclada con `os.DirFS`
+  u `os.OpenRoot`), 2 G202 (las consultas de `internal/modulos/solicitudes/intakes/postgres_read.go` son constantes
+  precompuestas), 2 `contextcheck` (`context.WithoutCancel` en el cierre del servidor y en el colector de
+  `flow_events`), 1 `gocyclo`, 1 `nilerr` y 5 directivas que el linter ya no necesitaba.
+- **Lo que queda (45: 11 en producción y 34 en tests)**, medido con `grep -rn '//nolint' --include='*.go' . | wc -l`.
+  Sin motivo en la línea, **0**: `grep -rnE '//nolint(:[a-z,]+)?\s*$' --include='*.go' . | wc -l`.
+
+  | Linter y regla | Cuántos | Prod | Qué son y por qué no se arreglan |
+  |---|---|---|---|
+  | `gosec` G101 | 22 | 5 | Falsos positivos por el nombre o la forma de un literal: una ruta HTTP, un código de error y un aviso público del contrato con el Edge, un prefijo público; en tests, credenciales de mentira. Callarlo sin directiva sería renombrar o partir el literal |
+  | `gosec` G204 | 6 | 0 | El arnés de `test/procesos` lanza los binarios que él mismo compila |
+  | `gosec` G304 | 4 | 2 | `internal/modulos/inferencia/prompts/prompts.go` (anclar la lectura cambia el texto del error, que es contrato), `cmd/cobertura-ficheros/main.go` (la ruta es el argumento del CLI) y dos lecturas de test con ruta absoluta |
+  | `gosec` G104 | 1 | 0 | El cierre de una conexión TLS de prueba: comprobar su error haría caer casos que afirman otra cosa |
+  | `nilerr` | 4 | 2 | Degradación prometida en `internal/modulos/conversacion/events/thread_reader.go` y `conversacion/engine/engine.go`; en tests, el doble que la imita y un falso positivo |
+  | `contextcheck` | 2 | 1 | `internal/modulos/edge/grpc/worklane.go`: `context.Background()` es el valor por defecto documentado de un `base` nil; y el test que necesita dos contextos |
+  | `errcheck` | 2 | 1 | `internal/apipublica/response.go`: descartar el fallo de escritura es el contrato de `writeJSON`; y un fichero que es dato de un detector |
+  | `gocritic` `mapKey` | 2 | 0 | Claves con un blanco final a propósito: el blanco es el caso |
+  | `nilnil` y `staticcheck` SA1012 | 2 | 0 | El aviso es el caso que se prueba |
+
+- **Fuera de esa cuenta: 17 `#nosec`** (4 en producción), la directiva propia de `gosec`: la misma deuda con otra
+  grafía, que el inventario de `//nolint` no veía (`grep -rn '#nosec' --include='*.go' . | wc -l`). En producción: la
+  ruta de la clave JWT (`internal/arranque/auth_jwt.go`), la de la clave de firma del lease
+  (`internal/modulos/edge/lease/signingkey.go`) y dos G202 de `internal/modulos/conversacion/store` que concatenan
+  marcadores generados. En tests, 4 G304 que se arreglan con `os.DirFS` y 9 G101 de material de prueba. **No se
+  tocaron en T10.23**: se revisan con el mismo criterio cuando Jhoan lo decida.
+- **Candado que falta**: `nolintlint` no está activado en `.golangci.yml`, así que nada impide añadir una supresión sin
+  linter ni motivo, ni avisa de las que ya no hacen falta (en esta revisión había 5).
+- **Veredicto**: deuda de calidad, no defecto. Se cierra cuando Jhoan apruebe la lista de 45, decida sobre los 17
+  `#nosec` y sobre activar `nolintlint`.
 
 ### D-32 · 🟡 El sobre de P2 no escapa lo que escribe el cliente
 
@@ -800,5 +816,5 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   (`internal/entitlements/postgres.go:98`).
 - **`WAPP_TEST_REQUIRE_DB`** hace **ruidoso** el skip de integración: es la red exacta contra el
   falso verde descrito en `operacion.md` §1.2.
-- ~~Solo **13 `//nolint`** en toda la producción, **todos con justificación escrita**.~~ ✎ 2026-10-10: caducado. Hoy son
-  **34** en producción y 145 en el repo, dos sin motivo: es la deuda **D-31**.
+- En producción quedan **11 `//nolint`** y **4 `#nosec`**, todos con su motivo escrito en la línea; el detalle y lo que
+  falta por aprobar, en la deuda **D-31**.

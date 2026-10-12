@@ -11,6 +11,7 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/session"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // streamSender es lo que Connect registra en el Registry: tiene que cumplir su puerto.
@@ -94,7 +95,7 @@ func TestStreamSenderPassesMessageAndResultThrough(t *testing.T) {
 	sender := newStreamSender(stream)
 	msg := &cloudlinkv1.CloudToEdge{CommandId: "cmd-1", SessionId: "s-1"}
 
-	if err := sender.Send(msg); err != errStream { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
+	if err := sender.Send(msg); !errhelpertest.IsBare(err, errStream) {
 		t.Fatalf("Send = %v, se esperaba el error del stream tal cual", err)
 	}
 	if stream.last != msg {

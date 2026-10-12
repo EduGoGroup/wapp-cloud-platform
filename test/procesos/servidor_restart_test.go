@@ -84,7 +84,7 @@ func serverRestart(t *testing.T, s *servidor) (previousLog string) {
 // servidor, y la espera a que esté listo. Devuelve el error de lanzar, el de salir antes de estar
 // listo (errSalioAntes) o el de no estarlo a tiempo.
 func (s *servidor) serverRelaunch(ctx context.Context, previous *exec.Cmd) error {
-	cmd := exec.Command(previous.Path) //nolint:gosec // el mismo binario que compiló este arnés
+	cmd := exec.Command(previous.Path) //nolint:gosec // G204: el mismo binario que compiló este arnés
 	cmd.Dir = previous.Dir
 	cmd.Env = slices.Clone(previous.Env)
 	proceso, err := iniciarProceso(cmd, topeParadaServidor)

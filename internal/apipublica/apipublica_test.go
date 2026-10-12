@@ -38,7 +38,6 @@ func (c *contador) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // escribir escribe s en w. Un ResponseRecorder no falla al escribir: si fallara, el test no
 // sabría qué está midiendo, así que es un panic y no un error ignorado.
 func escribir(w http.ResponseWriter, s string) {
-	//nolint:gosec // G705: el destino es un httptest.ResponseRecorder, no un navegador
 	if _, err := io.WriteString(w, s); err != nil {
 		panic("escribir en la respuesta de prueba: " + err.Error())
 	}

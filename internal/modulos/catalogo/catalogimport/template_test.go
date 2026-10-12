@@ -2,8 +2,8 @@ package catalogimport_test
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo/catalogimport"
@@ -25,8 +25,7 @@ import (
 // readFixture lee un fixture de testdata/.
 func readFixture(t *testing.T, name string) string {
 	t.Helper()
-	//nolint:gosec // G304: la ruta es un nombre fijo bajo testdata/, no entrada externa
-	b, err := os.ReadFile(filepath.Join("testdata", name))
+	b, err := fs.ReadFile(os.DirFS("testdata"), name)
 	if err != nil {
 		t.Fatalf("leyendo testdata/%s: %v", name, err)
 	}

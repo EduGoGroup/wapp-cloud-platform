@@ -14,6 +14,7 @@ import (
 
 	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // truncatedOutput es lo que un calentamiento recibe casi siempre: con 16 tokens de techo
@@ -145,7 +146,7 @@ func TestWarmReturnsTheTransportErrorIntact(t *testing.T) {
 	cause := &transportError{reason: edgegrpc.ReasonEdgeOffline}
 	f := &fakeFrame{err: cause}
 	err := newProvider(t, f).Warm(context.Background(), catalogInput())
-	if err != error(cause) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
+	if !errhelpertest.IsBare(err, cause) {
 		t.Fatalf("el error del transporte no volvió tal cual: %v", err)
 	}
 	var withReason interface{ Motivo() string }

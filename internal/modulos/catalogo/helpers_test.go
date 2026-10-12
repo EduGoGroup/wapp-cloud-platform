@@ -2,8 +2,8 @@ package catalogo_test
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -34,8 +34,7 @@ const (
 // readTestdata lee un archivo de testdata/ (blobs de catálogo y goldens).
 func readTestdata(t *testing.T, name string) []byte {
 	t.Helper()
-	//nolint:gosec // G304: la ruta es un nombre fijo bajo testdata/, no entrada externa
-	b, err := os.ReadFile(filepath.Join("testdata", name))
+	b, err := fs.ReadFile(os.DirFS("testdata"), name)
 	if err != nil {
 		t.Fatalf("leyendo testdata/%s: %v", name, err)
 	}

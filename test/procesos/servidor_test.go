@@ -211,7 +211,7 @@ func (s *servidor) lanzar(ctx context.Context, o opcionesServidor, home string) 
 	}
 	s.AdminAddr, s.PublicaAddr, s.EnrolarAddr, s.ConectarAddr = direcciones[0], direcciones[1], direcciones[2], direcciones[3]
 
-	cmd := exec.Command(rutaBinario("servidor")) //nolint:gosec // binario compilado por este mismo arnés
+	cmd := exec.Command(rutaBinario("servidor")) //nolint:gosec // G204: binario compilado por este mismo arnés
 	cmd.Dir = home
 	cmd.Env = s.entorno(o, home)
 

@@ -9,6 +9,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/modules/survey"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/store"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // spyStore captura lo que el proyector manda a InsertResults y devuelve el error fijado.
@@ -162,8 +163,7 @@ func TestProjector_Project_ReturnsStoreError(t *testing.T) {
 	boom := errors.New("boom")
 	p := survey.NewProjector(&spyStore{err: boom})
 	eff := modules.Effect{Name: survey.EffectSurveyAnswer, Payload: map[string]any{"question_id": "q1", "answer_code": "1"}}
-	//nolint:errorlint // se comprueba identidad: el contrato promete el error SIN envolver.
-	if err := p.Project(context.Background(), surveyMeta(), eff); err != boom {
+	if err := p.Project(context.Background(), surveyMeta(), eff); !errhelpertest.IsBare(err, boom) {
 		t.Errorf("error = %v, quiero el del almacén sin envolver", err)
 	}
 }

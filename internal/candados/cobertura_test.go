@@ -2,9 +2,9 @@ package candados
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -110,7 +110,7 @@ func TestAgregarErrores(t *testing.T) {
 // casoCobertura agrega el perfil.out de un árbol de prueba y recorre el árbol.
 func casoCobertura(t *testing.T, raiz string) (map[string]Fichero, []Fuente) {
 	t.Helper()
-	datos, err := os.ReadFile(filepath.Join(raiz, "perfil.out")) //nolint:gosec // G304: ruta fija de testdata del propio test
+	datos, err := fs.ReadFile(os.DirFS(raiz), "perfil.out")
 	if err != nil {
 		t.Fatal(err)
 	}

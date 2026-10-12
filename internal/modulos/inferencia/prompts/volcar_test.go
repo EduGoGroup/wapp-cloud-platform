@@ -162,7 +162,7 @@ func TestVolcar_WritesTheFourFiles(t *testing.T) {
 		if paths[n] != want {
 			t.Errorf("rutas[%d] = %q; se esperaba %q", n, paths[n], want)
 		}
-		raw, err := os.ReadFile(want) //nolint:gosec // ruta bajo el t.TempDir del propio test
+		raw, err := fs.ReadFile(os.DirFS(dir), prompts.NombreDeFichero[stage])
 		if err != nil {
 			t.Fatalf("no se pudo leer el fichero volcado: %v", err)
 		}
@@ -212,7 +212,7 @@ func TestVolcar_DoesNotOverwrite(t *testing.T) {
 	if paths != nil {
 		t.Errorf("con error, Volcar devolvió las rutas %v; se esperaba ninguna", paths)
 	}
-	raw, err := os.ReadFile(existing) //nolint:gosec // ruta bajo el t.TempDir del propio test
+	raw, err := fs.ReadFile(os.DirFS(dir), prompts.NombreDeFichero[llm.EtapaP4])
 	if err != nil {
 		t.Fatalf("no se pudo releer el fichero existente: %v", err)
 	}

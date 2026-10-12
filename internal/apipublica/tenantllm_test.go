@@ -39,7 +39,6 @@ const (
 
 	// llmKey tiene la forma de una clave de proveedor, pero no es una credencial: es un valor
 	// de test.
-	//nolint:gosec // no es una credencial: es el valor de un test
 	llmKey   = "sk-ant-api03-clave-de-prueba-0123456789"
 	llmModel = "claude-modelo-de-prueba"
 

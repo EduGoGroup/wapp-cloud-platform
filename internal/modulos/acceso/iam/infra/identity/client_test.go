@@ -25,7 +25,7 @@ var _ out.IdentityClient = (*iamidentity.Client)(nil)
 
 const (
 	testEmail    = "op@tenant.example"
-	testPassword = "una-frase-de-acceso-larga" //nolint:gosec // credencial de mentira de un test
+	testPassword = "una-frase-de-acceso-larga" //nolint:gosec // G101: credencial de mentira de un test
 	testSystem   = "wapp.edge"
 	testRefresh  = "rft_una-cadena-opaca-de-identity"
 )

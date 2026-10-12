@@ -35,7 +35,7 @@ func TestIsTerminal_OnlyDoneAndFailed(t *testing.T) {
 	cases := map[string]bool{
 		StatusAggregating: false, StatusPending: false, StatusProcessing: false,
 		StatusDone: true, StatusFailed: true,
-		"": false, "DONE": false, "done ": false, "cancelled": false, //nolint:gocritic // el blanco final es el caso: no se recorta
+		"": false, "DONE": false, "done ": false, "cancelled": false, //nolint:gocritic // mapKey: el blanco final es el caso: no se recorta
 	}
 	for status, want := range cases {
 		if got := IsTerminal(status); got != want {
@@ -139,7 +139,7 @@ func TestReanalysis_IsFromOwner(t *testing.T) {
 	if RequestedByOwner != "owner" {
 		t.Errorf("RequestedByOwner = %q, quería \"owner\"", RequestedByOwner)
 	}
-	//nolint:gocritic // el blanco final de "owner " es el caso: no se recorta
+	//nolint:gocritic // mapKey: el blanco final de "owner " es el caso: no se recorta
 	cases := map[string]bool{RequestedByOwner: true, "": false, "system": false, "Owner": false, "owner ": false}
 	for role, want := range cases {
 		r := Reanalysis{RequestedBy: role, Via: "api", Source: "both", From: 2}

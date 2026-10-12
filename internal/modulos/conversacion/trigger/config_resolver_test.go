@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/trigger"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // ConfigResolver cumple el puerto Resolver.
@@ -333,7 +334,7 @@ func TestConfigResolver_Resolve_StoreErrors(t *testing.T) {
 			store := &stubStore{failOn: k, err: boom}
 			sig := trigger.Signal{Text: "hola", Intent: &trigger.IntentSignal{Name: "pedido"}}
 			dec, err := trigger.NewConfigResolver(store).Resolve(context.Background(), tenant, "", sig)
-			if err != boom { //nolint:errorlint // se afirma que sale SIN envolver
+			if !errhelpertest.IsBare(err, boom) {
 				t.Errorf("err = %v, quería el del store tal cual", err)
 			}
 			requireDecision(t, "con error", dec, trigger.Decision{})
@@ -415,7 +416,7 @@ func TestConfigResolver_IsEscape_StoreError(t *testing.T) {
 	boom := errors.New("base caída")
 	store := &stubStore{failOn: trigger.KindEscape, err: boom}
 	matched, msg, err := trigger.NewConfigResolver(store).IsEscape(context.Background(), tenant, "", "salir")
-	if err != boom || matched || msg != "" { //nolint:errorlint // se afirma que sale SIN envolver
+	if !errhelpertest.IsBare(err, boom) || matched || msg != "" {
 		t.Errorf("IsEscape = (%v, %q, %v), quería (false, \"\", el error del store)", matched, msg, err)
 	}
 }

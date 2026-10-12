@@ -29,6 +29,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/degradation/degradationhelpertest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm/tenantllmhelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 const (
@@ -327,7 +328,7 @@ func TestDecorator_WrapsTheFiveStagesAndLeavesTheErrorIntact(t *testing.T) {
 	for i, st := range stages {
 		_, err := st.call()
 		// Identidad, no errors.Is: el decorador no envuelve.
-		if err != error(failure) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
+		if !errhelpertest.IsBare(err, failure) {
 			t.Fatalf("%s = %v, quería EL MISMO error del transporte, sin envolver", st.name, err)
 		}
 		var withReason interface{ Motivo() string }
@@ -397,7 +398,7 @@ func TestTurno_FailureNotifiesWithItsOrigin(t *testing.T) {
 	t.Parallel()
 	failure := &reasonError{edgegrpc.ReasonTimeout}
 	r := newRig(failure)
-	if _, err := r.selector(t, r.notifier()).Turno(context.Background(), rigTenant, "s-1", rigTurn()); err != error(failure) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
+	if _, err := r.selector(t, r.notifier()).Turno(context.Background(), rigTenant, "s-1", rigTurn()); !errhelpertest.IsBare(err, failure) {
 		t.Fatalf("Turno = %v, quería el error del transporte intacto", err)
 	}
 	r.requireOne(t, OrigenTurno, tenantllm.ViaLocal, degradation.ReasonTimeout)

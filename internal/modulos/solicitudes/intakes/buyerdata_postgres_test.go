@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
@@ -157,7 +158,7 @@ func TestNewPostgresBuyerData_DoesNotTouchTheDatabase(t *testing.T) {
 func TestPutBuyerField_EmptyKeyIsRejectedBeforeTheDatabase(t *testing.T) {
 	t.Parallel()
 	store, fake := newBDStore(t)
-	if err := store.PutBuyerField(context.Background(), bdIntake, "", bdRUT); err != ErrBuyerFieldEmpty { //nolint:errorlint // el contrato dice SIN envolver
+	if err := store.PutBuyerField(context.Background(), bdIntake, "", bdRUT); !errhelpertest.IsBare(err, ErrBuyerFieldEmpty) {
 		t.Fatalf("PutBuyerField sin clave = %v, quería ErrBuyerFieldEmpty tal cual", err)
 	}
 	requireBDKinds(t, fake)

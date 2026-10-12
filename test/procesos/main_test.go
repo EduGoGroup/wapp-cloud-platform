@@ -280,7 +280,7 @@ func compilar(raiz, paquete, destino string) error {
 	ctx, cancelar := context.WithTimeout(context.Background(), topeCompilar)
 	defer cancelar()
 
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", destino, paquete) //nolint:gosec // argumentos fijos del arnés, sin entrada externa
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", destino, paquete) //nolint:gosec // G204: argumentos fijos del arnés, sin entrada externa
 	cmd.Dir = raiz
 	// cmd.Env se queda en nil a propósito: go build necesita el entorno de Go del desarrollador.
 	if salida, err := cmd.CombinedOutput(); err != nil {
@@ -306,7 +306,7 @@ func migrarPlantilla(dir string) error {
 
 	inicio := time.Now()
 	var salida bytes.Buffer
-	cmd := exec.CommandContext(ctx, rutaBinario("migrate")) //nolint:gosec // binario compilado por este mismo arnés
+	cmd := exec.CommandContext(ctx, rutaBinario("migrate")) //nolint:gosec // G204: binario compilado por este mismo arnés
 	cmd.Dir = home
 	cmd.Env = append([]string{
 		"PATH=" + os.Getenv("PATH"),
@@ -430,7 +430,7 @@ func rerunTestMain(t *testing.T, extra []string) (code int, stderr string) {
 	ctx, cancelar := context.WithTimeout(t.Context(), topeEntryCheck)
 	defer cancelar()
 	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, self, "-test.run=^$") //nolint:gosec // el propio binario de test, con argumentos fijos
+	cmd := exec.CommandContext(ctx, self, "-test.run=^$") //nolint:gosec // G204: el propio binario de test, con argumentos fijos
 	cmd.Env = append([]string{
 		"PATH=" + os.Getenv("PATH"),
 		"TMPDIR=" + os.TempDir(),

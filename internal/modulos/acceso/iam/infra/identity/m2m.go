@@ -32,7 +32,7 @@ import (
 // Rutas M2M de identity-api (contrato verificado contra su router: router.go:563, :758, :738 y
 // :538 respectivamente).
 const (
-	pathServiceToken = "/api/v1/auth/token" //nolint:gosec // ruta HTTP, no es una credencial
+	pathServiceToken = "/api/v1/auth/token" //nolint:gosec // G101: ruta HTTP, no es una credencial
 	pathEnsureUser   = "/api/v1/users/ensure"
 	pathSignup       = "/api/v1/auth/signup"
 	// pathUserSystemsFmt lleva el UUID de la persona en la RUTA, nunca en el cuerpo: identity lo

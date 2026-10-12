@@ -9,6 +9,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/trigger"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/trigger/triggerhelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/errhelpertest"
 )
 
 // Este test es EXTERNO (package trigger_test): triggerhelpertest importa trigger, así que un test
@@ -45,10 +46,10 @@ func TestMemoryStore_Contrato(t *testing.T) {
 func TestMemoryStore_AnyTriggerID_NotFoundInsteadOfSyntaxError(t *testing.T) {
 	s := trigger.NewMemoryStore()
 	ctx := context.Background()
-	if _, err := s.Get(ctx, "tenant-1", "no-es-un-uuid"); err != trigger.ErrTriggerNotFound { //nolint:errorlint // el centinela sale sin envolver
+	if _, err := s.Get(ctx, "tenant-1", "no-es-un-uuid"); !errhelpertest.IsBare(err, trigger.ErrTriggerNotFound) {
 		t.Errorf("Get con un id cualquiera: err = %v, quería ErrTriggerNotFound", err)
 	}
-	if err := s.Delete(ctx, "tenant-1", ""); err != trigger.ErrTriggerNotFound { //nolint:errorlint // el centinela sale sin envolver
+	if err := s.Delete(ctx, "tenant-1", ""); !errhelpertest.IsBare(err, trigger.ErrTriggerNotFound) {
 		t.Errorf("Delete con el id vacío: err = %v, quería ErrTriggerNotFound", err)
 	}
 }

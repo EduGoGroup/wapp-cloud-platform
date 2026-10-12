@@ -24,6 +24,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -76,7 +77,10 @@ var lockFiles = map[string]bool{
 func sweepText(t *testing.T, root, forbidden, positive string) (whereForbidden, wherePositive []string, read int) {
 	t.Helper()
 
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	// El árbol se recorre y se lee como un fs.FS anclado en root: las rutas del recorrido son
+	// relativas a la raíz (con «/»), que es justo la forma de lockFiles.
+	tree := os.DirFS(root)
+	err := fs.WalkDir(tree, ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -90,15 +94,15 @@ func sweepText(t *testing.T, root, forbidden, positive string) (whereForbidden, 
 		if !sweptExtensions[filepath.Ext(d.Name())] {
 			return nil
 		}
-		if rel, rerr := filepath.Rel(root, path); rerr == nil && lockFiles[filepath.ToSlash(rel)] {
+		if lockFiles[rel] {
 			return nil
 		}
-		//nolint:gosec // G304: la ruta sale del propio WalkDir sobre el repo, no de entrada externa
-		content, rerr := os.ReadFile(path)
+		content, rerr := fs.ReadFile(tree, rel)
 		if rerr != nil {
 			return rerr
 		}
 		read++
+		path := filepath.Join(root, filepath.FromSlash(rel))
 		for i, line := range strings.Split(string(content), "\n") {
 			if strings.Contains(line, forbidden) {
 				whereForbidden = append(whereForbidden, path+":"+strconv.Itoa(i+1))

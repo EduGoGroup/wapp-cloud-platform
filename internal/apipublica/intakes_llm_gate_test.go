@@ -10,9 +10,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -305,8 +305,7 @@ func intakeGoldenBody(t *testing.T, features ...string) []byte {
 // pregunta es si el cambio del contrato es deliberado, y entonces el fichero se edita a mano.
 func intakeWantGolden(t *testing.T, name string, got []byte) {
 	t.Helper()
-	//nolint:gosec // G304: la ruta es un nombre de golden bajo testdata/, no entrada externa
-	want, err := os.ReadFile(filepath.Join("testdata", name))
+	want, err := fs.ReadFile(os.DirFS("testdata"), name)
 	if err != nil {
 		t.Fatalf("leyendo el golden %s: %v", name, err)
 	}

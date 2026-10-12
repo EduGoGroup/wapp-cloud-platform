@@ -207,7 +207,7 @@ func TestNewWorkLaneMaterializesItsValues(t *testing.T) {
 // y con el reloj por defecto (5 s), y lo que tenga que avisar se pierde en silencio.
 func TestNewWorkLaneWithNilBaseAndLogStillWorks(t *testing.T) {
 	t.Parallel()
-	lane := newWorkLane(nil, 0, 0, nil) //nolint:staticcheck // el base nil es justo el caso que se afirma
+	lane := newWorkLane(nil, 0, 0, nil) //nolint:staticcheck // SA1012: el base nil es justo el caso que se afirma
 
 	type seen struct {
 		err      error

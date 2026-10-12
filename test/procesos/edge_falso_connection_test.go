@@ -324,7 +324,7 @@ func edgeCargarCA(t *testing.T, p pki) (*x509.Certificate, *ecdsa.PrivateKey) {
 	if err != nil {
 		t.Fatalf("interpretar el certificado de la CA: %v", err)
 	}
-	crudo, err := os.ReadFile(p.CAKeyFile) //nolint:gosec // fichero de la PKI que generó este mismo test
+	crudo, err := os.ReadFile(p.CAKeyFile)
 	if err != nil {
 		t.Fatalf("leer la clave de la CA: %v", err)
 	}

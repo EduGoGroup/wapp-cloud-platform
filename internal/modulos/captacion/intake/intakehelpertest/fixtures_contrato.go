@@ -46,63 +46,48 @@ func artifact(stage, tag string) intake.Artifact {
 
 // diffRow lista las columnas en que got y want difieren, SIN mirar `updated_at` (cada llamante
 // decide si debía moverse). Es la marca de estado: la fila entera.
-//
-//nolint:gocyclo // una comparación por columna, en el orden de la tabla: partirla la haría menos legible
 func diffRow(got, want Row) []string {
 	var diffs []string
-	add := func(column string, g, w any) {
-		diffs = append(diffs, fmt.Sprintf("%s = %v, quería %v", column, g, w))
-	}
-	if got.ID != want.ID {
-		add("id", got.ID, want.ID)
-	}
-	if got.Key != want.Key {
-		add("la clave de ventana", got.Key, want.Key)
-	}
-	if got.Status != want.Status {
-		add("status", got.Status, want.Status)
-	}
-	if got.Stage != want.Stage {
-		add("stage", got.Stage, want.Stage)
-	}
-	if !got.MessageTS.Equal(want.MessageTS) {
-		add("message_ts", got.MessageTS, want.MessageTS)
-	}
-	// Un array vacío y uno nil son la misma columna `[]`.
-	if (len(got.SourceRefs) != 0 || len(want.SourceRefs) != 0) && !slices.Equal(got.SourceRefs, want.SourceRefs) {
-		add("source_refs", got.SourceRefs, want.SourceRefs)
-	}
-	if !bytes.Equal(got.SourceText.Enc, want.SourceText.Enc) {
-		add("source_text_enc", got.SourceText.Enc, want.SourceText.Enc)
-	}
-	if !bytes.Equal(got.SourceText.DEK, want.SourceText.DEK) {
-		add("source_text_dek", got.SourceText.DEK, want.SourceText.DEK)
-	}
-	if got.SourceText.KEKID != want.SourceText.KEKID {
-		add("source_text_kek_id", got.SourceText.KEKID, want.SourceText.KEKID)
-	}
-	if !sameArtifacts(got.Artifacts, want.Artifacts) {
-		add("artifacts", artifactsText(got.Artifacts), artifactsText(want.Artifacts))
-	}
-	if got.Error != want.Error {
-		add("error", got.Error, want.Error)
-	}
-	if got.IntakeID != want.IntakeID {
-		add("intake_id", got.IntakeID, want.IntakeID)
-	}
-	if got.Attempts != want.Attempts {
-		add("attempts", got.Attempts, want.Attempts)
-	}
-	if !got.NextAttemptAt.Equal(want.NextAttemptAt) {
-		add("next_attempt_at", got.NextAttemptAt, want.NextAttemptAt)
-	}
-	if !got.CreatedAt.Equal(want.CreatedAt) {
-		add("created_at", got.CreatedAt, want.CreatedAt)
-	}
-	if got.Reanalysis != want.Reanalysis {
-		add("las columnas del re-análisis", got.Reanalysis, want.Reanalysis)
+	for _, c := range compareColumns(got, want) {
+		if !c.same {
+			diffs = append(diffs, fmt.Sprintf("%s = %v, quería %v", c.column, c.got, c.want))
+		}
 	}
 	return diffs
+}
+
+// columnCheck es la comparación de UNA columna: si got y want coinciden y lo que se enseña de
+// cada uno cuando no.
+type columnCheck struct {
+	column    string
+	same      bool
+	got, want any
+}
+
+// compareColumns compara got y want columna a columna, en el orden de la tabla. Cada columna
+// lleva su propia noción de «igual»: los instantes con Equal, los sobres byte a byte, los
+// artefactos por contenido.
+func compareColumns(got, want Row) []columnCheck {
+	// Un array vacío y uno nil son la misma columna `[]`.
+	noRefs := len(got.SourceRefs) == 0 && len(want.SourceRefs) == 0
+	return []columnCheck{
+		{"id", got.ID == want.ID, got.ID, want.ID},
+		{"la clave de ventana", got.Key == want.Key, got.Key, want.Key},
+		{"status", got.Status == want.Status, got.Status, want.Status},
+		{"stage", got.Stage == want.Stage, got.Stage, want.Stage},
+		{"message_ts", got.MessageTS.Equal(want.MessageTS), got.MessageTS, want.MessageTS},
+		{"source_refs", noRefs || slices.Equal(got.SourceRefs, want.SourceRefs), got.SourceRefs, want.SourceRefs},
+		{"source_text_enc", bytes.Equal(got.SourceText.Enc, want.SourceText.Enc), got.SourceText.Enc, want.SourceText.Enc},
+		{"source_text_dek", bytes.Equal(got.SourceText.DEK, want.SourceText.DEK), got.SourceText.DEK, want.SourceText.DEK},
+		{"source_text_kek_id", got.SourceText.KEKID == want.SourceText.KEKID, got.SourceText.KEKID, want.SourceText.KEKID},
+		{"artifacts", sameArtifacts(got.Artifacts, want.Artifacts), artifactsText(got.Artifacts), artifactsText(want.Artifacts)},
+		{"error", got.Error == want.Error, got.Error, want.Error},
+		{"intake_id", got.IntakeID == want.IntakeID, got.IntakeID, want.IntakeID},
+		{"attempts", got.Attempts == want.Attempts, got.Attempts, want.Attempts},
+		{"next_attempt_at", got.NextAttemptAt.Equal(want.NextAttemptAt), got.NextAttemptAt, want.NextAttemptAt},
+		{"created_at", got.CreatedAt.Equal(want.CreatedAt), got.CreatedAt, want.CreatedAt},
+		{"las columnas del re-análisis", got.Reanalysis == want.Reanalysis, got.Reanalysis, want.Reanalysis},
+	}
 }
 
 // sameArtifacts compara `artifacts` por CONTENIDO: Postgres lo guarda en jsonb, que reordena

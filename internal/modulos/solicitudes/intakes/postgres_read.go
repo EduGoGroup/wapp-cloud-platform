@@ -17,9 +17,10 @@
 //     vista preselecciona lo que el descarte va a aceptar. Va como subconsulta
 //     correlada y NO como LEFT JOIN, que duplicaría cabeceras; una solicitud legada
 //     sin evento (event_id NULL) es huérfana;
-//   - el ORDER BY lo elige el filtro ya normalizado y sale de dos constantes: más
-//     reciente primero (por defecto) o más antigua primero (SortOldest), siempre con
-//     el id de desempate. Ningún texto del usuario llega al SQL.
+//   - el ORDER BY lo elige el filtro ya normalizado: más reciente primero (por defecto)
+//     o más antigua primero (SortOldest), siempre con el id de desempate. Cada consulta
+//     existe ENTERA en sus dos variantes, como constante: en ejecución se ELIGE una, no
+//     se compone. Ningún texto del usuario llega al SQL.
 //
 // tenant_id NO se lee: quien consulta ya es el dueño del tenant (INV-8).
 
@@ -67,11 +68,31 @@ const intakeFilterWhere = `
 
 // listIntakesSelect y listIntakesPage son la consulta de la página PARTIDA en dos
 // por el ORDER BY, que desde el Plan 044 · T4.1 lo elige el filtro (`sort`,
-// D-044.48 §3) y ya no es una constante. Lo que va en medio sale de intakeOrderBy,
-// que devuelve una de dos constantes: la query del usuario no llega aquí.
+// D-044.48 §3). Lo que va en medio es una de las dos constantes de orden, y las dos
+// consultas resultantes están precompuestas abajo: listIntakesQuery elige entre ellas.
 const listIntakesSelect = `SELECT ` + intakeCols + ` FROM public.intakes` + intakeFilterWhere
 const listIntakesPage = `
 	LIMIT $7 OFFSET $8`
+
+// Las cláusulas de orden, en sus dos sentidos y con sus dos prefijos de tabla (la lista
+// consulta `intakes` a secas; el export ordena además desde el CTE `p`).
+//
+// El desempate por id hace el orden TOTAL en los dos sentidos: sin él, dos solicitudes
+// con el mismo created_at podrían repetirse o desaparecer al pasar de página. Y los dos
+// criterios giran JUNTOS —`ASC, ASC` o `DESC, DESC`—: mezclarlos dejaría un orden estable
+// pero incomprensible.
+const (
+	intakeOrderNewest = ` ORDER BY created_at DESC, id DESC`
+	intakeOrderOldest = ` ORDER BY created_at ASC, id ASC`
+	pageOrderNewest   = ` ORDER BY p.created_at DESC, p.id DESC`
+	pageOrderOldest   = ` ORDER BY p.created_at ASC, p.id ASC`
+)
+
+// La página de la bandeja, entera, en sus dos órdenes.
+const (
+	listIntakesNewestQuery = listIntakesSelect + intakeOrderNewest + listIntakesPage
+	listIntakesOldestQuery = listIntakesSelect + intakeOrderOldest + listIntakesPage
+)
 
 // countIntakesQuery cuenta las MISMAS coincidencias sin paginar.
 const countIntakesQuery = `SELECT count(*) FROM public.intakes` + intakeFilterWhere
@@ -103,12 +124,7 @@ func (p *Postgres) List(ctx context.Context, tenantID string, f Filter) (out []I
 		return []Intake{}, 0, nil
 	}
 
-	// 🔒 El G202 de gosec queda SILENCIADO abajo, y con razón: las TRES piezas son
-	// constantes de este fichero, y la de en medio la elige intakeOrderBy con un
-	// switch entre dos constantes. No hay un solo carácter de la query del usuario en
-	// esta cadena; los valores del filtro siguen viajando como parámetros ($1..$7).
-	query := listIntakesSelect + intakeOrderBy(f, "") + listIntakesPage //nolint:gosec // G202: concatenación de constantes, ver arriba
-	rows, err := p.db.QueryContext(ctx, query, append(args, f.PageSize, f.Offset())...)
+	rows, err := p.db.QueryContext(ctx, listIntakesQuery(f), append(args, f.PageSize, f.Offset())...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("intakes: listar solicitudes: %w", err)
 	}
@@ -167,6 +183,14 @@ const listIntakeDetailsBody = `
 // export las solicitudes por delante o por detrás.
 const listIntakeDetailsItems = `, it.added_at, it.id`
 
+// El export, entero, en sus dos órdenes: el de dentro del CTE y el de fuera giran JUNTOS.
+const (
+	listIntakeDetailsNewestQuery = listIntakeDetailsHead + intakeOrderNewest + listIntakeDetailsBody +
+		pageOrderNewest + listIntakeDetailsItems
+	listIntakeDetailsOldestQuery = listIntakeDetailsHead + intakeOrderOldest + listIntakeDetailsBody +
+		pageOrderOldest + listIntakeDetailsItems
+)
+
 // ListDetails implementa Store.ListDetails: hasta `limit` solicitudes del filtro CON
 // sus líneas, para el export. La paginación del filtro se ignora: el tope es `limit`.
 //
@@ -192,11 +216,7 @@ func (p *Postgres) ListDetails(ctx context.Context, tenantID string, f Filter, l
 		return []Detail{}, nil
 	}
 	f = f.Normalized()
-	// 🔒 Mismo G202 silenciado que en List, y por lo mismo: todas las piezas son
-	// constantes y las dos de intakeOrderBy salen de un switch entre constantes.
-	query := listIntakeDetailsHead + intakeOrderBy(f, "") + listIntakeDetailsBody + //nolint:gosec // G202: concatenación de constantes, ver arriba
-		intakeOrderBy(f, "p.") + listIntakeDetailsItems
-	rows, err := p.db.QueryContext(ctx, query, append(filterArgs(tenantID, f), limit)...)
+	rows, err := p.db.QueryContext(ctx, listIntakeDetailsQuery(f), append(filterArgs(tenantID, f), limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("intakes: listar solicitudes con líneas: %w", err)
 	}
@@ -288,23 +308,25 @@ func filterArgs(tenantID string, f Filter) []any {
 	return []any{tenantID, from, to, statuses, session, orphan}
 }
 
-// intakeOrderBy es la cláusula de orden que corresponde al filtro, con el prefijo
-// de tabla que pida el llamante (la lista consulta `intakes` a secas; el export lo
-// hace desde el CTE `p`).
+// listIntakesQuery es la página de la bandeja en el orden que pide el filtro.
 //
-// El desempate por id hace el orden TOTAL en los dos sentidos: sin él, dos
-// solicitudes con el mismo created_at podrían repetirse o desaparecer al pasar de
-// página. Y los dos criterios giran JUNTOS —`ASC, ASC` o `DESC, DESC`—: mezclarlos
-// dejaría un orden estable pero incomprensible.
-//
-// Devuelve una constante elegida por un switch, NUNCA texto del usuario: `f.Sort`
-// ya salió de Normalized, que colapsa a SortNewest cualquier cosa que no sea
-// SortOldest. Nada de esta cadena se concatena desde la query.
-func intakeOrderBy(f Filter, prefix string) string {
+// Devuelve una de dos constantes elegida por un if, NUNCA texto del usuario: `f.Sort` ya
+// salió de Normalized, que colapsa a SortNewest cualquier cosa que no sea SortOldest. Nada
+// de la consulta se concatena en ejecución.
+func listIntakesQuery(f Filter) string {
 	if f.Sort == SortOldest {
-		return ` ORDER BY ` + prefix + `created_at ASC, ` + prefix + `id ASC`
+		return listIntakesOldestQuery
 	}
-	return ` ORDER BY ` + prefix + `created_at DESC, ` + prefix + `id DESC`
+	return listIntakesNewestQuery
+}
+
+// listIntakeDetailsQuery es el export en el orden que pide el filtro, con el mismo criterio
+// que listIntakesQuery: una de dos constantes.
+func listIntakeDetailsQuery(f Filter) string {
+	if f.Sort == SortOldest {
+		return listIntakeDetailsOldestQuery
+	}
+	return listIntakeDetailsNewestQuery
 }
 
 // Get implementa Store.Get: la cabecera, sus líneas, sus revisiones y si tiene datos
