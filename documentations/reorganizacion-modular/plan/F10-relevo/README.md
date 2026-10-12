@@ -1,6 +1,6 @@
 # F10 · Relevo — `cmd/server` pasa al arranque nuevo y lo viejo se borra
 
-> **Estado**: 🔧 **bloque A cerrado (F10-02, 2026-10-11, PR #75 integrado)**: verdad de campo limpia, dorada de la
+> **Estado**: 🔧 **Bloque E, T10.18–T10.21, hecho (F10-05b, 2026-10-12, PR #85 integrado)**; quedan T10.26 y T10.25. **bloque A cerrado (F10-02, 2026-10-11, PR #75 integrado)**: verdad de campo limpia, dorada de la
 > huella congelada, acta abierta e inventario de divergencias. **Bloque B cerrado (F10-03, 2026-10-11, PR #81 integrado)**:
 > el modular corre en UAT, la prueba funcional pasó en local, sin ventana de 24 h (Jhoan); veredicto: «sigue». **T10.14 hecha (F10-04b, 2026-10-11, PR #84 integrado): bloque C cerrado entero**. **Bloque C integrado, salvo T10.14 (F10-04, 2026-10-11, PR #82 integrado)**: el relevo de código está hecho (T10.7–T10.13 y T10.23); T10.14, la documentación del repo, va en un PR propio (F10-04b). Spec escrita el
 > 2026-09-28 sobre `dev` @ `1b18932`.
@@ -289,4 +289,54 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
     dicho en su entrada: D-4 (medida del 2026-08-29), D-45 y D-46 de `deuda.md`.
 38. **No corrido en esta sesión**: `make test-procesos`, `make ci-docker` y `make test-procesos-edge-real` (no se tocó
     código: solo documentación, skills y un script de comprobación).
+
+### F10-05b · bloque E (2026-10-11 → 2026-10-12)
+
+39. **La raíz de wApp no admite «rama de `dev` y PR»**: no tiene remoto ni rama `dev`, solo `main` local. Jhoan, en
+    la sesión: «wApp es solo local y main». T10.18, T10.19 y T10.21 son commits directos en ese `main`. Además tenía
+    trabajo sin commitear del 2026-09-27/28, y 13 de las 16 menciones de T10.21 vivían en ficheros que git no seguía:
+    lo que era documentación (`analisis/`, `ACTIVE.md`, `scripts/check-md-links.py`) entró antes, en `10e1b5c`. **Sigue
+    sin commitear allí, y no es de esta sesión**: `.gitignore`, `.obsidian/core-plugins.json`, el borrado de
+    `Limpieza de documentación.md` y los dos `probar-frase.sh`.
+40. **T10.18 en números**. 1.124 menciones en 170 ficheros; 80 históricas (`historia/` 3, `planes/historico/` 77) y
+    1.044 a reescribir. Un script (tabla de `04` §4, comprobando que cada ruta resultante existe) resolvió 907: 697
+    completas —309 de ellas con el número de línea **re-localizado** buscando el texto de la línea vieja (`git show`
+    de cuatro commits) en el árbol nuevo— y 210 que quedaron **sin número de línea** porque el texto ya no existe
+    igual (los nombres nuevos están en inglés). Las ~150 restantes no tenían sucesor de un fichero (`bootstrap.go`,
+    `publicapi.go`, tests viejos que no se portaron uno a uno): tres sub-agentes, cita a cita. Las 80 históricas
+    conservan su ruta y llevan `[hoy …]` al lado, o `[hoy sin sucesor: borrado en el relevo del 2026-10-11]`.
+41. 🔴 **Re-apuntar no es re-verificar, y D-F10-8 pide lo segundo.** El recuento de §3.1 da 0, pero mide rutas, no
+    afirmaciones. Lo que queda, medido o visto en la sesión: (a) las citas **abreviadas**, sin el prefijo
+    `internal/` (`postgres.go:152`, `store/store.go:624`), no las ve el `grep` y siguen con su número viejo; (b) hay
+    documentos del ecosistema con **cifras medidas sobre el árbol viejo** que ahora llevan rutas nuevas:
+    `diagramas/salud/tamano-y-complejidad.md` §0–§2 (43.282 líneas de producción; hoy 139.645 con otra regla),
+    `diagramas/salud/dependencias-y-acoplamiento.md` §2 («83 aristas entre 29 módulos»), la tabla de paquetes de
+    `diagramas/piezas/cloud-platform.md`, `MEJ-24` y `MEJ-27`; se corrigió lo que cada cita exigía (los ficheros y
+    funciones más largos, los paquetes sin test, los ecos del ADR-0010) y lo demás lleva su aviso; (c) cosas que **parecen
+    ya resueltas por la reconstrucción** y nadie ha cerrado: la deuda DT-52 y `MEJ-41` (el cloud ya no tiene
+    `WAPP_TEST_DB_DSN` ni un `t.Skip` real), el micro-plan MP-12 (`TestP3_TxRetryOnSerializationFailure` existe) y una
+    tarea del plan 036 (los cuatro tests de repos de `iam` existen); (d) candados que los ADR-0020, 0029 y 0044 citaban
+    y cuyo test nuevo cubre **menos** que el viejo (`carril_rapido_test.go` no se portó uno a uno). Pide una sesión
+    propia: es una auditoría de afirmaciones, no una sustitución.
+42. **ADR-0010: de 14 a 9 tablas, y no es mejora** (T10.19). Con la regla nueva salen 9 (`fleet_sessions` y
+    `flow_events` con 3 módulos; `conversation_events`, `flow_state`, `intake_items`, `intakes`, `leases`,
+    `tenant_settings` y `tenants` con 2). Seis salen de la lista solo porque `iam`, `platformadmin` y `entitlements`
+    son ahora `acceso`; una entra (`flow_state`) porque `contact` pasó a `nucleo`. Las escrituras ajenas siguen:
+    `edge` escribe `tenants` y `conversacion` escribe `intakes` e `intake_items`. El ADR lo dice con esas palabras. La
+    medición es `scripts/adr-0010-tablas-por-modulo.py` de la raíz. Casa con el «9, no 14» del hallazgo 33.
+43. **T10.20: 12 comentarios y 6 menciones `.md`, en seis repos** (`wapp-edge-intent` no tenía ninguna). Tres cosas:
+    (a) el `make lint` de `wapp-edge-agent` **falla en su `dev`** sin el cambio, con el Go 1.27.1 y el golangci-lint
+    2.14.0 del sistema (3 avisos SA1019 en `cmd/wapp-ctl/proxy.go:49` e `internal/auth/keystore.go:109-110`): su
+    `Makefile` no fija la toolchain, como sí hace este repo; (b) `golangci-lint` no admite dos corridas a la vez:
+    lanzar los seis gates en paralelo da un falso rojo («parallel golangci-lint is running»); (c) las menciones de
+    `internal/bootstrap` en la documentación del BFF y de las dos consolas son de **su** paquete (T-12) y no se tocan;
+    `wapp-shared/llm/CHANGELOG.md` conserva la ruta vieja con la de hoy al lado, por ser una versión publicada.
+44. **`make check-docs` de la raíz estaba en rojo antes de empezar, y uno de sus tres gates no medía.** Rojo: 7
+    enlaces rotos, 4 en las notas de `analisis/` (T10.21) y **3 en `06-entorno-web.md` de este repo**, hacia las skills
+    retiradas en F10-04b (el hallazgo 36 los dejaba para T10.25; se quitan aquí, en `4d08d18a`, porque el gate de
+    T10.18 los exige). No medía: `check-diagramas` **se salta con rc=0** si no hay `mmdc` en el PATH, y en esta
+    máquina no lo había. Se instaló en el directorio temporal de la sesión y los 80 diagramas renderizan; quien
+    repita el gate sin `mmdc` verá un verde que no es tal.
+45. **No corrido en esta sesión**: `make ci-docker` en ningún repo; `make test-procesos` (no se tocó código de este
+    repo: solo documentación). `make ci-local` de este repo, sí (bloque de la sesión en `ESTADO.md`).
 
