@@ -225,7 +225,7 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
     corrió con 1; es T10.15). Y nada en UAT, donde sigue un binario de `cmd/server-modular`, directorio que ya no
     existe: lo del acta §5.7 sigue sin ver.
 
-### F10-05 · bloque D (2026-10-11) — PR #83 abierto, en revisión
+### F10-05 · bloque D (2026-10-11)
 
 25. **El binario del relevo corre en UAT**: `cmd/server` @ `21d527af` desde las 01:49:27 UTC del 2026-10-12, con §6 y §9
     del runbook verificados, 0 `ERROR` y 0 `WARN` en el cambio. Antes, sobre ese SHA: `GATE_RC=0`, 0 `--- SKIP`, y

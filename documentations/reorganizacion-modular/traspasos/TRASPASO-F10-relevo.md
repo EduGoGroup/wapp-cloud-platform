@@ -11,7 +11,7 @@
 > | 4 | Preparación de la prueba en UAT y SHA a desplegar | F10-02 (T10.3) | escrita el 2026-10-11; el SHA de `dev` lo fija F10-03 |
 > | 5 | El cambio de binario en UAT, la prueba en local y el veredicto | F10-03 (T10.4–T10.6) | escrita el 2026-10-11; **sin ventana de 24 h** (Jhoan); veredicto: **«sigue»** |
 > | 6 | El relevo en el repo | F10-04 (T10.7–T10.13, T10.23) | escrita el 2026-10-11; PR #82 **integrado**; T10.14 va en F10-04b |
-> | 7 | Cierre del relevo (UAT desde el commit del relevo) | F10-05 (T10.15–T10.17) | escrita el 2026-10-11; UAT corre `cmd/server` @ `21d527af`; **`CERRADO 2026-10-11`**; PR #83 **abierto, en revisión** |
+> | 7 | Cierre del relevo (UAT desde el commit del relevo) | F10-05 (T10.15–T10.17) | escrita el 2026-10-11; UAT corre `cmd/server` @ `21d527af`; **`CERRADO 2026-10-11`**; PR #83 **integrado** |
 
 ## 1 · Verdad de campo antes del relevo (T10.1)
 
@@ -469,7 +469,7 @@ D-F10-12; luego T10.26 y, la última, T10.25.
 ## 7 · Cierre del relevo: gates, procesos y UAT desde el commit del relevo (T10.15–T10.17)
 
 Sesión F10-05, **2026-10-11** (las horas, en UTC, caen ya en el 2026-10-12), bloque D. Rama `reorg/f10-05-cierre`,
-partida de `dev` @ `21d527af` (el merge del PR #82); solo documentación. **PR #83 abierto, en revisión.** T10.14 no
+partida de `dev` @ `21d527af` (el merge del PR #82); solo documentación. **PR #83 integrado.** T10.14 no
 estaba hecha y no se esperó (D-F10-12).
 
 ### 7.1 · Gates y procesos contra el único binario (T10.15)
@@ -551,4 +551,4 @@ El relevo está hecho en el repo (§6) y corre en UAT (§7.3). Lo que queda de F
 (F10-04b), el bloque E (T10.18–T10.21, [`F10-05b`](../plan/sesiones/F10-05b-cli-fuera-del-repo.md)), T10.26, T10.25 y,
 solo a petición de Jhoan, `main` (T10.22). Lo de §7.4 sigue abierto como cosa **no vista**.
 
-PR #83 abierto, en revisión.
+PR #83 integrado. **Siguiente sesión: F10-04b** (T10.14); después o en paralelo, F10-05b (bloque E).
