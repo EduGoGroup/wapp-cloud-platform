@@ -1,5 +1,3 @@
-// Porta internal/gateway/grpc/auth.go @ cbc5736
-//
 // Nombres (E-11), viejo → nuevo: ninguno de este fichero cambia (ya estaban en inglés);
 // session.SendAcotado es session.BoundedSend. Los códigos de error, las acciones de
 // auditoría y los textos de log y de respuesta son los del viejo, literales.

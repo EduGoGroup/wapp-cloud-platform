@@ -1,5 +1,3 @@
-// Porta internal/flujos/store/store.go @ c0c0c03
-//
 // Trozo de store.go (05 E-13): la configuración por tenant (public.tenant_settings),
 // sus valores por defecto y la bienvenida única (public.conversation_welcomes), que se
 // gobierna con dos claves de esa configuración. Solo declaraciones movidas.

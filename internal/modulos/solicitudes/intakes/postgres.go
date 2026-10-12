@@ -1,5 +1,3 @@
-// Porta internal/intakes/postgres.go @ 64c181a
-
 // postgres.go es la cabeza del adaptador Postgres del puerto Store: el tipo, sus
 // opciones, el constructor y las aserciones de los puertos que satisface. El fichero
 // viejo medía 1.734 líneas y aquí NACE PARTIDO por tema (E-13): cada grupo de métodos

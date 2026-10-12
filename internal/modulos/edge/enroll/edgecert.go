@@ -1,5 +1,3 @@
-// Porta internal/gateway/enroll/edgecert.go @ 8896f13
-
 package enroll
 
 import (

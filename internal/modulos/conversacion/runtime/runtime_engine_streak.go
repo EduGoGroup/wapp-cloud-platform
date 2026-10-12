@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/runtime_engine.go @ e0159171
-
 package runtime
 
 // runtime_engine_streak.go es el corte por tema de runtime_engine.go (05 E-13): la cara del

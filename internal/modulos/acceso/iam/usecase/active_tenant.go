@@ -1,5 +1,3 @@
-// Porta internal/iam/usecase/active_tenant.go @ 9a77307
-
 package usecase
 
 // active_tenant.go — LA ELECCIÓN DE EMPRESA DE QUIEN PERTENECE A VARIAS (Plan 047 · Ola 5 ·

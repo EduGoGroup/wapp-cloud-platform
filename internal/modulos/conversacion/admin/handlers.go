@@ -1,5 +1,3 @@
-// Porta internal/flujos/admin/handlers.go @ 724f3035
-//
 // No se porta `Register` (D-F8-2): solo lo llamaban tests (deuda D-7); las dos rutas
 // las monta el arranque. El comentario de paquete vive en doc.go.
 

@@ -1,5 +1,3 @@
-// Porta internal/flujos/store/repository_memory.go @ c0c0c03
-//
 // Trozo de repository_memory.go (05 E-13): el contenido de negocio por tenant
 // (tenant_content) y su versionado (tenant_content_versions) en el gemelo en memoria.
 // Las reglas comunes del gemelo están en la cabecera de repository_memory.go.

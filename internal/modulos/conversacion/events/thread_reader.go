@@ -1,5 +1,3 @@
-// Porta internal/flujos/events/thread_reader.go @ 9d5a4b6
-//
 // thread_reader.go — LA LECTURA del hilo del evento (Plan 044 · Ola 1 · T1.4;
 // REQ-10b, REQ-10c, D-044.3b, D-044.24, D-044.26).
 //

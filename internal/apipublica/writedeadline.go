@@ -1,5 +1,3 @@
-// Porta internal/publicapi/plazoescritura.go @ ed60c24 (136 líneas).
-//
 // writedeadline.go — EL PLAZO DE ESCRITURA DE LA RUTA QUE ESPERA A UN MODELO. En la spec FX era
 // `plazoescritura.go` (05 E-11: nombres en inglés): `conPlazoDeRedacción` es aquí writeDeadline.
 // No exporta nada: nace con el verde y su test es interno (05 E-4, P6).

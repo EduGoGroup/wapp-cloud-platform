@@ -1,5 +1,3 @@
-// Porta internal/intakes/telemetria/telemetria.go @ 36d5a04
-
 // Package telemetria deja las mediciones de la BANDEJA DEL DUEÑO en el outbox
 // `flow_events` (Plan 044 · T5.2, design §10).
 //

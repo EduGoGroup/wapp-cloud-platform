@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/keyedmutex.go @ e0159171
-
 package runtime
 
 // keyedmutex.go no exporta nada, ni en el viejo ni aquí: su contrato es este comentario,

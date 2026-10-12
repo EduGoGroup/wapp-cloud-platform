@@ -1,5 +1,3 @@
-// Porta internal/intakes/summary.go @ 64c181a
-
 package intakes
 
 import (

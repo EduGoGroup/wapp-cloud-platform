@@ -1,5 +1,3 @@
-// Porta internal/flujos/engine/engine.go @ 42117b5
-
 // Package engine es el núcleo PURO de la máquina de estados: dadas una
 // definición y un estado, evalúa el nodo actual y produce el estado siguiente
 // y las salidas. No conoce transporte ni base de datos (design.md §3), y tampoco

@@ -1,5 +1,3 @@
-// Porta internal/intake/pipeline/backoff.go @ 56097aa
-
 package pipeline
 
 import (

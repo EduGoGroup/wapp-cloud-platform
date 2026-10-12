@@ -1,5 +1,3 @@
-// Porta internal/iam/usecase/config.go @ 9a77307
-
 // Package usecase implementa los casos de uso del IAM del módulo acceso (puertos
 // iam/ports/in) sobre los repositorios (puertos iam/ports/out) y las primitivas de
 // wapp-shared/auth e identity-shared/auth (JWT, glob-RBAC). Es la capa que NO conoce SQL ni

@@ -1,5 +1,3 @@
-// Porta internal/intakes/postgres.go @ 64c181a
-
 // postgres_discard.go son los dos caminos por los que una solicitud acaba en
 // StatusAbandoned sin pasar por UpdateStatus: el descarte manual del dueño, que deja
 // revisión, y el abandono que dispara la muerte del evento padre, que no la deja

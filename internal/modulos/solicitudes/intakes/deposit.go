@@ -1,5 +1,3 @@
-// Porta internal/intakes/deposit.go @ 64c181a.
-//
 // deposit.go es el RECORDATORIO DE LA SEÑA, y es PEREZOSO (D-041.12).
 //
 // CERO RELOJ (ADR-0003 / D-041.16). No hay cron, ni ticker, ni goroutine de fondo,

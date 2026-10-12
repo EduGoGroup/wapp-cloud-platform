@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/note.go @ 3a21138
-
 // note.go es la PUERTA por la que entra el texto libre del cliente a la solicitud
 // (Plan 041 · T4.1c, D-041.19 / REQ-33e; regla R-08): una sola función de saneo y
 // un solo límite para las DOS ranuras —la indicación de línea

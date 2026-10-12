@@ -1,5 +1,3 @@
-// Porta internal/intake/pipeline/pipeline.go @ 56097aa
-
 // Package pipeline es EL WORKER del pipeline de presupuestos (Plan 044 · Ola 2 · T2.5): el
 // llamante de las etapas. Reclama un job `pending`, descifra su literal, encadena
 // P2 → P3 → P4 → match → draft y lo termina — o lo devuelve a la cola castigado, o lo

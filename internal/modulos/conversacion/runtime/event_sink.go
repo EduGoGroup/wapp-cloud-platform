@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/event_sink.go @ e0159171
-
 package runtime
 
 import (

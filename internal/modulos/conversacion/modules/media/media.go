@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/media/media.go @ 42117b5
-
 // Package media es el módulo de SALIDA que envía un ARCHIVO (PDF, imagen) por
 // WhatsApp desde un nodo del flujo (Plan 017, design.md §4.1). Es el cuarto módulo
 // del Motor tras Menú (Plan 006), Encuesta (Plan 014) y Carrito (Plan 016), y el

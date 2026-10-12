@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/streak.go @ e0159171
-
 package runtime
 
 // streak.go no exporta nada, ni en el viejo ni aquí: su contrato es este comentario, y

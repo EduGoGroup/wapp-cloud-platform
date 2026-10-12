@@ -1,5 +1,3 @@
-// Porta internal/flujos/content/router.go @ c0c0c03
-
 package content
 
 import (

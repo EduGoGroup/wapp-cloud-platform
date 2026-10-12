@@ -1,5 +1,3 @@
-// Porta internal/intakes/postgres.go @ 64c181a
-
 // postgres_shipping.go es la materialización de la LÍNEA DE ENVÍO (D-041.11) y la
 // lectura de las zonas de envío del tenant. La misma materialización la usa
 // UpdateStatus al entrar en StatusPendingApproval, dentro de su propia transacción.

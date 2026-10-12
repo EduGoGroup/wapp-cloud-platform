@@ -1,5 +1,3 @@
-// Porta internal/intakes/quotetext/borrador.go @ 36d5a04
-
 // Package quotetext redacta el MENSAJE con el que el dueño le pasa la cotización a
 // su cliente (Plan 044 · Ola 5 · T5.1, D-044.11).
 //

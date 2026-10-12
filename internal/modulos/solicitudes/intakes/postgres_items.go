@@ -1,5 +1,3 @@
-// Porta internal/intakes/postgres.go @ 64c181a
-
 // postgres_items.go son las dos escrituras que cambian las LÍNEAS de una solicitud:
 // la edición manual del dueño y la revalidación contra el catálogo. Las dos son UNA
 // transacción (postgres.WithTx) que empieza bloqueando la cabecera, y las dos dejan

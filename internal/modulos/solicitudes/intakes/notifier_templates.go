@@ -1,5 +1,3 @@
-// Porta internal/intakes/notifier.go @ 64c181a
-
 package intakes
 
 // Las plantillas que ve el cliente y su render. Se partió de notifier.go por

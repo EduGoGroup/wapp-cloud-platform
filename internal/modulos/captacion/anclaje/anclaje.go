@@ -1,5 +1,3 @@
-// Porta internal/intake/anclaje/anclaje.go @ 8d875ab
-
 // Package anclaje decide A QUÉ LÍNEA del presupuesto pertenece cada adjunto que
 // mandó el cliente —una foto, un audio, un documento— y, cuando no hay certeza,
 // decide NO DECIDIR: la referencia sube a nivel de SOLICITUD (Plan 044 · Ola 3 ·

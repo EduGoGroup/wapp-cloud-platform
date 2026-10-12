@@ -1,5 +1,3 @@
-// Porta internal/integrations/store.go @ 36d5a04
-
 // Package integrations implementa el puente CRM del Plan 042: la cola durable
 // webhook_outbox, la configuración por-tenant tenant_integrations, y el worker en
 // proceso que entrega firmado (D-042.4/D-042.5). NUNCA importa net/http en este

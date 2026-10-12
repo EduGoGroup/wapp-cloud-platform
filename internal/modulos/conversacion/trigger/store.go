@@ -1,5 +1,3 @@
-// Porta internal/flujos/trigger/store.go @ c0c0c03
-
 package trigger
 
 import (

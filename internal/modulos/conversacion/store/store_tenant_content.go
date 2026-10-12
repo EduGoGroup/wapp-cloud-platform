@@ -1,5 +1,3 @@
-// Porta internal/flujos/store/store.go @ c0c0c03
-//
 // Trozo de store.go (05 E-13): el contenido de negocio por tenant (tenant_content) y
 // su versionado (tenant_content_versions). Solo declaraciones movidas.
 

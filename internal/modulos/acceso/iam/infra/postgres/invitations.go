@@ -1,5 +1,3 @@
-// Porta internal/iam/infra/postgres/invitations.go @ 9a77307
-
 package iampostgres
 
 // invitations.go — EL ADAPTADOR DE public.tenant_invitations (migración 0085; Plan 047 · Ola A ·

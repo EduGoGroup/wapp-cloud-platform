@@ -72,8 +72,6 @@
 // ByRegime, PorClase → ByClass, OmitidasPorMotivo → SkippedByReason, MuestrasPrefill →
 // PrefillSamples, MuestrasGeneracion → GenerationSamples. Los campos de Aggregate NO cambian:
 // son los de inferencia.Agregado, que vive en platform.
-//
-// Porta internal/inferstats/inferstats.go @ 8896f13.
 package inferstats
 
 import (

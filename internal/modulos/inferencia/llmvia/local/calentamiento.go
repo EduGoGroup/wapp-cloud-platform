@@ -1,5 +1,3 @@
-// Porta internal/llmvia/local/calentamiento.go @ ebf4eb7
-
 package local
 
 import (

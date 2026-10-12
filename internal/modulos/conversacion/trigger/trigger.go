@@ -1,5 +1,3 @@
-// Porta internal/flujos/trigger/trigger.go @ c0c0c03
-
 // Package trigger define el puerto Resolver del Motor de Flujos: la pieza que
 // decide, ANTE UN ENTRANTE SIN CONVERSACIÓN VIVA, si se arranca un flujo
 // (por palabra clave), si se arranca el flujo de fallback, o si se ignora

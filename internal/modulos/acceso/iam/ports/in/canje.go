@@ -1,5 +1,3 @@
-// Porta internal/iam/ports/in/canje.go @ 9a77307
-
 package in
 
 // canje.go — EL PUERTO DE ENTRADA DEL CANJE (Plan 047 · Ola A · T-A3). Solo interfaces y sin

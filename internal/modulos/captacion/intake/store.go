@@ -1,5 +1,3 @@
-// Porta internal/intake/store.go @ 8d875ab
-
 // Package intake es la COLA del pipeline de captación por LLM (Plan 044 · Ola 1):
 // la tabla `intake_jobs` (migración 0072) y el puerto estrecho por el que se
 // escribe.

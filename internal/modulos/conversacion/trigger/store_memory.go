@@ -1,5 +1,3 @@
-// Porta internal/flujos/trigger/store_memory.go @ c0c0c03
-
 package trigger
 
 import (

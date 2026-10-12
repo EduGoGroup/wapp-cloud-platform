@@ -1,5 +1,3 @@
-// Porta internal/iam/transport/http/invitations.go @ 9a77307
-
 package iamhttp
 
 // invitations.go — LA PUERTA HTTP DE LAS INVITACIONES (Plan 047 · Ola A · T-A2

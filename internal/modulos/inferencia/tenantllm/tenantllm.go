@@ -1,5 +1,3 @@
-// Porta internal/tenantllm/tenantllm.go @ ebf4eb7
-
 // Package tenantllm guarda la configuración LLM del tenant: LA VÍA que usa
 // (`local` | `api`, REQ-33 · D-044.28 · migración 0073) y, cuando esa vía es
 // `api`, el proveedor y su credencial cifrada (Plan 044 · Ola 0 · T0.3, tabla

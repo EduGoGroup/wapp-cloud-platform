@@ -1,5 +1,3 @@
-// Porta internal/integrations/worker.go @ 36d5a04
-
 package integrations
 
 import (

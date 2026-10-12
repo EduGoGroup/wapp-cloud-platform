@@ -32,8 +32,6 @@
 //
 // El doble en memoria (Fake) y la suite de contrato del puerto (ContratoResolver) viven en
 // entitlementshelpertest (D-F2-4), no aquí: ningún código de producción los necesita.
-//
-// Porta internal/entitlements/entitlements.go @ 9a77307.
 package entitlements
 
 import (

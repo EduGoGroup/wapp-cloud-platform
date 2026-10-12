@@ -1,5 +1,3 @@
-// Porta internal/casebank/anonimizar.go @ 8d875ab
-
 package casebank
 
 import (

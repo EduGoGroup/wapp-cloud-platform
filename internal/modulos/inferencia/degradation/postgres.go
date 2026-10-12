@@ -1,5 +1,3 @@
-// Porta internal/degradation/postgres.go @ ebf4eb7
-
 package degradation
 
 import (

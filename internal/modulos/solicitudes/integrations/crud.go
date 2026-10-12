@@ -1,5 +1,3 @@
-// Porta internal/integrations/crud.go @ 36d5a04
-
 package integrations
 
 import (

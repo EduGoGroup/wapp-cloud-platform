@@ -1,5 +1,3 @@
-// Porta internal/gateway/grpc/diagnostics.go @ cbc5736
-
 package grpc
 
 import (

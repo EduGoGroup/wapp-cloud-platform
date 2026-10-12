@@ -1,5 +1,3 @@
-// Porta internal/casebank/casebank.go @ 8d875ab
-
 // Package casebank es el BANCO DE CASOS del pipeline de captación: solicitudes
 // reales de clientes, ya anonimizadas y con consentimiento, junto a la
 // interpretación que el pipeline debería haber producido (Plan 044 · Ola 5 ·

@@ -1,5 +1,3 @@
-// Porta internal/gateway/grpc/readiness.go @ cbc5736
-//
 // Nombres (E-11), viejo → nuevo: observaReadiness → observeReadiness, anotaReadiness →
 // noteReadiness, readinessDelEdge → readinessOf, calientaPorRegistro → warmOnRegister.
 // Los textos de log son los del viejo, literales.

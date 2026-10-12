@@ -1,5 +1,3 @@
-// Porta internal/intakes/reanalisis.go @ 64c181a
-
 // postgres_reanalysis.go es la lectura de la FOTO que el re-análisis necesita de una
 // solicitud. En el paquete viejo el método vivía en reanalisis.go; aquí nace con el
 // adaptador (D-F6-6 ampliada) y reanalisis.go se queda con el tipo y el servicio.

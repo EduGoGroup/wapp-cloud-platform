@@ -1,5 +1,3 @@
-// Porta internal/reanalisis/reanalisis.go @ 56097aa
-
 // Package reanalisis es el caso de uso de `POST /api/v1/intakes/{id}/reanalyze`
 // (Plan 044 · Ola 4 · T4.6; D-044.15, REQ-24b/c/d/e, contrato completo en design
 // §8.1): el dueño mira un presupuesto que la máquina interpretó mal y pide que lo

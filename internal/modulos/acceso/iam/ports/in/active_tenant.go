@@ -1,5 +1,3 @@
-// Porta internal/iam/ports/in/active_tenant.go @ 9a77307
-
 package in
 
 // active_tenant.go — EL PUERTO DE ENTRADA DE LA ELECCIÓN DE EMPRESA (Plan 047 · Ola 5 · T5.1,

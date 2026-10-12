@@ -1,5 +1,3 @@
-// Porta internal/intakeahead/calentamiento.go @ 56097aa
-
 package intakeahead
 
 import (

@@ -1,5 +1,3 @@
-// Porta internal/gateway/grpc/plaza.go @ ec236b3.
-
 package grpc
 
 // plaza.go — LA DIRECCIÓN DE LA PLAZA (Plan 044 · Ola 2 · T2.7, ADR-0046 Mecanismo 1).

@@ -1,5 +1,3 @@
-// Porta internal/iam/infra/postgres/grants.go @ 9a77307
-
 package iampostgres
 
 import (

@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/troceo.go @ 9d5a4b6
-
 // troceo.go — «Go DESCOMPONE → el LLM decide chiquito → Go RECOMPONE», dentro de
 // un turno de WhatsApp (Plan 044 · Ola 3.5 · T3.5-3).
 //

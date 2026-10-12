@@ -1,5 +1,3 @@
-// Porta internal/flujos/engine/consulta.go @ 42117b5
-
 // consulta.go — EL RE-ENTRY: el engine resuelve lo que el módulo PURO no puede
 // preguntar (Plan 044 · Ola 3.5 · T3.5-2).
 //

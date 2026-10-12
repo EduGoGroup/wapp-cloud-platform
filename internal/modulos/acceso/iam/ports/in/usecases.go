@@ -17,8 +17,6 @@
 // el usecase, y una suite aparte solo duplicaría su test. Por eso active_tenant.go y canje.go,
 // solo de interfaces, no tienen test propio; usecases.go sí lo tiene, porque además de
 // interfaces declara DTOs, el alias AuditInput y CallerResolverFunc, que tiene conducta.
-//
-// Porta internal/iam/ports/in/usecases.go @ 9a77307.
 package in
 
 import (

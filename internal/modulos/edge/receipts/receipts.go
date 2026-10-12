@@ -1,5 +1,3 @@
-// Porta internal/receipts/receipts.go @ 8896f13
-
 // Package receipts persiste los acuses de entrega/lectura (MessageReceipt del
 // Plan 013) que el Edge emite por CloudLink. Hasta el Plan 018 el acuse era
 // log-only (gatewaygrpc.LogReceiptSink); T10 (R11) añade una tabla idempotente

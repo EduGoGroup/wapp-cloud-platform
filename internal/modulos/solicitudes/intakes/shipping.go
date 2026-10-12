@@ -1,5 +1,3 @@
-// Porta internal/intakes/shipping.go @ 64c181a
-
 package intakes
 
 import (

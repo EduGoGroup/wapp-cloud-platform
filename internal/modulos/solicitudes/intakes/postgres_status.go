@@ -1,5 +1,3 @@
-// Porta internal/intakes/postgres.go @ 64c181a
-
 // postgres_status.go es la TRANSICIÓN de estado del puerto Store: un
 // compare-and-swap y los dos efectos que cuelgan de él, todo en una transacción.
 //

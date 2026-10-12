@@ -1,5 +1,3 @@
-// Porta internal/tenantllm/postgres.go @ ebf4eb7
-
 package tenantllm
 
 import (

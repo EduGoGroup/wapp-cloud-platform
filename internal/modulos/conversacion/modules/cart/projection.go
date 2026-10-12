@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/projection.go @ 9d5a4b6
-
 // projection.go es el PROYECTOR del carrito: el adaptador IMPURO que materializa en
 // public.intakes / intake_items / intake_revisions / intake_buyer_data los efectos
 // que el Module PURO solo declara (Plan 027 · Ola 3 · T8, cierra H10). El PersistSink

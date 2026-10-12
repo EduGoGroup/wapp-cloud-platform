@@ -1,5 +1,3 @@
-// Porta internal/intakes/postgres.go @ 64c181a
-
 // postgres_read.go son las tres LECTURAS del puerto Store: la página de la bandeja,
 // el export con líneas y el detalle de una solicitud. Ninguna abre transacción: son
 // consultas sueltas sobre el pool.

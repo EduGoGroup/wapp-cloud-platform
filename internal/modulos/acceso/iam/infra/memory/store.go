@@ -1,5 +1,3 @@
-// Porta internal/iam/infra/memory/store.go @ 9a77307
-
 // Package memory provee implementaciones EN MEMORIA de los puertos out del IAM
 // (MembershipRepo, RoleRepo, GrantRepo, AuditRepo, InvitationRepo,
 // ActiveTenantRepo e InvitationRedeemRepo), seguras para concurrencia. Pensadas

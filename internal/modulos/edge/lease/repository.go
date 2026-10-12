@@ -1,5 +1,3 @@
-// Porta internal/gateway/lease/repository.go @ 8896f13
-
 package lease
 
 import (

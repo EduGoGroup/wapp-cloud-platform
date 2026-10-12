@@ -1,5 +1,3 @@
-// Porta internal/tenantvars/postgres.go @ 3a21138
-
 package tenantvars
 
 import (

@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/coerce.go @ c0c0c03
-
 package modules
 
 // Coerciones tolerantes de valores de un Payload de efecto (map[string]any). Toleran

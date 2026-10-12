@@ -1,5 +1,3 @@
-// Porta internal/intakes/customernote.go @ 64c181a
-
 // postgres_customernote.go es la lectura de la indicación del cliente de una
 // solicitud. En el paquete viejo era lo único que llevaba customernote.go, que por
 // eso no nace: el método nace con el adaptador (D-F6-6 ampliada).

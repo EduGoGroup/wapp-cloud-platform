@@ -1,5 +1,3 @@
-// Porta internal/intakes/intakes.go @ 64c181a
-
 // Package intakes es el dominio de las SOLICITUDES del tenant (ADR-0031, Plan 041
 // D-12): la cabecera que el módulo conversacional `cart` proyecta al cerrar, las
 // líneas que la componen y la máquina de estados que gobierna su ciclo de vida

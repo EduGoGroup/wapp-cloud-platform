@@ -1,5 +1,3 @@
-// Porta internal/intakes/service.go @ 64c181a
-
 // service.go — LA BANDEJA DEL DUEÑO: el `Service`, sus puertos y sus opciones.
 //
 // Es la capa de dominio de las solicitudes y la INSTANCIA ÚNICA que cablea el

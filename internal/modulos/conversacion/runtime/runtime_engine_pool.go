@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/runtime_engine.go @ e0159171
-
 package runtime
 
 import "time"

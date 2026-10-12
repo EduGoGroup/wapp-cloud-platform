@@ -1,5 +1,3 @@
-// Porta internal/tenantvars/memory.go @ 3a21138
-
 package tenantvars
 
 import (

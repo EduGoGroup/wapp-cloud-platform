@@ -1,4 +1,3 @@
-// Porta internal/flujos/contact/repository_postgres.go @ 77df20f
 // cobertura: adaptador postgres (05 E-6)
 
 package contact

@@ -1,5 +1,3 @@
-// Porta internal/intake/machine.go @ 8d875ab
-
 package intake
 
 import (

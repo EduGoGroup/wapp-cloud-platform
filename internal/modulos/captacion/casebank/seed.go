@@ -1,5 +1,3 @@
-// Porta internal/casebank/semilla.go @ 8d875ab
-
 package casebank
 
 import "encoding/json"

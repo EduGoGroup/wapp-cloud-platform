@@ -1,5 +1,3 @@
-// Porta internal/iam/usecase/audit.go @ 9a77307
-
 package usecase
 
 import (

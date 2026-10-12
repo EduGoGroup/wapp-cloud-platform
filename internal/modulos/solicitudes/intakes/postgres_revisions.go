@@ -1,5 +1,3 @@
-// Porta internal/intakes/postgres.go @ 64c181a
-
 // postgres_revisions.go es la ESCRITURA de revisiones (el puerto RevisionWriter): el
 // sellado del literal, el INSERT numerador y su reintento, y la consulta de la última
 // revisión. La puerta única de LECTURA de revisiones del adaptador, con la retención

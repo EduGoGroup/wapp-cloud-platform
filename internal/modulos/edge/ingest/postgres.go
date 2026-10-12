@@ -1,5 +1,3 @@
-// Porta internal/ingest/postgres.go @ 8896f13
-
 package ingest
 
 import (

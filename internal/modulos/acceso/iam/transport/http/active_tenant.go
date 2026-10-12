@@ -1,5 +1,3 @@
-// Porta internal/iam/transport/http/active_tenant.go @ 9a77307
-
 package iamhttp
 
 // active_tenant.go — LA PUERTA HTTP DE LA ELECCIÓN DE EMPRESA

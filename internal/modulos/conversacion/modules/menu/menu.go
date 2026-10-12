@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/menu/menu.go @ 42117b5
-
 // Package menu es el módulo del tipo de nodo "menu" (menú numerado).
 //
 // Encapsula las tres responsabilidades del nodo de menú (design.md §3): render

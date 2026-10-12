@@ -1,5 +1,3 @@
-// Porta internal/gateway/fleet/fleettest/slowrepo.go @ 809345b
-
 package fleethelpertest
 
 import (

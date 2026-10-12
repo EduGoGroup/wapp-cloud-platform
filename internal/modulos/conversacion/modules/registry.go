@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/registry.go @ c0c0c03
-
 // Package modules define el registro de módulos enchufables por tipo de nodo.
 //
 // Reusa la IDEA del ProcessorRegistry de edugo-worker (ADR-0004,

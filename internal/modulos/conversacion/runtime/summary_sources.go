@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/summary_sources.go @ e0159171
-
 package runtime
 
 import (

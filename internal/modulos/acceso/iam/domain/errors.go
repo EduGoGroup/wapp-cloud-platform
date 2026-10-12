@@ -1,5 +1,3 @@
-// Porta internal/iam/domain/errors.go @ 9a77307
-
 package domain
 
 import "errors"

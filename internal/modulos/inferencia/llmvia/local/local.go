@@ -1,5 +1,3 @@
-// Porta internal/llmvia/local/local.go @ ebf4eb7
-
 // Package local implementa el puerto llm.LLMProvider contra el Ollama del EDGE del
 // tenant, hablando el frame InferenceRequest/InferenceResult de CloudLink (Plan 044
 // · Ola 1.6 · T1.6-3; D-044.29, REQ-34, REQ-37, ADR-0045).

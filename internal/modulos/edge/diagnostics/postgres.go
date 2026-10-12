@@ -1,5 +1,3 @@
-// Porta internal/diagnostics/postgres.go @ 8896f13
-
 package diagnostics
 
 import (

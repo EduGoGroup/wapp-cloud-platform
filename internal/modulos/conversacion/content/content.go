@@ -1,5 +1,3 @@
-// Porta internal/flujos/content/content.go @ c0c0c03
-
 // Package content define el puerto Source del Motor de Flujos: la fuente que
 // RESUELVE el model.Content de un nodo ANTES de que el módulo lo renderice
 // (primera costura del refactor hexagonal, Plan 015).

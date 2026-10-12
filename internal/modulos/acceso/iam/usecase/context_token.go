@@ -1,5 +1,3 @@
-// Porta internal/iam/usecase/context_token.go @ 9a77307
-
 package usecase
 
 import (

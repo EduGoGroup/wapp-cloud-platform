@@ -1,5 +1,3 @@
-// Porta internal/intakes/postgres.go @ 64c181a
-
 // postgres_revisions_read.go es la LECTURA de revisiones del adaptador, con la
 // retención del literal de nivel 2 (Plan 044 · T3.5, migración 0079): la consulta, el
 // descifrado de lo vigente, la poda perezosa de lo vencido y su sello. No tiene

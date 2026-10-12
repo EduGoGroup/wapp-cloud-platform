@@ -1,5 +1,3 @@
-// Porta internal/intakes/discard.go @ 64c181a.
-//
 // discard.go es el DESCARTE MANUAL del pedido huérfano (D-041.18 / D-041.21 /
 // D-041.22): la acción con la que el DUEÑO limpia de su bandeja las solicitudes que
 // ya no van a ninguna parte. Destino siempre `abandoned`.

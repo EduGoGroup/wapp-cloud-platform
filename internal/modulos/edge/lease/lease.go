@@ -1,5 +1,3 @@
-// Porta internal/gateway/lease/lease.go @ 8896f13
-
 // Package lease gestiona, del lado de la Plataforma Cloud, la emisión,
 // renovación y revocación de los leases del kill-switch anti-clon (ADR-0007).
 //

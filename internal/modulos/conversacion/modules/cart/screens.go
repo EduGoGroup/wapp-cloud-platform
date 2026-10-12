@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/cart/screens.go @ 9d5a4b6
-
 // screens.go son las PANTALLAS del carrito: los textos que el cliente recibe por
 // WhatsApp, la paginación de las listas y el formato de los importes.
 //

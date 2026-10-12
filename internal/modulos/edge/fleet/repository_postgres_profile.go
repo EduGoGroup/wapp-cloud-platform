@@ -1,5 +1,3 @@
-// Porta internal/gateway/fleet/repository_postgres.go @ 809345b
-
 package fleet
 
 import (

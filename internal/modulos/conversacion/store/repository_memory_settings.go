@@ -1,5 +1,3 @@
-// Porta internal/flujos/store/repository_memory.go @ c0c0c03
-//
 // Trozo de repository_memory.go (05 E-13): la configuración por tenant
 // (tenant_settings) y la bienvenida única (conversation_welcomes) en el gemelo en
 // memoria. Las reglas comunes del gemelo están en la cabecera de repository_memory.go.

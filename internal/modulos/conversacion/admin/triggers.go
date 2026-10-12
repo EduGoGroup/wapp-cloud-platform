@@ -1,5 +1,3 @@
-// Porta internal/flujos/admin/triggers.go @ 724f3035
-//
 // El alta y lo que comparte el CRUD de reglas de disparo. El listado sigue en
 // triggers_list.go y la baja en triggers_delete.go (mismo origen, partido por tema,
 // E-13).

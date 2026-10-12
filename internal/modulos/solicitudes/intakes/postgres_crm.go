@@ -1,5 +1,3 @@
-// Porta internal/intakes/crm.go @ 64c181a
-
 // postgres_crm.go es la sentencia que aplica el REFLEJO del CRM sobre una solicitud.
 // En el paquete viejo el método vivía en crm.go, junto al vocabulario; aquí nace con
 // el adaptador (D-F6-6 ampliada) y crm.go se queda con lo puro.

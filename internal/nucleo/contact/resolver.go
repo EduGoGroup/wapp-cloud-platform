@@ -1,5 +1,3 @@
-// Porta internal/flujos/contact/resolver.go @ 77df20f
-
 package contact
 
 import (

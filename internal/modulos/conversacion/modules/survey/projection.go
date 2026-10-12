@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/survey/projection.go @ 42117b5
-
 package survey
 
 import (

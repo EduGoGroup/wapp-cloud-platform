@@ -1,5 +1,3 @@
-// Porta internal/catalogimport/tabular.go @ 3c74b80
-
 package catalogimport
 
 import (

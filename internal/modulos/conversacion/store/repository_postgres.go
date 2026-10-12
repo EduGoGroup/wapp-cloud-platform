@@ -1,5 +1,3 @@
-// Porta internal/flujos/store/repository_postgres.go @ c0c0c03
-//
 // El fichero viejo medía 1.074 líneas y aquí NACE PARTIDO por tema (05 E-13), solo
 // repartiendo declaraciones:
 //

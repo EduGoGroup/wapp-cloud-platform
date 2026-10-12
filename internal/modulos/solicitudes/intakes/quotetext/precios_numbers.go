@@ -1,5 +1,3 @@
-// Porta internal/intakes/quotetext/precios.go @ 36d5a04
-
 package quotetext
 
 // precios_numbers.go — parte de precios.go (E-13): cómo LEE el verificador los

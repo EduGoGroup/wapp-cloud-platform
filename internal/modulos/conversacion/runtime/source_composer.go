@@ -1,5 +1,3 @@
-// Porta internal/flujos/runtime/source_composer.go @ e0159171
-
 // source_composer.go — EL COMPOSITOR DEL `source_text` (Plan 044 · Ola 1 · T1.4;
 // REQ-10b, REQ-10c, D-044.3b, D-044.24, D-044.26).
 //

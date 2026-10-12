@@ -1,5 +1,3 @@
-// Porta internal/intakes/buyerdata.go @ 64c181a
-
 // buyerdata.go declara lo PURO de los DATOS DEL COMPRADOR de una solicitud
 // (Plan 041 · T4.5, D-041.13 / ADR-0031 §5 / ADR-0017): el tipo que los lleva en
 // memoria y el centinela de la escritura. Quien los guarda CIFRADOS EN REPOSO es

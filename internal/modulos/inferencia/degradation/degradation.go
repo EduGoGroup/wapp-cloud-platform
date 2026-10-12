@@ -1,5 +1,3 @@
-// Porta internal/degradation/degradation.go @ ebf4eb7
-
 // Package degradation es el PUNTO DE INYECCIÓN de la notificación al dueño
 // cuando el LLM se degrada al Nivel A (Plan 044 · Ola 1.5 · T1.5-4, D-044.32,
 // REQ-38, ADR-0044 §5; tabla public.owner_degradation_notices de la migración

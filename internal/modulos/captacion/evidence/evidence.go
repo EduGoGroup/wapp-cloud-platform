@@ -1,5 +1,3 @@
-// Porta internal/evidence/evidence.go @ 8d875ab
-
 // Package evidence es LA REGLA DE LA EVIDENCIA, y solo eso: decidir si la frase que
 // el modelo dice haber copiado del cliente aparece DE VERDAD en el texto del cliente.
 //

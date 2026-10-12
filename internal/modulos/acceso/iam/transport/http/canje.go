@@ -1,5 +1,3 @@
-// Porta internal/iam/transport/http/canje.go @ 9a77307
-
 package iamhttp
 
 // canje.go — LA PUERTA HTTP DEL CANJE DE UNA INVITACIÓN

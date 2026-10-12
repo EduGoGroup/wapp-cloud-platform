@@ -1,5 +1,3 @@
-// Porta internal/intentcfg/store.go @ 8d875ab
-
 // Package intentcfg persiste el blob de configuración del clasificador de
 // intenciones por tenant (Plan 029 · T5, tabla intent_configs). Aquí vive la
 // configuración de P1 —el catálogo de intenciones—, que se edita por API y no por

@@ -1,5 +1,3 @@
-// Porta internal/intake/reanalisis.go @ 8d875ab
-
 // reanalysis.go — EL SEGUNDO PRODUCTOR DE JOBS (Plan 044 · Ola 4 · T4.6, D-044.15,
 // design §8.1; migración 0080).
 //

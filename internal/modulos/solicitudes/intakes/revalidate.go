@@ -1,5 +1,3 @@
-// Porta internal/intakes/revalidate.go @ 64c181a
-
 // revalidate.go es la REVALIDACIÓN CONTRA EL CATÁLOGO VIGENTE (Plan 041 · T4.9,
 // REQ-35/REQ-35b, D-041.25): antes de devolverle al cliente un pedido que quedó a
 // medias hace quince días, sus líneas se contrastan con el catálogo de HOY — lo que

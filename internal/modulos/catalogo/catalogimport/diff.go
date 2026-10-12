@@ -1,5 +1,3 @@
-// Porta internal/catalogimport/diff.go @ 3c74b80
-
 package catalogimport
 
 import (

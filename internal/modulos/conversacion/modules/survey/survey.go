@@ -1,5 +1,3 @@
-// Porta internal/flujos/modules/survey/survey.go @ 42117b5
-
 // Package survey es el módulo del tipo de nodo "survey_question" (pregunta de
 // encuesta de opción cerrada).
 //

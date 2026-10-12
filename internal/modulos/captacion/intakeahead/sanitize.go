@@ -1,5 +1,3 @@
-// Porta internal/intakeahead/saneo.go @ 56097aa
-
 package intakeahead
 
 import (

@@ -1,5 +1,3 @@
-// Porta internal/intakes/requestinfo.go @ 64c181a
-
 // requestinfo.go — LA ACCIÓN «PEDIR MÁS INFORMACIÓN» DEL DUEÑO (D-044.49 §2).
 //
 // El pipeline deja en la revisión unas preguntas sugeridas —lo que el LLM no supo
