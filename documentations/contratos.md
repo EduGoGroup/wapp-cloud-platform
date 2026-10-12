@@ -50,17 +50,17 @@ solicitudes · 3 de captación · 19 de conversación.
 - En `internal/apipublica/` el registro es `c.Handle(…)` sobre la cara (`Cara.Handle`,
   `internal/apipublica/apipublica.go:50`), no `mux.Handle`. Un `grep 'mux\.Handle'` ahí solo
   encuentra el interior de ese método.
-- `Register` de `internal/modulos/acceso/iam/transport/http/auth.go:60` registra
+- `Register` de `internal/modulos/acceso/iam/transport/http/auth.go:58` registra
   `/api/v1/auth/verify` y `/api/v1/auth/exchange` en un `*http.ServeMux`, y **producción no lo
-  llama**: esas dos rutas las monta `MountAuth` (`internal/apipublica/auth.go:102-103`).
+  llama**: esas dos rutas las monta `MountAuth` (`internal/apipublica/auth.go:98-99`).
   Contarlo las duplicaría.
 
 🔴 **Cada `Mount…` es condicional por dependencia.** Si la dependencia que necesita es `nil`,
 vuelve sin registrar y la ruta responde un **404 de ruta inexistente**, indistinguible del 404 de
 un recurso ajeno. En el arranque real las 73 se montan en los dos perfiles de la dorada. Dos
 excepciones deliberadas, que se montan y degradan a **503** en vez de desaparecer:
-`POST /api/v1/members` (sin credencial M2M de identity; `internal/apipublica/roleplane.go:170`)
-y `POST /api/v1/signup` (ídem; `internal/apipublica/auth.go:155`).
+`POST /api/v1/members` (sin credencial M2M de identity; `internal/apipublica/roleplane.go:168`)
+y `POST /api/v1/signup` (ídem; `internal/apipublica/auth.go:151`).
 
 ---
 
@@ -75,14 +75,14 @@ dorada (`awk -F'\t' '$1=="con-m2m" && $2=="rpc"' internal/arranque/testdata/huel
 
 | RPC | Tipo | Listener | Dónde se sirve |
 |---|---|---|---|
-| `wapp.cloudlink.v1.Enrollment/EnrollEdge` | unario | `:8102`, **TLS solo de servidor** | `internal/modulos/edge/enroll/server.go:84` |
+| `wapp.cloudlink.v1.Enrollment/EnrollEdge` | unario | `:8102`, **TLS solo de servidor** | `internal/modulos/edge/enroll/server.go:82` |
 | `wapp.cloudlink.v1.CloudLink/Connect` | **bidi-stream** | `:8101`, **mTLS estricto** | `internal/modulos/edge/grpc/connect.go:59` |
 
-Keepalive del servidor CloudLink (`internal/arranque/fase8_transporte.go:70`): `Time=30s`,
+Keepalive del servidor CloudLink (`internal/arranque/fase8_transporte.go:69`): `Time=30s`,
 `Timeout=10s`, `MinTime=15s`, `PermitWithoutStream`.
 
 **Mensajes `EdgeToCloud` que el servidor atiende** — 10, enumeración cerrada en el `switch` de
-`route` (`internal/modulos/edge/grpc/connect_route.go:46`):
+`route` (`internal/modulos/edge/grpc/connect_route.go:45`):
 `Incoming` · `Ack` · `InferenceResult` · `Heartbeat` · `Pong` · `Receipt` ·
 `DiagnosticsBundle` · `UserLogin` · `UserRefresh` · `UserLogout`.
 
@@ -163,10 +163,10 @@ monta `MountAuth` (`auth.go`).
 | `GET /api/v1/events/telemetry` | `events_telemetry.read`, sin feature | `eventstelemetry.go` `:165` |
 
 🔴 **`quote-suggestion` es la ÚNICA ruta con plazo de escritura propio** (`writeDeadline`,
-`internal/apipublica/writedeadline.go:102`) porque **espera al modelo dentro de la petición**. El
-`WriteTimeout` del servidor es de 10 s (`internal/arranque/http.go:26`); el plazo de esta ruta es
+`internal/apipublica/writedeadline.go:100`) porque **espera al modelo dentro de la petición**. El
+`WriteTimeout` del servidor es de 10 s (`internal/arranque/http.go:25`); el plazo de esta ruta es
 `quoteWriteDeadline` = suelo por llamada del pipeline (48 s) + margen de 12 s, **derivado, no
-copiado** (`internal/arranque/fase5_captacion.go:54`). Si tocas el timeout global, mira antes
+copiado** (`internal/arranque/fase5_captacion.go:53`). Si tocas el timeout global, mira antes
 esta ruta.
 
 ⚠️ `GET /api/v1/intakes/{id}`, `…/export` y `…/summary.json` van **siempre juntas**: son el
@@ -200,17 +200,17 @@ comodín y los dos literales que lo solapan (`internal/arranque/mudanzas.go:141`
 
 🔴 **El callback del CRM no lleva JWT y no es un descuido**: se autentica por **HMAC-SHA256
 sobre el cuerpo crudo** con el secreto del tenant, ventana anti-replay ±300 s
-(`crmCallbackWindow`, `internal/apipublica/crmcallback.go:58`), comparación en tiempo constante
-(`Verify`, `internal/modulos/solicitudes/integrations/sigv1/sigv1.go:53`) y cuerpo con tope de
-64 KiB (`internal/apipublica/crmcallback.go:64`). Cabeceras: `X-Wapp-Tenant`,
-`X-Wapp-Timestamp`, `X-Wapp-Signature: v1=…` (`internal/apipublica/crmcallback.go:44`).
+(`crmCallbackWindow`, `internal/apipublica/crmcallback.go:55`), comparación en tiempo constante
+(`Verify`, `internal/modulos/solicitudes/integrations/sigv1/sigv1.go:51`) y cuerpo con tope de
+64 KiB (`internal/apipublica/crmcallback.go:61`). Cabeceras: `X-Wapp-Tenant`,
+`X-Wapp-Timestamp`, `X-Wapp-Signature: v1=…` (`internal/apipublica/crmcallback.go:41`).
 
 ---
 
 ## 3 · HTTP — listener admin `:8100` (22 rutas)
 
 Cadena: `Authenticate → RequirePermission → AuditMiddleware → h`
-(`adminHandler`, `internal/arranque/http.go:201`). Todas se registran en `registerAdminRoutes`
+(`adminHandler`, `internal/arranque/http.go:200`). Todas se registran en `registerAdminRoutes`
 (`internal/arranque/rutas_admin.go:68`), que es la **única** función que hace ese cableado.
 
 | Ruta | Permiso | Plano |
@@ -241,7 +241,7 @@ hay ningún patrón `/healthz` entre las 73 de la dorada, así que responde 404.
 
 ⚠️ **El scrape de `/metrics` no es inocuo**: barre de paso las rachas de auto-respuesta
 vencidas. Si nadie raspa, esos episodios no se cierran nunca
-(`internal/arranque/fase7_flujos.go:135`).
+(`internal/arranque/fase7_flujos.go:134`).
 
 ---
 
@@ -269,7 +269,7 @@ no leen configuración del entorno.
 ## 5 · Variables de entorno (71)
 
 **La regla**: se cuentan las claves que el código de producción **lee de verdad**, por su nombre
-efectivo en la máquina. `config.Load()` (`internal/platform/config/config.go:730`) lee **70
+efectivo en la máquina. `config.Load()` (`internal/platform/config/config.go:729`) lee **70
 claves** por el loader —69 con `loader.Get…` y una, `WAPP_FLOW_REPLY_RATE`, por el ayudante
 `getFloat` (`:818`)— **más** `WAPP_CONFIG_FILE`, que va por `os.Getenv` (`:735`) y no pasa por
 el loader: **71**.
@@ -296,7 +296,7 @@ el comando de arriba lleva las dos formas.
 ⚠️ **El proceso NO lee ningún `.env` por sí mismo** (cero `godotenv` en `go.mod`). En UAT lo
 inyecta systemd con `EnvironmentFile`; en local lo exportas tú.
 
-### Con default (49) — `defaults()` en `internal/platform/config/config.go:621`
+### Con default (49) — `defaults()` en `internal/platform/config/config.go:620`
 
 | Variable | Default | Qué gobierna |
 |---|---|---|
@@ -328,8 +328,8 @@ inyecta systemd con `EnvironmentFile`; en local lo exportas tú.
 | Variable | Qué pasa si falta |
 |---|---|
 | `WAPP_CONFIG_FILE` | no se lee ningún YAML: quedan defaults y entorno |
-| `WAPP_LEASE_PRIVATE_KEY_FILE` · `WAPP_LEASE_PRIVATE_KEY_B64` | ⚠️ **sin ninguna de las dos, la plataforma genera una clave de lease EFÍMERA en cada arranque e invalida a todos los Edges al reiniciar**; en prod el arranque se niega (`internal/arranque/lease.go:28`) |
-| `WAPP_LEASE_TTL_MINUTES` | `<= 0` ⇒ **15 min** (`DefaultTTL`, `internal/modulos/edge/lease/lease.go:55`). Vigencia del lease, renovada en cada Heartbeat |
+| `WAPP_LEASE_PRIVATE_KEY_FILE` · `WAPP_LEASE_PRIVATE_KEY_B64` | ⚠️ **sin ninguna de las dos, la plataforma genera una clave de lease EFÍMERA en cada arranque e invalida a todos los Edges al reiniciar**; en prod el arranque se niega (`internal/arranque/lease.go:27`) |
+| `WAPP_LEASE_TTL_MINUTES` | `<= 0` ⇒ **15 min** (`DefaultTTL`, `internal/modulos/edge/lease/lease.go:53`). Vigencia del lease, renovada en cada Heartbeat |
 | **`WAPP_LLM_PROMPTS_DIR`** | vacío ⇒ corren los prompts **compilados**. Ver I-CP-1 en [`constitucion.md`](constitucion.md) |
 | `WAPP_KEK_KEYRING` · `WAPP_KEK_CURRENT` · `WAPP_KEK_MASTER_B64` · `WAPP_KEK_INDEX_B64` | las KEK del proveedor `env` |
 | `WAPP_KEK_KMS_KEY` · `WAPP_KEK_KMS_KEYRING` · `WAPP_KEK_KMS_INDEX_B64` | solo con `WAPP_KEK_PROVIDER=kms`, y entonces obligatorias |
@@ -356,7 +356,7 @@ cadena de conexión del entorno**, y el candado `internal/candados/sinbdviva.go`
 
 **`WAPP_STORAGE_S3_PREFIX`** está en `.env.example`, y **no la lee nadie**: no está entre las 70
 claves del loader y `StorageConfig` no tiene campo de prefijo. El prefijo real es la constante
-compilada `mediaKeyPrefix = "wapp/media"` (`internal/apipublica/media.go:127`). Ver
+compilada `mediaKeyPrefix = "wapp/media"` (`internal/apipublica/media.go:123`). Ver
 [`deuda.md`](deuda.md).
 
 ⚠️ El `.env.example` asigna 47 claves (`grep -cE '^WAPP_[A-Z0-9_]+=' .env.example`) y `Load()`
@@ -368,7 +368,7 @@ lee 71. No lo tomes como inventario.
 
 **Escribe: solo el CLI.** `cmd/prompts -volcar` crea el directorio con
 `os.MkdirAll(dir, 0o750)` y los cuatro ficheros con `os.WriteFile(path, …, 0o600)`
-(`internal/modulos/inferencia/prompts/volcar.go:66` y `:81`). **El servidor no escribe ningún
+(`internal/modulos/inferencia/prompts/volcar.go:64` y `:81`). **El servidor no escribe ningún
 fichero**:
 
 ```bash
@@ -394,14 +394,14 @@ esquema dejan lo dice [`esquema-postgres.md`](esquema-postgres.md).
 
 Vive congelado en `docs/contracts/wapp-crm-v1/` (tres esquemas JSON, su prosa y un ejemplo por
 verbo). Sus ejemplos se validan contra su esquema en `TestContractExamplesMatchSchemas`
-(`internal/modulos/solicitudes/integrations/contrato_wapp_crm_v1_test.go:76`), y el cuerpo que
+(`internal/modulos/solicitudes/integrations/contrato_wapp_crm_v1_test.go:75`), y el cuerpo que
 acepta el callback se cruza con `intake.status.schema.json` en
 `internal/apipublica/crmcallback_schema_test.go`.
 
 Tres verbos, **dos implementados**: `intake.push` (wApp → puente, outbox durable + HMAC),
 `intake.status` (puente → wApp, el callback de §2.7) y `catalog.pull`, diferido: configurar el
 adaptador de catálogo `http` en `PUT /api/v1/integrations` **responde 422** con el texto
-«catalog.pull diferido…» (`internal/apipublica/integrations_validate.go:100`).
+«catalog.pull diferido…» (`internal/apipublica/integrations_validate.go:96`).
 
 ---
 
@@ -419,7 +419,7 @@ grep -cE '^[[:space:]]*"wapp_[a-z_]+",$' internal/platform/metrics/inferstats.go
 ```
 
 ⚠️ El primer comando va acotado a `internal/platform/metrics` a propósito: sobre todo
-`internal/` daría una línea de más, `internal/platform/config/config.go:698`, que es el nombre
+`internal/` daría una línea de más, `internal/platform/config/config.go:697`, que es el nombre
 por defecto de la base de datos y no una métrica.
 
 Los 17 estáticos, todos en `internal/platform/metrics/metrics.go`:
@@ -463,10 +463,10 @@ Cinco, y la lista está cerrada por diseño:
 
 | Evento | Constante | Dónde |
 |---|---|---|
-| `intake_draft_created` | `EventDraftCreated` | `internal/modulos/captacion/stages/draft_events.go:80` |
-| `intake_reanalyzed` | `EventReanalyzed` | `internal/modulos/captacion/stages/draft_events.go:88` |
-| `intake_line_corrected` | `EventLineCorrected` | `internal/modulos/solicitudes/intakes/metricas.go:71` |
-| `intake_approved` | `EventApproved` | `internal/modulos/solicitudes/intakes/metricas.go:74` |
-| `intake_info_requested` | `EventInfoRequested` | `internal/modulos/solicitudes/intakes/metricas.go:77` |
+| `intake_draft_created` | `EventDraftCreated` | `internal/modulos/captacion/stages/draft_events.go:78` |
+| `intake_reanalyzed` | `EventReanalyzed` | `internal/modulos/captacion/stages/draft_events.go:86` |
+| `intake_line_corrected` | `EventLineCorrected` | `internal/modulos/solicitudes/intakes/metricas.go:69` |
+| `intake_approved` | `EventApproved` | `internal/modulos/solicitudes/intakes/metricas.go:72` |
+| `intake_info_requested` | `EventInfoRequested` | `internal/modulos/solicitudes/intakes/metricas.go:75` |
 
 Los lee `GET /api/v1/events/telemetry` (§2.5).

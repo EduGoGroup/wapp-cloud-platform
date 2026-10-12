@@ -105,11 +105,11 @@ es la causa número uno de «pero si la variable está puesta».
 
 | Llave | Cómo se genera en dev | Si falta |
 |---|---|---|
-| PKI (`WAPP_PKI_*`) | `./scripts/gen-dev-certs.sh` | sin los ficheros, la primera fase del arranque falla al cargarlos (`internal/arranque/pki.go:34`) y el proceso no levanta |
+| PKI (`WAPP_PKI_*`) | `./scripts/gen-dev-certs.sh` | sin los ficheros, la primera fase del arranque falla al cargarlos (`internal/arranque/pki.go:33`) y el proceso no levanta |
 | JWT ES256 (`WAPP_JWT_EC_PRIVATE_KEY_FILE`) | `openssl ecparam -name prime256v1 -genkey -noout \| openssl pkcs8 -topk8 -nocrypt -out jwt-es256.pem && chmod 600 jwt-es256.pem` | en dev se genera una efímera con aviso (`internal/arranque/auth_jwt.go:92`): los tokens no sobreviven al reinicio. En prod, el arranque falla |
-| KEK maestra (`WAPP_KEK_MASTER_B64`) e índice (`WAPP_KEK_INDEX_B64`) | `openssl rand -base64 32` cada una | no se construye el proveedor de llaves de la PII de negocio y el arranque falla (`internal/arranque/flows.go:53`) |
-| **Lease Ed25519** (`WAPP_LEASE_PRIVATE_KEY_FILE` o `WAPP_LEASE_PRIVATE_KEY_B64`) | PEM PKCS8 Ed25519, o semilla de 32 B en base64 | 🔴 en dev la plataforma genera una clave **EFÍMERA en cada arranque** (`internal/arranque/lease.go:51`) **e invalida a TODOS los Edges al reiniciar**. En prod es obligatoria: sin ella el arranque falla (`internal/arranque/lease.go:28`) |
-| `WAPP_CLOUD_ENC_PRIVKEY_B64` | X25519, la privada con la que se abren los sobres del Edge | se genera un par **efímero** con aviso (`internal/arranque/pki.go:122`): un Edge enrolado antes del reinicio sella con una pública que ya no abre nadie |
+| KEK maestra (`WAPP_KEK_MASTER_B64`) e índice (`WAPP_KEK_INDEX_B64`) | `openssl rand -base64 32` cada una | no se construye el proveedor de llaves de la PII de negocio y el arranque falla (`internal/arranque/flows.go:52`) |
+| **Lease Ed25519** (`WAPP_LEASE_PRIVATE_KEY_FILE` o `WAPP_LEASE_PRIVATE_KEY_B64`) | PEM PKCS8 Ed25519, o semilla de 32 B en base64 | 🔴 en dev la plataforma genera una clave **EFÍMERA en cada arranque** (`internal/arranque/lease.go:50`) **e invalida a TODOS los Edges al reiniciar**. En prod es obligatoria: sin ella el arranque falla (`internal/arranque/lease.go:27`) |
+| `WAPP_CLOUD_ENC_PRIVKEY_B64` | X25519, la privada con la que se abren los sobres del Edge | se genera un par **efímero** con aviso (`internal/arranque/pki.go:121`): un Edge enrolado antes del reinicio sella con una pública que ya no abre nadie |
 
 ⚠️ **`certs/`, `.env` y los binarios están en `.gitignore`.** Los valores de `.env.example` son
 marcadores de posición, no credenciales.
@@ -122,13 +122,13 @@ curl -s localhost:8100/metrics | grep '^wapp_'
 ```
 
 Las dos rutas se montan en el listener admin (`internal/arranque/rutas_admin.go:69`), y el check
-de Postgres se registra en `internal/arranque/fase8_transporte.go:133`.
+de Postgres se registra en `internal/arranque/fase8_transporte.go:132`.
 
 ⚠️ El listener público `:8103` **no tiene sonda de salud**: `curl localhost:8103/healthz` da
 404 y eso es lo esperado, no un fallo.
 
 ⚠️ **El arranque depende de S3/R2 vivo**: `objectstore.NewR2PresignClient` se construye en el
-arranque (`internal/arranque/flows.go:76`) y valida el bucket con `HeadBucket`
+arranque (`internal/arranque/flows.go:75`) y valida el bucket con `HeadBucket`
 (`internal/platform/storage/objectstore/r2_factory.go:64`); si falla, **el proceso no levanta**.
 En local sirve cualquier almacén S3-compatible con `WAPP_STORAGE_S3_ENDPOINT` apuntándole.
 
@@ -274,13 +274,13 @@ campo nueva, mira si el log ya la tiene.**
 | Síntoma | Mira esto primero |
 |---|---|
 | **El proceso no arranca y el error habla de prompts** | Un directorio de `WAPP_LLM_PROMPTS_DIR` inválido **aborta a propósito**. El error dice el fichero y la etapa. Valida con `GOTOOLCHAIN=go1.26.5 GOWORK=off go run ./cmd/prompts -comprobar <dir>` |
-| **El proceso no arranca y el error habla del bucket** | `HeadBucket` falló: el almacén S3/R2 está caído o las credenciales son malas (`internal/arranque/flows.go:76`) |
-| **El proceso no arranca y el error habla del `KeyProvider`** | Falta el material de KEK de la PII de negocio, o `WAPP_KEK_PROVIDER` pide un KMS que no responde (`internal/arranque/flows.go:53`) |
-| **Un ajuste de prompt no tiene efecto** | ¿Reiniciaste? No hay recarga en caliente. Y mira la línea de log del arranque `prompts: plantillas de las etapas ajustables` (`internal/arranque/prompts.go:39`): por cada etapa dice la ruta del fichero o `compilada`. Con `WAPP_LLM_PROMPTS_DIR` vacía corren las compiladas |
-| **Una ruta responde 404 y jurarías que existe** | Es **condicional**: su dependencia llegó `nil` a la cara HTTP y no se montó (el patrón, en `internal/apipublica/roleplane.go:114`). Mira qué se le pasa a `buildPublicAPIServer` en `internal/arranque/fase8_transporte.go:99` |
-| **`POST /api/v1/members` responde 503** | Es lo diseñado: se monta siempre y degrada a 503 `identity_no_configurado` sin credencial M2M. Nunca da 404 (`internal/apipublica/roleplane.go:92`) |
-| **`/api/v1/signup` responde 503** | Falta `WAPP_IDENTITY_API_KEY`: se cablea un 503 fijo y el arranque lo avisa en el log (`internal/apipublica/auth.go:163`) |
-| **`quote-suggestion` corta antes de responder** | El `WriteTimeout` del servidor público (`internal/arranque/fase8_transporte.go:197`) no vale para esa ruta: lleva un plazo propio, **derivado** del presupuesto de inferencia y no copiado (`internal/apipublica/writedeadline.go:102`, montado en `internal/apipublica/intakereports.go:231`). Si alguien tocó uno sin el otro, se rompe |
+| **El proceso no arranca y el error habla del bucket** | `HeadBucket` falló: el almacén S3/R2 está caído o las credenciales son malas (`internal/arranque/flows.go:75`) |
+| **El proceso no arranca y el error habla del `KeyProvider`** | Falta el material de KEK de la PII de negocio, o `WAPP_KEK_PROVIDER` pide un KMS que no responde (`internal/arranque/flows.go:52`) |
+| **Un ajuste de prompt no tiene efecto** | ¿Reiniciaste? No hay recarga en caliente. Y mira la línea de log del arranque `prompts: plantillas de las etapas ajustables` (`internal/arranque/prompts.go:38`): por cada etapa dice la ruta del fichero o `compilada`. Con `WAPP_LLM_PROMPTS_DIR` vacía corren las compiladas |
+| **Una ruta responde 404 y jurarías que existe** | Es **condicional**: su dependencia llegó `nil` a la cara HTTP y no se montó (el patrón, en `internal/apipublica/roleplane.go:112`). Mira qué se le pasa a `buildPublicAPIServer` en `internal/arranque/fase8_transporte.go:98` |
+| **`POST /api/v1/members` responde 503** | Es lo diseñado: se monta siempre y degrada a 503 `identity_no_configurado` sin credencial M2M. Nunca da 404 (`internal/apipublica/roleplane.go:90`) |
+| **`/api/v1/signup` responde 503** | Falta `WAPP_IDENTITY_API_KEY`: se cablea un 503 fijo y el arranque lo avisa en el log (`internal/apipublica/auth.go:159`) |
+| **`quote-suggestion` corta antes de responder** | El `WriteTimeout` del servidor público (`internal/arranque/fase8_transporte.go:196`) no vale para esa ruta: lleva un plazo propio, **derivado** del presupuesto de inferencia y no copiado (`internal/apipublica/writedeadline.go:100`, montado en `internal/apipublica/intakereports.go:227`). Si alguien tocó uno sin el otro, se rompe |
 | **La migración se queda colgada** | El `pg_advisory_lock` con que se serializa el runner (`internal/platform/storage/postgres/migrations/migrate.go:61`), repartido por un pooler en modo transacción. Apunta al **host directo** |
 | **Una métrica nueva no aparece en `/metrics`** | Un `CounterVec` no emite hasta su primer incremento, y el reinicio lo borra. No es un fallo |
 | **Los jobs se quedan en `pending` para siempre, sin un error** | Alguna de las cinco goroutines de fondo murió, o nunca se lanzó. **El fallo es MUDO**: ver abajo |
@@ -305,7 +305,7 @@ deuda en [`deuda.md`](deuda.md), y el detalle de cada una en
 ### 5.4 · Diagnóstico de un Edge concreto
 
 `POST /api/v1/sessions/{id}/diagnostics` pide un *bundle* al Edge y
-`GET /api/v1/diagnostics/{command_id}` lo recoge (`internal/apipublica/diagnostics.go:163`). Las
+`GET /api/v1/diagnostics/{command_id}` lo recoge (`internal/apipublica/diagnostics.go:159`). Las
 dos exigen el permiso `diagnostics.request` y quedan auditadas. El *bundle* tiene **TTL**
 (`WAPP_DIAGNOSTICS_BUNDLE_TTL`, 30 min por defecto) y exige consentimiento del tenant
 (`tenant_diagnostics_consent`).
