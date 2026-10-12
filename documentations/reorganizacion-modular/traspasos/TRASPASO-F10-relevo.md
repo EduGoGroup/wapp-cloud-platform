@@ -459,6 +459,9 @@ tests nuevos, el del techo del pool en P0 y los tres del colector.
 - `make ci-docker`; `CUENTA=3 make test-procesos` (T10.15); el job `integration` de `ci.yml`, que ahora corre los
   procesos y del que solo se validó la sintaxis.
 - T10.14, la documentación del repo: F10-04b.
-- La aprobación de Jhoan de las 45 supresiones de lint que quedan (`deuda.md` D-31).
+- La revisión de lint posterior a la migración (D-F10-13): de las 45 supresiones que quedan, Jhoan aprobó 40 el
+  2026-10-11; las 5 de producción que callan conducta prometida, los 17 `#nosec` y `nolintlint` se ven entonces
+  (`deuda.md` D-31).
 
-PR #82 abierto, en revisión. Pendiente de fusionarlo; después, **F10-04b** (T10.14) y **F10-05**.
+PR #82 abierto, en revisión. Pendiente de fusionarlo; después, por D-F10-12, el bloque D de **F10-05** (T10.15–T10.17)
+sin esperar a **F10-04b** (T10.14); luego T10.26 y, la última, T10.25.

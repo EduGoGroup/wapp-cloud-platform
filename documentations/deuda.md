@@ -345,11 +345,12 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   la cara nueva lo rompe contra el viejo. Al corregirlo, cambian con él el aserto de P9 y los tests de
   `internal/apipublica` que fijan la prosa y el 500.
 
-### D-31 · 🟡 45 `//nolint` y 17 `#nosec`: lo que queda silenciado, pendiente de aprobación
+### D-31 · 🟡 45 `//nolint` y 17 `#nosec`: lo que queda silenciado; 40 aprobadas, el resto a revisar tras la migración
 
 > Abierta el 2026-10-10 por decisión de Jhoan al cerrar F8-03: **«limpio» es sin avisos silenciados**, no «el linter no
 > informa de nada». Eran 145 `//nolint` en el repo. **Revisada el 2026-10-11 en F10-04 (T10.23)**, con el código viejo
-> ya borrado: de los 95 que quedaban se arreglaron 50. Los 45 restantes están **pendientes de que Jhoan los apruebe**.
+> ya borrado: de los 95 que quedaban se arreglaron 50. **Decidida el 2026-10-11 (Jhoan, D-F10-13)**: de los 45 restantes,
+> 40 quedan aprobados y 5 de producción se revisan tras la migración, con los `#nosec` y `nolintlint`.
 
 - **Regla**: un aviso se arregla. Una supresión solo se queda si arreglarla obliga a cambiar lo que se prueba o lo que
   el código promete; entonces lleva linter, regla y motivo **en su misma línea**. No se añade ninguna sin plantearlo.
@@ -381,8 +382,15 @@ hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `
   tocaron en T10.23**: se revisan con el mismo criterio cuando Jhoan lo decida.
 - **Candado que falta**: `nolintlint` no está activado en `.golangci.yml`, así que nada impide añadir una supresión sin
   linter ni motivo, ni avisa de las que ya no hacen falta (en esta revisión había 5).
-- **Veredicto**: deuda de calidad, no defecto. Se cierra cuando Jhoan apruebe la lista de 45, decida sobre los 17
-  `#nosec` y sobre activar `nolintlint`.
+- **Veredicto**: deuda de calidad, no defecto. **Decidido por Jhoan el 2026-10-11 (D-F10-13)**: quedan **aprobadas 40**
+  de las 45. Lo demás va a una **revisión de lint tras la migración**, que es la que cierra esta deuda:
+  - las **5 de producción que callan conducta prometida**, para ver si alguna debe dejar rastro (un log o una métrica)
+    en vez de silencio: `inferencia/prompts/prompts.go` (G304), `conversacion/events/thread_reader.go` y
+    `conversacion/engine/engine.go` (`nilerr`), `edge/grpc/worklane.go` (`contextcheck`) y `apipublica/response.go`
+    (`errcheck`). Lo que cambie conducta visible desde fuera va con D-36;
+  - los **17 `#nosec`**, con el criterio de arriba;
+  - **activar `nolintlint`**, con los `#nosec` que sobrevivan reescritos como `//nolint:gosec`, para que un solo
+    candado vea toda la deuda (`nolintlint` no ve `#nosec`).
 
 ### D-32 · 🟡 El sobre de P2 no escapa lo que escribe el cliente
 

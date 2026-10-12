@@ -219,6 +219,8 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
     citan rutas viejas (`internal/flujos/…`), sobre todo como procedencia. Y tres textos `Help` de
     `internal/platform/metrics/metrics.go` nombran ficheros borrados: salen por `/metrics`, así que son texto observable
     (deuda D-36). `portal-reorganizacion/` nombra `cmd/server-modular`. No se tocó nada de esto.
+    ✎ **2026-10-11 · D-F10-14 (Jhoan)**: los comentarios se limpian en un PR propio, entre el bloque D y T10.25 (T10.26).
+    `portal-reorganizacion/` se mira en T10.25.
 24. **No corrido**: `make ci-docker`; el job `integration` de `ci.yml` (solo su sintaxis); `CUENTA=3` de los procesos (se
     corrió con 1; es T10.15). Y nada en UAT, donde sigue un binario de `cmd/server-modular`, directorio que ya no
     existe: lo del acta §5.7 sigue sin ver.
