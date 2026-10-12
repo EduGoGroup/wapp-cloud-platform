@@ -1,7 +1,7 @@
 # La reconstrucción modular de `internal/` — ficha
 
 > **Estado: hecha.** El relevo se cerró el 2026-10-11 y su expediente salió de este repo el
-> 2026-10-12 (T10.25). **PR de archivo: pendiente de abrir.**
+> 2026-10-12 (T10.25): **PR #87 abierto, en revisión**. Hasta que entre, `dev` sigue teniendo la carpeta.
 
 ## Qué se hizo
 
