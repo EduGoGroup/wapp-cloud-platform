@@ -11,8 +11,9 @@ despacha WhatsApp 24/7 y custodia sus llaves; **esta pieza arma el payload, gobi
 y guarda el dato de negocio**. Un proceso (`cmd/server`) y **cuatro listeners**: `:8100` HTTP
 admin/health · `:8103` HTTP API pública · `:8101` gRPC CloudLink bidi con mTLS estricto ·
 `:8102` gRPC enrolamiento. Go **1.26.5**, PostgreSQL con `pgx` y SQL crudo, sin ORM, **sin
-frontend**. Tamaño con su descomposición («244k líneas» engaña): **92.451 líneas de producción**
-en 333 ficheros —46,8 % comentario— más 151.891 de test en 528.
+frontend**. Tamaño, medido el 2026-10-11 (`.go` de `cmd`, `internal` y `test`, sin `testdata/`):
+**139.645 líneas de producción** en 608 ficheros —130 de ellos son suites de contrato, los paquetes
+`…helpertest`— más 215.421 de test en 899.
 
 ## Las seis reglas innegociables
 
@@ -44,39 +45,47 @@ en 333 ficheros —46,8 % comentario— más 151.891 de test en 528.
 
 ## Antes de tocar nada
 
-- **Para saber qué existe se lee `internal/bootstrap/arranque/orquestador.go`**, no el
-  `README.md`: la lista `fases` (nueve, en una pantalla) y el fichero de cada una son el
-  inventario real. Hasta el 2026-09-04 eran las 991 líneas de `bootstrap.Run`, hoy una fachada.
-  El `README.md` tiene afirmaciones caducadas, listadas en `documentations/deuda.md` §6.
-- **Un PR aquí no valida nada** (`ci.yml` es `workflow_dispatch`): el gate es `make ci-local`.
-  Y un `rc=0` cuenta un `--- SKIP` igual que un `--- PASS`: **cuenta los SKIP**, porque los 97
-  ficheros de integración se saltan solos sin `WAPP_TEST_DB_DSN`.
-- **Trabaja dentro del módulo** de `internal/` que corresponda: modular por capacidad, no
-  hexagonal global (la única zona hexagonal es `internal/iam/`). 🔒 Y no toques
+- **Para saber qué existe se lee `internal/arranque/orquestador.go`**, no el `README.md`: la lista
+  `fases` (nueve, en una pantalla) y el fichero de cada una (`fase1_infraestructura.go` …
+  `fase9_fondo.go`) son el inventario real.
+- **Un PR aquí no valida nada** (`ci.yml` es `workflow_dispatch`): el gate es `make ci-local`, que
+  corre **sin Postgres**. Lo que pide base de datos son los procesos de `test/procesos/`
+  (`make test-procesos`, con testcontainers: necesita Docker), y van aparte. Un `rc=0` cuenta un
+  `--- SKIP` igual que un `--- PASS`: **cuenta los SKIP**; aquí deben ser cero.
+- **Trabaja dentro del módulo** de `internal/modulos/` que corresponda (`acceso`, `captacion`,
+  `catalogo`, `conversacion`, `edge`, `inferencia`, `solicitudes`): modular por capacidad, no
+  hexagonal global (la única zona hexagonal es `internal/modulos/acceso/iam/`). Las fronteras entre
+  módulos las vigila `internal/modulos/fronteras_test.go`. 🔒 Y no toques
   `documentations/literal-aviso-sesion-pasiva.md`, que es un contrato congelado.
-## 🔧 Reorganización modular en curso (desde el 2026-09-27)
+- 🔴 **Nunca un test contra un Postgres vivo**: la única base válida es la del contenedor de la
+  corrida (`test/procesos/sin_bd_viva_test.go` lo hace fallar en el gate).
 
-`internal/` se está **reconstruyendo** en `internal/modulos/<módulo>/`, **no moviendo**: cada
-fichero nuevo nace con su **contrato sin lógica** y un **test que lo cubre**, en rojo, antes que la
-lógica. El código viejo **no se toca**: es la referencia y lo que corre en UAT. Conviven dos
-arranques (`cmd/server` viejo, `cmd/server-modular` nuevo), y los tests de integración se
-reescriben **por proceso con testcontainers**, nunca contra un Postgres vivo.
+## ✅ Reorganización modular hecha (2026-09-27 → 2026-10-11)
 
-- **La norma**: [`documentations/reorganizacion-modular/05-metodo-contratos-y-tdd.md`](documentations/reorganizacion-modular/05-metodo-contratos-y-tdd.md). Manda sobre los documentos 01–04 de esa carpeta.
-- **El plan ejecutable**: [`documentations/reorganizacion-modular/plan/`](documentations/reorganizacion-modular/plan/README.md) — una *spec* por fase, [`DECISIONES.md`](documentations/reorganizacion-modular/plan/DECISIONES.md) y [`sesiones/`](documentations/reorganizacion-modular/plan/sesiones/README.md). **Si te arrancaron con el prompt de una sesión, su protocolo (`plan/sesiones/PROTOCOLO-CLI.md`) te dice qué leer; no leas el plan entero.** 💻 **Desde el 2026-10-04 todas las sesiones son locales** (D-R-8): se acabó la división web/local; `PROTOCOLO-WEB.md` queda solo como referencia de cómo se escribe el código (§2, §3, §5).
-- 🔤 **Idioma (E-11)**: en lo **nuevo**, los nombres (ficheros, tipos, funciones, variables, tests) van en
-  **inglés** y solo los comentarios y la documentación en español. Lo ya escrito no se renombra; los textos
-  observables se copian literales. Detalle en `05` E-11.
-- 📏 **Tamaño (E-13)**: en lo **nuevo**, ≤ 500 líneas por `.go`; tolerancia hasta 600; por encima, se parte por tema
-  solo moviendo declaraciones, con el sufijo del origen. Lo vigila `internal/modulos/file_size_test.go`. El código viejo no
-  se parte (muere en F10).
-- 🔄 **D-10**: la cara HTTP es **única y nueva**, `internal/apipublica`, construida por olas delante del `publicapi` viejo ([`plan/FX-cara-http/`](documentations/reorganizacion-modular/plan/FX-cara-http/README.md)).
-- **Las skills del repo**: `contrato-tdd` (un fichero) · `reconstruir-modulo` (una fase) ·
-  `validar-antes-de-cerrar` (los gates) · `traspaso-web-local` (en desuso desde el 2026-10-04: ya no hay sesiones web) ·
-  `procesos-testcontainers` (F9) · `pre-merge-docs` (qué dice la documentación mientras el PR está abierto y qué al fusionarlo) · `describir-pr` (el cuerpo de **todo** PR: objetivo, dónde encaja, resultado).
-- **La parada de F1 se resolvió el 2026-10-03**: manda `05` E-12 (tres niveles de ceremonia) y, para lo que decidió
-  Jhoan, [`plan/DECISIONES.md`](documentations/reorganizacion-modular/plan/DECISIONES.md) §3. **El 80 % de cobertura ya no
-  bloquea**: `make cobertura-ficheros` es un informe (rc=0 con ficheros por debajo, sin exentos) desde F1-06.
+`internal/` se **reconstruyó** en `internal/modulos/<módulo>/` y el código anterior se **borró**: hay
+un solo arranque (`cmd/server` sobre `internal/arranque`) y una sola cara HTTP pública
+(`internal/apipublica`). El relevo corre en UAT desde el 2026-10-11. No queda nada «viejo» en el
+árbol: si un documento o un comentario nombra una ruta que no existe, el que está mal es él.
+
+Lo que la reconstrucción dejó como **norma del código**:
+
+- 🔤 **Idioma**: los nombres nuevos (ficheros, tipos, funciones, variables, tests) van en **inglés**;
+  los comentarios y la documentación, en español. Lo ya escrito no se renombra; los textos
+  observables no se tocan.
+- 📏 **Tamaño**: ≤ 500 líneas por `.go`, tolerancia hasta 600; por encima se parte por tema, solo
+  moviendo declaraciones, con el sufijo del origen. Lo vigila `internal/modulos/file_size_test.go`.
+- 🔒 **Candados**: `internal/candados` y los tests de `internal/modulos/` (fronteras, un fichero un
+  test, exportados cubiertos, tamaño, cero pendientes) corren dentro de `make ci-local`.
+- 📊 **La cobertura no bloquea**: `make cobertura-ficheros` es un informe (rc=0 con ficheros por debajo).
+- **Las skills del repo**: `validar-antes-de-cerrar` (los gates) · `procesos-testcontainers` (los
+  tests contra Postgres) · `pre-merge-docs` (qué dice la documentación mientras el PR está abierto y
+  qué al fusionarlo) · `describir-pr` (el cuerpo de **todo** PR: objetivo, dónde encaja, resultado).
+- **El expediente** de la reconstrucción (método, decisiones, fases y sesiones) sigue en
+  [`documentations/reorganizacion-modular/`](documentations/reorganizacion-modular/README.md) hasta que se
+  archive fuera del repo; su estado, en [`ESTADO.md`](documentations/reorganizacion-modular/ESTADO.md).
+  🔴 Esa carpeta **cuenta cómo se hizo** y está llena de rutas que ya no existen: **no es fuente para
+  saber qué hay en el código**. Si te arrancaron con el prompt de una sesión del plan, su protocolo
+  (`plan/sesiones/PROTOCOLO-CLI.md`) te dice qué leer.
 
 ## Índice de `documentations/`
 
@@ -84,9 +93,9 @@ reescriben **por proceso con testcontainers**, nunca contra un Postgres vivo.
 |---|---|
 | [`README.md`](documentations/README.md) | Portal de la pieza |
 | [`constitucion.md`](documentations/constitucion.md) | **Empieza aquí.** Invariantes, homónimos, tecnología, convenciones, 12 trampas |
-| [`arquitectura.md`](documentations/arquitectura.md) | Dominios, los 4 binarios y **dónde se rompen las fronteras** |
-| [`contratos.md`](documentations/contratos.md) | Las 95 rutas HTTP, 2 rpc, los CLI y las 70 variables de entorno |
-| [`esquema-postgres.md`](documentations/esquema-postgres.md) | Las 47 tablas, el esquema **0.48.0** y el runner full-replay |
+| [`arquitectura.md`](documentations/arquitectura.md) | Módulos, los seis `main` de `cmd/` y **dónde se rompen las fronteras** |
+| [`contratos.md`](documentations/contratos.md) | Las 95 rutas HTTP, 2 rpc, los 6 CLI y las 71 variables de entorno |
+| [`esquema-postgres.md`](documentations/esquema-postgres.md) | Las 45 tablas, el esquema **0.48.0** y el runner full-replay |
 | [`operacion.md`](documentations/operacion.md) | Arranque local, `make` targets, release y depuración |
 | [`deuda.md`](documentations/deuda.md) | Deuda viva con `fichero:línea` y el código muerto verificado |
-| [`reorganizacion-modular/`](documentations/reorganizacion-modular/README.md) | La reconstrucción por módulos: análisis, árbol destino, **método normativo (`05`)** y entorno web |
+| [`reorganizacion-modular/`](documentations/reorganizacion-modular/README.md) | El expediente de la reconstrucción por módulos, ya hecha: **no describe el código de hoy** |

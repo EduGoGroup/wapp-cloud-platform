@@ -31,13 +31,12 @@ llave que lo descifra, o pedir al Edge que se la mande.
 
 **Cómo se comprueba.** `grep -c whatsmeow go.mod` → **cero**: el driver de WhatsApp no es
 dependencia de este repo. ⚠️ **El grep sobre el código NO sale a cero**, así que no lo uses de
-receta: `grep -rn "whatsmeow" --include='*.go' .` devuelve **9 aciertos**
-(`internal/receipts/receipts.go:8` y `:38`, `internal/ingest/dedupe.go:13`,
-`internal/flujos/contact/{resolver.go:10, repository_postgres.go:65,
-deadlock_integration_test.go:36}`, `internal/publicapi/sessions.go:72`,
-`internal/gateway/fleet/fleet.go:184` y `:228`) y **todos son comentarios** que nombran la pieza.
-La regla: el invariante se verifica sobre `go.mod`, no sobre los comentarios. **Sin candado**: ningún `depguard` lo vigila (`.golangci.yml` no lo
-declara); es una regla sostenida por revisión.
+receta: `grep -rn "whatsmeow" --include='*.go' cmd internal test` devuelve **19 aciertos**
+(medido el 2026-10-11) y **todos son comentarios** que nombran la pieza — la mayoría, justo para
+avisar del homónimo de §3.1 (p. ej. `internal/modulos/solicitudes/intakes/buyerdata.go:17`,
+`internal/modulos/edge/fleet/fleet.go:16`, `internal/nucleo/contact/repository_postgres.go:46`).
+La regla: el invariante se verifica sobre `go.mod`, no sobre los comentarios. **Sin candado**:
+ningún `depguard` lo vigila (`.golangci.yml` no lo declara); es una regla sostenida por revisión.
 
 ### I-ECO-2 · Doble llave: la DEK es del cliente, el lease es del servidor
 
@@ -48,15 +47,16 @@ Dos llaves independientes, y esta pieza **solo** tiene la segunda:
 - **Lease** — autoriza a operar. **Lo emite y lo revoca este repo**, y es el kill-switch
   anti-clon: revocado, el Edge deja de despachar aunque tenga la DEK.
 
-Dónde vive el lado servidor: `internal/gateway/lease/`. La firma es Ed25519, la clave privada
-se lee de fichero (`WAPP_LEASE_PRIVATE_KEY_FILE`) o de base64
-(`WAPP_LEASE_PRIVATE_KEY_B64`), y la pública se imprime al arrancar para configurar el Edge.
-Revocación por `POST /admin/leases/revoke`, permiso `leases.revoke`.
+Dónde vive el lado servidor: `internal/modulos/edge/lease/`. La firma es Ed25519, la clave
+privada se lee de fichero (`WAPP_LEASE_PRIVATE_KEY_FILE`) o de base64
+(`WAPP_LEASE_PRIVATE_KEY_B64`), y la pública se imprime al arrancar para configurar el Edge
+(`internal/arranque/lease.go:46`). Revocación por `/admin/leases/revoke`, permiso
+`leases.revoke` (`internal/arranque/rutas_admin.go:71`).
 
 🔴 **Homónimo peligroso: ver §3.1.** «DEK» en el código de este repo nombra **otra cosa**.
 
-**Cómo se comprueba.** La revocación es *pegajosa* y hay tests de gateway que la vigilan
-(`internal/gateway/lease/`). El invariante «la DEK del ADR-0007 no entra aquí» **no tiene
+**Cómo se comprueba.** La revocación es *pegajosa* y la vigilan los tests del paquete
+(`internal/modulos/edge/lease/lease_revocation_test.go`). El invariante «la DEK del ADR-0007 no entra aquí» **no tiene
 candado**: se sostiene en que no existe el campo.
 
 ### I-ECO-3 · Sin Redis, sin broker
@@ -79,8 +79,9 @@ El código de otro producto del grupo (EduGo) se **copió y adaptó** al espacio
 
 ⚠️ **Pero hay una excepción real y sin documentar en la regla original**: `go.mod:7` declara
 `github.com/EduGoGroup/identity-shared/auth v0.3.1`, y se usa **en producción** en
-`internal/bootstrap/arranque/auth.go:18` (copia en `internal/arranque/` desde F0), `internal/platform/httpapi/authmw.go:9`,
-`internal/iam/usecase/grants.go:6` e `internal/iam/usecase/exchange.go:9`. No es un
+`internal/arranque/auth_stack.go:10`, `internal/platform/httpapi/authmw.go:9`,
+`internal/modulos/acceso/iam/usecase/grants.go:12` e
+`internal/modulos/acceso/iam/usecase/exchange.go:11`. No es un
 `edugo-*`: es el SDK del **SSO del grupo** (identity-core), cuyos tokens ES256 esta pieza
 verifica. **No lo retires creyendo que es una violación** — y no lo uses como precedente para
 importar nada más.
@@ -114,15 +115,16 @@ WAPP_LLM_PROMPTS_DIR=/ruta/prompts ./server    # se enciende con la variable
 
 - Los cuatro ficheros son `p2-extraer-ideas.tmpl`, `p3-especificar-item.tmpl`,
   `p4-normalizar-cantidades.tmpl`, `p5-redactar-cotizacion.tmpl`
-  (`internal/prompts/volcar.go:19`). **Solo el prefijo `pN-` es contrato**: el resto del
-  nombre es tuyo (`internal/prompts/prompts.go:205 etapaDeNombre`). Un fichero sin extensión
-  `.tmpl` se ignora en silencio — es la forma de dejar notas al lado.
+  (`NombreDeFichero`, `internal/modulos/inferencia/prompts/volcar.go:22`). **Solo el prefijo
+  `pN-` es contrato**: el resto del nombre es tuyo (`stageFromName`,
+  `internal/modulos/inferencia/prompts/prompts.go:259`). Un fichero sin extensión `.tmpl` se
+  ignora en silencio — es la forma de dejar notas al lado.
 - **NO hay recarga en caliente, y es a propósito.** Cambiar texto sin reiniciar significaría
   que dos peticiones simultáneas corren prompts distintos.
 - `go run ./cmd/prompts -comprobar <dir>` valida un directorio **sin arrancar el servidor**.
 - 🔴 **Un directorio inválido ABORTA EL ARRANQUE.** No hay degradación a «sigo con el texto
-  compilado»: `internal/prompts/prompts.go:113 ErrPromptsDir` lo declara y
-  `internal/bootstrap/arranque/prompts.go:25 cargarPlantillasDePrompt` lo propaga. El motivo está
+  compilado»: `ErrPromptsDir` lo declara (`internal/modulos/inferencia/prompts/prompts.go:130`) y
+  `cargarPlantillasDePrompt` lo propaga (`internal/arranque/prompts.go:27`). El motivo está
   escrito allí mismo: *«un operador que editó un fichero y no ve el efecto es peor que un
   proceso que no arranca, porque el segundo se nota»*.
 - El arranque **deja en el log de dónde salió cada plantilla** (`p4=/ruta/…` o
@@ -132,79 +134,97 @@ WAPP_LLM_PROMPTS_DIR=/ruta/prompts ./server    # se enciende con la variable
 propio validador rechace.** El modelo **copia el ejemplo**. P4 fue **0 de 14 en campo** por un
 `"package_size": 0` impreso en su esquema, que `validarPaquete` rechazaba. Por eso
 `llm.ValidarPlantilla` corre el `Parse*` de la etapa **sobre el ejemplo del esquema** y falla
-si lo rechaza (`internal/prompts/prompts.go:193`).
+si lo rechaza (la llamada está en `internal/modulos/inferencia/prompts/prompts.go:246`).
 
 **Candado.** `TestValidarPlantilla…` en el módulo `wapp-shared/llm` muta
-`"package_size": 30` → `0` y exige el error; aquí, `internal/prompts/prompts_test.go`.
+`"package_size": 30` → `0` y exige el error; aquí,
+`internal/modulos/inferencia/prompts/prompts_test.go` (`TestCargar_StartupFailures` y
+`TestCargar_ValidatorErrorStaysWrapped`).
 
 ### I-CP-2 · 🔴 La inferencia la ORQUESTA este repo; el Edge solo la SIRVE
 
-Es **lo contrario** de lo que decía el diseño original, y sigue habiendo documentación vieja
-que dice lo otro. La doctrina vigente (ADR-0045, en el repo de documentación del ecosistema):
+Es **lo contrario** de lo que decía el diseño original. La doctrina vigente (ADR-0045, en el
+repo de documentación del ecosistema):
 
 - **El Cloud** construye el prompt, trocea, valida la salida y decide. Todo eso vive aquí:
-  `internal/intake/stages/`, `internal/prompts/`, `internal/llmvia/`.
+  `internal/modulos/captacion/stages/`, `internal/modulos/inferencia/prompts/`,
+  `internal/modulos/inferencia/llmvia/`.
 - **El Edge** es un servidor de inferencia: *prompt entra → JSON sale*. **No interpreta nada.**
 - La clasificación es **pull**, no push. El campo `intent` del proto está `reserved`: no
   existe el canal por el que el Edge empujaba una interpretación.
 
 **Consecuencia medida que cambia lo que puedes construir:** `Signal.Intent` **es hoy siempre
 `nil` en producción**, así que las reglas `flow_triggers kind='llm'` **NO PUEDEN DISPARAR**.
-La rama sigue viva (`internal/flujos/trigger/config_resolver.go`, `KindLLM` en
-`trigger.go:45`) y **sus tests están verdes**, midiendo código que producción no alcanza. Lo
-declara el propio código en `internal/flujos/runtime/incoming.go:963`. No lo «arregles» de
-paso: es un frente de producto con dueño. Ver `deuda.md`.
+La rama sigue viva (`internal/modulos/conversacion/trigger/config_resolver.go:85`, y
+`trigger.KindLLM` en `internal/modulos/conversacion/trigger/trigger.go:54`) y **sus tests están
+verdes**, midiendo código que producción no alcanza. Lo declara el propio código: el runtime
+arma la señal **sin** intención en `buildSignal`
+(`internal/modulos/conversacion/runtime/incoming_trigger.go:426`). No lo «arregles» de paso: es
+un frente de producto con dueño. Ver `deuda.md`.
 
 ### I-CP-3 · 🔴 El switch por vía (`local` | `api`) vive en `llmvia` y en NINGÚN otro sitio
 
-`internal/llmvia/llmvia.go:219` es el único `switch via`. Su único hermano legítimo es
-`Selector.PlazaDe`, en el mismo paquete. Si te encuentras preguntando «¿qué vía usa este
-tenant?» fuera de `internal/llmvia/`, lo que necesitas es **otro método en el puerto**.
+El `switch via` de la selección está en `Selector.For`
+(`internal/modulos/inferencia/llmvia/llmvia.go:308`). Sus únicos hermanos legítimos son tres
+métodos del mismo `Selector`, en el mismo fichero y con el mismo vocabulario cerrado: `Warm`
+(`:424`), `PlazaDe` (`:534`) y `turnRoute` (`:567`). Si te encuentras preguntando «¿qué vía usa
+este tenant?» fuera de `internal/modulos/inferencia/llmvia/`, lo que necesitas es **otro método
+en el puerto**.
 
-**Candado.** `internal/llmvia/c2_via_test.go` — es un test **AST**, no de conducta.
+**Candado.** `TestC2_TheRouteIsOnlyAskedInTheSelection`, en
+`internal/modulos/inferencia/llmvia/c2_via_test.go` — es un test **AST**, no de conducta, y es
+ancho a propósito: cuenta cualquier comparación o `switch` cuyo sujeto empiece o termine por
+`via`. Renombrar la variable para esquivarlo está prohibido.
 
 ### I-CP-4 · La plaza única: W=1 worker de pipeline, K=1 por Edge
 
-El pipeline de captación corre con **un** worker (`arranque/fase9_fondo.go:99`). Duplicar esa línea
+El pipeline de captación corre con **un** worker (`internal/arranque/fase9_fondo.go:106`). Duplicar esa línea
 **no daría ningún error**: dos workers reclamarían sin pisarse en la base y se bloquearían
 mutuamente en la única plaza de inferencia del Edge. El aforo por Edge lo toma el worker antes
-de la cadena (`internal/intake/pipeline/plaza.go`).
+de la cadena (`Slot` y `Capacity`, en `internal/modulos/captacion/pipeline/slot.go`).
 
-**Candado.** `internal/bootstrap/arranque/pipeline_captacion_cableado_test.go` (copia en `internal/arranque/` desde F0) — un test de cableado,
-porque el invariante vive en una línea repetible.
+**Candado.** `TestPipelineCaptacionCableado`, en
+`internal/arranque/pipeline_captacion_cableado_test.go` — un test de cableado que cuenta las
+apariciones de esa línea, porque el invariante vive en una línea repetible.
 
 ### I-CP-5 · 🔴 Los permisos de PLATAFORMA acaban en `.any`
 
 El listener admin `:8100` mezcla dos planos: rutas de tenant y rutas de **operador de
 plataforma** (nosotros, no el cliente). Lo que las distingue es el sufijo **`.any`** del
-permiso: `tenants.read.any`, `fleet.read.any`, `users.provision.any`… La migración `0060` se
-lo concede solo a `platform_admin` y se lo **niega** al glob `*` de `tenant_admin` con un deny
-`*.any`. Sin ese deny, cualquier admin de cliente alcanzaría el plano de plataforma.
+permiso: `tenants.read.any`, `fleet.read.any`, `users.provision.any`… Se le concede solo a
+`platform_admin` (`0059_platform_admin.sql:78` y `0060_platform_console_grants.sql:145`) y se le
+**niega** al glob `*` de `tenant_admin` con un deny `*.any`, que siembra la `0059`
+(`0059_platform_admin.sql:81`) y cubre por forma cualquier permiso `.any` futuro: por eso la
+`0060` no lo repite. Sin ese deny, cualquier admin de cliente alcanzaría el plano de plataforma.
 
-**Candado.** `internal/bootstrap/arranque/platform_permissions_test.go` (copia en `internal/arranque/` desde F0) →
-`TestINV056_1_PlatformPermissionsMustEndInDotAny`, con caso negativo.
+**Candado.** `internal/arranque/platform_permissions_test.go` →
+`TestINV056_1_PlatformPermissionsMustEndInDotAny`, con su caso negativo
+(`TestINV056_1_DetectsUnguardedPlatformRoute`).
 
 ⚠️ **Trampa de estilo que impone el candado**: el detector lee **texto fuente** y reconoce una
 ruta de plataforma buscando la cadena `"platformadmin."` en el argumento de `adminHandler(...)`
-(`arranque/rutas_admin.go:29`). Por eso esos handlers **deben** construirse inline y no pre-armarse en
-`adminRouteDeps`. Un refactor «de limpieza» que los mueva a campos deja el candado **ciego sin
+(el detector, en `internal/arranque/platform_permissions_test.go:50`; la advertencia, en
+`internal/arranque/rutas_admin.go:25`). Por eso esos handlers **deben** construirse inline y no
+pre-armarse en `adminRouteDeps`. Un refactor «de limpieza» que los mueva a campos deja el candado **ciego sin
 ponerse rojo**.
 
 ### I-CP-6 · El gate de features es FAIL-CLOSED
 
 Los tres modos de no-resolución de `RequireFeature` devuelven **403**, nunca 500 ni un pase
-libre (`internal/entitlements/middleware.go:39`). La resolución (feature efectiva de un
+libre (`internal/modulos/acceso/entitlements/middleware.go:48`). La resolución (feature efectiva de un
 tenant): un override en `tenant_features` **gana**; sin override manda el plan; sin `plan_id`
-se trata como `basic` (`COALESCE(plan_id,'basic')`, `internal/entitlements/postgres.go:151`).
+se trata como `basic` (`COALESCE(plan_id, 'basic')`, `internal/modulos/acceso/entitlements/postgres.go:196`).
 
-Hay **11 constantes de feature en Go** (`internal/entitlements/entitlements.go:45-176`) y
-**14 sembradas** en las migraciones. Las tres de más (`stt_audio`, `owner_app` y
+Hay **11 constantes de feature en Go**
+(`internal/modulos/acceso/entitlements/entitlements.go:51-141`) y **14 sembradas** en las
+migraciones (el recuento y su regla, en [`esquema-postgres.md`](esquema-postgres.md) §7). Las tres de más (`stt_audio`, `owner_app` y
 `passive_profiles`) **no gatean nada**. Ver `deuda.md`.
 
 ### I-CP-7 · El esquema es FULL-REPLAY: todo el DDL tiene que ser idempotente
 
 El runner (`internal/platform/storage/postgres/migrations/migrate.go`) **reejecuta TODOS** los
-`.sql` cuando cambia `SchemaVersion` **o** el hash del contenido. No hay «ya aplicada».
+`.sql` cuando cambia `SchemaVersion` **o** el hash del contenido. No hay «ya aplicada». El
+mecanismo entero está en [`esquema-postgres.md`](esquema-postgres.md) §2.
 
 ⇒ **Toda migración que escribas debe poder correr N veces.** `CREATE TABLE IF NOT EXISTS`,
 `ADD COLUMN IF NOT EXISTS`, `INSERT … ON CONFLICT DO NOTHING`.
@@ -213,19 +233,20 @@ El runner (`internal/platform/storage/postgres/migrations/migrate.go`) **reejecu
 migración posterior borró** — el `COMMENT ON COLUMN` que va debajo mata el segundo arranque.
 
 Se serializa con `pg_advisory_lock` sobre **una conexión dedicada** (`migrate.go:61`) y se
-ordena **por nombre** (`:142`). ⚠️ Contra un pooler en modo transacción el lock se puede
+ordena **por nombre** (`migrate.go:142`). ⚠️ Contra un pooler en modo transacción el lock se puede
 repartir entre sesiones: apunta siempre al **host directo**.
 
 ### I-CP-8 · Identificadores en inglés, nombre de negocio en la UI (INV-09)
 
 Las claves que viajan por el wire y viven en la BD van en inglés (`pending_approval`,
 `needs_info`); el nombre bonito vive en la UI y en la documentación, **nunca** en la base.
-Ejemplo canónico: `internal/intakes/status.go:13`.
+Ejemplo canónico: `internal/modulos/solicitudes/intakes/status.go:27`.
 
-Los **comentarios van en español**. Los **nombres** del código que ya existe (ficheros, funciones,
-variables, tests) están en español en muchos sitios: **no los «corrijas»**. En el código **nuevo** de la
-reconstrucción los nombres van en **inglés** y solo los comentarios en español
-([`05` E-11](reorganizacion-modular/05-metodo-contratos-y-tdd.md#e-11--nombres-en-inglés-en-español-solo-los-comentarios), 2026-10-02).
+En el código, los **nombres** (ficheros, tipos, funciones, variables, tests) van en **inglés** y
+los **comentarios** y la documentación en **español**
+([`05` E-11](reorganizacion-modular/05-metodo-contratos-y-tdd.md#e-11--nombres-en-inglés-en-español-solo-los-comentarios)).
+Los textos observables —mensajes de error, claves de log, literales que viajan al usuario— son
+contrato y se conservan tal cual están, estén en el idioma que estén: no los «corrijas».
 
 ### I-CP-9 · ⚠️ wApp NO autentica personas: aquí no hay padrón ni contraseñas
 
@@ -253,10 +274,13 @@ censo que recorre la rotación: omitir una es declarar «rotación completa» de
 **ilegibles para siempre** cuando se retire la KEK vieja.
 
 Hoy el censo tiene **8 sobres en 7 tablas**. **Y hay una que falta**:
-`conversation_event_messages` se escribe cifrada y **no está en el censo**. Ver `deuda.md`.
+`conversation_event_messages` se escribe cifrada
+(`internal/modulos/conversacion/events/store_append.go:50`) y **no está en el censo**. Ver
+`deuda.md`.
 
-**Candado.** `internal/platform/crypto/rekey_integration_test.go` rota sobre las entradas
-**declaradas** — es un test *de la lista*, no *de la ausencia*. No atrapa una tabla omitida.
+**Candado.** El proceso de rotación de `test/procesos/` (`p10_plataforma_rekey_test.go` y
+`rekey_contrato_test.go`) rota sobre las entradas **declaradas** — es un test *de la lista*, no
+*de la ausencia*. No atrapa una tabla omitida.
 
 ---
 
@@ -268,11 +292,21 @@ Hoy el censo tiene **8 sobres en 7 tablas**. **Y hay una que falta**:
 |---|---|---|
 | Qué descifra | el store de `whatsmeow` en el Edge | un campo de **PII de negocio** en PostgreSQL |
 | Quién la custodia | **el cliente**, jamás cruza a la nube | **esta pieza**, envuelta por su KEK |
-| Dónde se ve | no existe aquí | `internal/intakes/buyerdata.go:11`, columnas `*_dek` |
+| Dónde se ve | no existe aquí | `internal/platform/crypto/field_cipher.go` (quien la genera), columnas `*_dek` |
 
 Confundirlas lleva a concluir que **el zero-knowledge está roto cuando no lo está**. Que en
 `intake_buyer_data` haya una columna `data_dek` es exactamente lo que el diseño quiere: el
 contenido de negocio sube a la nube y se cifra allí.
+
+El propio código lleva el aviso allí donde aparece la palabra: en los datos del comprador
+(`internal/modulos/solicitudes/intakes/buyerdata.go:14`, que es donde lo declara con todas las
+letras, y `buyerdata_postgres.go` a su lado), en el gateway
+(`internal/modulos/edge/grpc/server.go:285`), en la flota
+(`internal/modulos/edge/fleet/fleet.go:16`), en los contactos
+(`internal/nucleo/contact/repository_postgres.go:46`), en el historial de eventos
+(`internal/modulos/conversacion/events/store.go:40`) y en la clave de API del tenant
+(`internal/modulos/inferencia/tenantllm/postgres.go:26`). Las tablas con sobre y el censo de
+rotación, en [`esquema-postgres.md`](esquema-postgres.md) §6.
 
 ### 3.2 · «admin» nombra dos planos distintos
 
@@ -285,9 +319,9 @@ llamarla.
 
 El pipeline de este repo es **P2→P5**. `wapp-shared/llm` define `EtapaP2`…`EtapaP5` y **no
 existe `EtapaP1`**. El prompt del clasificador de intenciones lo gobierna el **catálogo de
-intenciones**, que se edita **por API** (`PUT /api/v1/intents`, `internal/intentcfg/`). Quien
-venga a «tocar el prompt del clasificador» y abra `internal/prompts/` está en el sitio
-equivocado.
+intenciones**, que se edita **por API** (`PUT /api/v1/intents`,
+`internal/modulos/captacion/intentcfg/`). Quien venga a «tocar el prompt del clasificador» y
+abra `internal/modulos/inferencia/prompts/` está en el sitio equivocado.
 
 ### 3.4 · `orders` / `order_items` ya no existen
 
@@ -304,7 +338,7 @@ tabla y hace concluir que el dominio no está construido.
 - **PostgreSQL** vía `github.com/jackc/pgx/v5 v5.10.0` en modo *stdlib* sobre `database/sql`.
   **Sin ORM.** SQL crudo con `$N`. Un único `*sql.DB` compartido, pool configurable
   (default 25 abiertas / 5 ociosas / 1 h de vida / 10 min ociosa,
-  `internal/platform/storage/postgres/connect.go:30`).
+  `internal/platform/storage/postgres/connect.go:31`).
 - **gRPC** `google.golang.org/grpc v1.82.1` + `protobuf v1.36.11`.
 - **Contrato edge↔cloud**: `github.com/EduGoGroup/wapp-cloudlink v0.17.0` (paquete
   `cloudlinkv1`).
@@ -316,77 +350,107 @@ tabla y hace concluir que el dominio no está construido.
 - **KMS**: `cloud.google.com/go/kms v1.33.0`. Construido pero **apagado**: el default de
   `WAPP_KEK_PROVIDER` es `env` (`internal/platform/config/config.go:654`).
 - **Prometheus** `client_golang v1.23.2`; **excelize v2.11.0** (import de catálogo xlsx y
-  export de bandeja); **`golang.org/x/time`** (token buckets); **testify v1.11.1**;
-  **`jsonschema/v6`** solo en tests.
+  export de bandeja, solo en `internal/apipublica`); **`golang.org/x/time v0.15.0`** (token
+  buckets); **`jsonschema/v6 v6.0.3`** solo en tests; **`testcontainers-go v0.44.0`** para los procesos de
+  `test/procesos/`.
 - **Frontend: NO HAY.** Cero plantillas Go, cero JS. API JSON pura + gRPC.
 
 ---
 
 ## 5 · Convenciones de código
 
-- **Estructura modular por CAPACIDAD**, no hexagonal global. Cada módulo de `internal/` tiene
-  su frontera, sus tablas y su API. Trabaja **dentro del módulo**; no crees capas
-  transversales nuevas. La **única** zona hexagonal (`domain/usecase/ports/infra/transport`)
-  es `internal/iam/`, y es deliberado.
-- **Comentario-como-ADR**: el 46,8 % de la producción es comentario. Cuando cambies una
-  decisión, **actualiza el comentario que la narraba**; un comentario que describe un bloqueo
-  ya levantado manda a investigar a quien lo lea.
-- **Lint**: `.golangci.yml` habilita **16 linters** (`linters.enable`, `:9-37`) más **2
-  formateadores** (`formatters.enable`, `:69-71`: `gofmt` y `goimports`), que en la v2 del
-  fichero **ya no se declaran como linters**. Entre los 16, `errcheck` con
+- **Estructura modular por CAPACIDAD**, no hexagonal global. `internal/modulos/` tiene siete
+  módulos (`acceso`, `captacion`, `catalogo`, `conversacion`, `edge`, `inferencia`,
+  `solicitudes`), cada uno con su frontera, sus tablas y su API; lo que comparten dos módulos
+  vive en `internal/nucleo/`, la infraestructura en `internal/platform/`, la cara HTTP pública en
+  `internal/apipublica/` y el cableado en `internal/arranque/`. Trabaja **dentro del módulo**; no
+  crees capas transversales nuevas. La **única** zona hexagonal
+  (`domain/usecase/ports/infra/transport`) es `internal/modulos/acceso/iam/`, y es deliberado.
+- **Idioma**: nombres en inglés, comentarios y documentación en español (I-CP-8).
+- **Tamaño**: ≤ 500 líneas por `.go`, con tolerancia hasta 600; por encima, el fichero se parte
+  por tema. Lo vigila `TestFileSize` (`internal/modulos/file_size_test.go`).
+- **Candados de forma**: la lógica vive en `internal/candados/` (fronteras entre módulos, un
+  fichero un test, exportados cubiertos, tamaño, sin base viva…) y demuestra que muerde contra
+  árboles de prueba en su `testdata/`; los tests finos que la aplican al árbol real son los de
+  `internal/modulos/*_test.go` (`TestFronteras`, `TestUnFicheroUnTest`,
+  `TestExportadosCubiertos`, `TestFileSize`, `TestNoPending`) y
+  `test/procesos/sin_bd_viva_test.go`. Si uno se pone rojo, se arregla el código: no se añade
+  una excepción.
+- **Tests contra Postgres**: son **procesos de negocio en caja negra**, en `test/procesos/`,
+  contra el binario `cmd/server` y un Postgres levantado con testcontainers (etiqueta de
+  compilación `integracion`, `make test-procesos`, necesita Docker). **Ningún test apunta a un
+  Postgres vivo**, y un proceso que no puede correr **falla, no se salta**: `make test-procesos`
+  sale rojo con `SKIP>0`. `make test` son los unitarios, sin base.
+- **Comentario-como-ADR**: el **44,8 %** de las líneas de producción son comentario (medido el
+  2026-10-11: líneas que empiezan por `//` sobre el total, en los 607 `.go` de `cmd` e `internal`
+  que no son `_test.go` ni `testdata`). Cuando cambies una decisión, **actualiza el comentario
+  que la narraba**; un comentario que describe un bloqueo ya levantado manda a investigar a quien
+  lo lea.
+- **Lint**: `.golangci.yml` habilita **16 linters** (`linters.enable`, `.golangci.yml:15`) más
+  **2 formateadores** (`formatters.enable`, `.golangci.yml:75`: `gofmt` y `goimports`), que en la
+  v2 del fichero **ya no se declaran como linters**. Entre los 16, `errcheck` con
   `check-type-assertions: true` **y `check-blank: true`**, `gosec`, `contextcheck`, `nilerr`,
-  `errorlint`, `gocyclo` (min-complexity 15) y `revive`. Solo hay **13 `//nolint`** en toda la
-  producción, **todos con justificación escrita**. Escribe la tuya o no lo pongas.
-- **Tests de cableado (AST)**: hay **9** en `internal/bootstrap/arranque/`
-  (`ls internal/bootstrap/arranque/*cablead*` → 9: los 8 `*_cableado_test.go` más
-  `flow_options_cableadas_test.go`), con su copia en `internal/arranque/` desde F0 — por eso
-  `find . -name '*_cableado_test.go' | wc -l` da hoy 16, dos veces los mismos 8.
-  Es la herramienta de este repo para vigilar invariantes que viven en una línea repetible.
-  Úsala antes de inventar otra.
+  `errorlint`, `gocyclo` (min-complexity 15) y `revive`. **Un aviso de lint se arregla, no se
+  silencia.** Quedan **15 `//nolint`** fuera de los `_test.go` (medido el 2026-10-11:
+  `grep -rn --include='*.go' '//nolint' cmd internal | grep -v _test.go`), **todos con
+  justificación escrita**; no añadas otro.
+- **Tests de cableado**: hay **15** en `internal/arranque/`
+  (`ls internal/arranque/*cablead*` → 15). Es la herramienta de este repo para vigilar
+  invariantes que viven en una línea repetible del arranque (I-CP-4 es el ejemplo). Fuera de los
+  candados y del arranque, los tests **no** leen el código como texto: miden conducta.
 - **Nada de `TODO`/`FIXME`.** La deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡, y se anota
-  en `deuda.md`. Un `grep` por `TODO` en producción devuelve **cero** (las 249 apariciones a
-  grep pelado son la palabra española *todo*).
+  en `deuda.md`. No hay ni una marca `TODO:` o `FIXME` en el código (medido el 2026-10-11): las
+  apariciones de `TODO` a grep pelado son la palabra española *todo* en mayúsculas.
 
 ---
 
 ## 6 · Trampas conocidas (lo que un agente hace mal aquí si nadie se lo dice)
 
-1. **Creer que el README dice la verdad.** El `README.md` y el `CLAUDE.md` viejos afirmaban
-   esquema `0.47.0` (es **0.48.0**), «dos binarios» (son **cuatro**), «5 planes» (son **6**),
-   «se despliega contra Neon» (**UAT ya no usa Neon**: es un Postgres 17 en Docker en el
-   propio VPS) y describían **10** paquetes de `internal/` de los **29** que hay. Verifica
-   contra el código.
-2. **Buscar las rutas en un solo fichero.** Están en tres (ver `contratos.md`). Un inventario
-   que solo mire `internal/publicapi/` se deja **7 rutas**, incluidas `POST /api/v1/signup` y
-   el canje de invitación.
+1. **Creer que el README dice la verdad.** Para saber qué existe se lee
+   `internal/arranque/orquestador.go`: la lista `fases` (nueve, en una pantalla) y el fichero de
+   cada una son el inventario real. Las cifras tienen dueño —rutas y variables en
+   [`contratos.md`](contratos.md), tablas y esquema en
+   [`esquema-postgres.md`](esquema-postgres.md)— y cada una lleva la regla con la que se contó.
+   Verifica contra el código.
+2. **Buscar las rutas en un solo fichero.** Las del listener público las montan los ficheros de
+   `internal/apipublica/`, cada uno las de su tema; las del listener admin,
+   `internal/arranque/rutas_admin.go`. El inventario completo lo fija
+   `internal/arranque/testdata/huella-vieja.golden`, que vigila `TestHuella` (ver
+   [`contratos.md`](contratos.md)). Un inventario hecho a ojo sobre un solo fichero se deja
+   rutas.
 3. **Añadir una ruta sin mirar si su dependencia puede ser `nil`.** Muchas rutas son
-   **condicionales**: si su campo en `publicapi.Deps` es `nil`, la ruta **no se monta** y
-   responde un 404 de ruta inexistente (`internal/publicapi/roleplane.go:75`). La única
-   excepción deliberada es `POST /api/v1/members`, que se monta siempre y degrada a **503**.
+   **condicionales**: si su dependencia llega `nil`, la ruta **no se monta** y responde un 404
+   de ruta inexistente (`mountRoles` y `mountMembers`, `internal/apipublica/roleplane.go:125` y
+   `:157`). Matiz deliberado: `POST /api/v1/members` se monta **siempre que haya administración
+   de membresía**, tenga o no el despliegue credencial M2M de identity, y sin ella degrada a
+   **503**, nunca a 404 (`internal/apipublica/roleplane.go:170`).
 4. **Tocar el `WriteTimeout` global creyendo que gobierna todo.** `POST
    /api/v1/intakes/{id}/quote-suggestion` es **la única ruta con plazo de escritura propio**
-   (`conPlazoDeRedacción`, `internal/publicapi/publicapi.go:770`): espera al modelo **dentro**
+   (`writeDeadline`, `internal/apipublica/writedeadline.go:102`, montado en
+   `internal/apipublica/intakereports.go:231`): espera al modelo **dentro**
    de la petición (24,8–35,5 s medidos en UAT) contra un `WriteTimeout` global de 10 s.
 5. **Suponer que `/metrics` es inocuo.** El scrape **barre de paso** las rachas de
-   auto-respuesta vencidas y las manda al histograma (`arranque/fase7_flujos.go:123`). Si nadie raspa
+   auto-respuesta vencidas y las manda al histograma (`internal/arranque/fase7_flujos.go:140`). Si nadie raspa
    `/metrics`, esos episodios **no se cierran nunca**.
 6. **Esperar ver una métrica recién desplegada.** Un `CounterVec` de Prometheus **no aparece
    en `/metrics` hasta su primer incremento**, y el reinicio lo borra. Su ausencia tras
    desplegar no es un fallo.
 7. **Cambiar `WAPP_STORAGE_S3_PREFIX` creyendo que mueve algo.** Está en `.env.example` y en
    los runbooks, y **no la lee nadie**: el prefijo es la constante compilada
-   `mediaKeyPrefix = "wapp/media"` (`internal/publicapi/media.go:28`). Ver `deuda.md`.
+   `mediaKeyPrefix = "wapp/media"` (`internal/apipublica/media.go:127`). Ver `deuda.md`.
 8. **Desplegar sin R2/S3 vivo.** `NewR2PresignClient` valida el bucket con `HeadBucket` y si
-   falla **el proceso no levanta** (`internal/bootstrap/arranque/flows.go:75`). Es fail-fast a
+   falla **el proceso no levanta** (`internal/arranque/flows.go:76`). Es fail-fast a
    propósito, pero acopla el arranque de IAM y del gateway a un almacén que solo usa el nodo
    `media`.
 9. **Abrir un PR esperando validación.** `ci.yml` es `workflow_dispatch`: **un PR no valida
    nada**. Ver `operacion.md`.
 10. **Leer un `rc=0` de `go test` como «todo pasó».** Un `--- SKIP` cuenta igual que un
-    `--- PASS`. Los **97** ficheros `*_integration_test.go` (**352 funciones**, **11,3 %** de la suite)
-    **se saltan solos** sin `WAPP_TEST_DB_DSN`. **Cuenta los SKIP.** La regla del porcentaje:
-    `grep -rh '^func Test' --include='*_integration_test.go' . | wc -l` → **352**, sobre
-    `grep -rh '^func Test' --include='*_test.go' . | wc -l` → **3.116**.
+    `--- PASS`, y `make ci-local` **no toca Postgres**: no incluye los procesos. Lo que pide
+    base son las **128** funciones `Test…` de `test/procesos/` (medido el 2026-10-11:
+    `grep -rh '^func Test' test/procesos | wc -l`), que solo corren con `make test-procesos` y
+    Docker; ese target cuenta los SKIP por ti y sale rojo si hay uno. Un `ci-local` verde sin
+    `test-procesos` no dice nada de la conducta contra la base. Y lee el código de salida **sin
+    pipe**: con `| tail` delante, el `rc` es el de `tail`.
 11. **Migrar contra un pooler.** Ver I-CP-7.
 12. **Tocar `documentations/literal-aviso-sesion-pasiva.md`.** Es un contrato congelado: el
     literal exacto de un aviso que viaja al usuario final. No lo edites de paso ni lo

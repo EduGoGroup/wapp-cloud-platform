@@ -33,17 +33,15 @@ menos RAM y ningún puerto de base de datos duplicado.
    ```bash
    cp .env.example .env          # ajusta si hace falta
    set -a; . ./.env; set +a
-   go run ./cmd/server serve
+   go run ./cmd/server
    ```
 
-## Tests de integración
+## Tests contra Postgres
 
-Apuntan a la misma instancia compartida:
-
-```bash
-export WAPP_TEST_DB_DSN="host=localhost port=5432 user=wapp password=wapp dbname=wapp_cloud sslmode=disable"
-go test -race ./...
-```
+**No usan esta instancia**, ni ninguna otra que esté corriendo: los procesos de `test/procesos/`
+levantan su propio Postgres con testcontainers (`make test-procesos`, necesita Docker). Apuntar un
+test a una base viva está prohibido y lo hace fallar el gate. Ver
+[`documentations/operacion.md`](../documentations/operacion.md).
 
 ## Producción / cloud
 
