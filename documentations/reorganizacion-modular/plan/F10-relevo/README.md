@@ -2,7 +2,7 @@
 
 > **Estado**: 🔧 **bloque A cerrado (F10-02, 2026-10-11, PR #75 integrado)**: verdad de campo limpia, dorada de la
 > huella congelada, acta abierta e inventario de divergencias. **Bloque B cerrado (F10-03, 2026-10-11, PR #81 integrado)**:
-> el modular corre en UAT, la prueba funcional pasó en local, sin ventana de 24 h (Jhoan); veredicto: «sigue». **T10.14 hecha (F10-04b, 2026-10-11, PR #84 abierto, en revisión)**. **Bloque C integrado, salvo T10.14 (F10-04, 2026-10-11, PR #82 integrado)**: el relevo de código está hecho (T10.7–T10.13 y T10.23); T10.14, la documentación del repo, va en un PR propio (F10-04b). Spec escrita el
+> el modular corre en UAT, la prueba funcional pasó en local, sin ventana de 24 h (Jhoan); veredicto: «sigue». **T10.14 hecha (F10-04b, 2026-10-11, PR #84 integrado): bloque C cerrado entero**. **Bloque C integrado, salvo T10.14 (F10-04, 2026-10-11, PR #82 integrado)**: el relevo de código está hecho (T10.7–T10.13 y T10.23); T10.14, la documentación del repo, va en un PR propio (F10-04b). Spec escrita el
 > 2026-09-28 sobre `dev` @ `1b18932`.
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 > **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §6 (fila F10), §4.1 (cero puentes de import), §4.2 (cero
@@ -268,10 +268,10 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
     no todas las rutas de solicitudes llevan la feature `cart_basic`; `anclaje` sí se importa (lo que no tiene llamante
     es `anclaje.Distribute`); los no-op de `rows.Close()` son 14 en 8 ficheros, no 41 en 24; `POST /api/v1/members` no
     se monta siempre.
-35. **Tres skills retiradas, por decisión de la sesión**: `contrato-tdd`, `reconstruir-modulo` y `traspaso-web-local`.
+35. **Tres skills retiradas, por decisión de la sesión, confirmada por Jhoan al revisar el PR (2026-10-11)**: `contrato-tdd`, `reconstruir-modulo` y `traspaso-web-local`.
     Son el procedimiento de la reconstrucción y ya no se pueden seguir (piden el fichero viejo de referencia, la
-    etiqueta `pendiente` y `cmd/server-modular`). Van en un commit propio, `19ed4883`, para revertirlo solo si Jhoan
-    prefiere reescribirlas; T10.25 ya preveía «se reescribe o se retira». `validar-antes-de-cerrar` y
+    etiqueta `pendiente` y `cmd/server-modular`). Van en un commit propio, `19ed4883`, para poder revertirlo solo;
+    T10.25 ya preveía «se reescribe o se retira». `validar-antes-de-cerrar` y
     `procesos-testcontainers` se reescribieron (hallazgo 29). El hook de `SessionStart` ya no imprimía ningún recuento
     de pendientes: no hubo nada que tocar.
 36. **Lo que queda con rutas o nombres que ya no existen, y de quién es**: tres enlaces de `06-entorno-web.md` a las
