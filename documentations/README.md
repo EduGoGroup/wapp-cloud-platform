@@ -60,7 +60,7 @@ qué está así?» está tres líneas más arriba.
 | [`operacion.md`](operacion.md) | Cómo se arranca en local, cómo se prueba (los `make` reales y qué valida cada uno), cómo se publica una versión y cómo se depura cuando falla. |
 | [`deuda.md`](deuda.md) | La deuda viva con `fichero:línea`, su consecuencia y cómo se cerraría. Incluye el código muerto verificado. |
 | [`literal-aviso-sesion-pasiva.md`](literal-aviso-sesion-pasiva.md) | 🔒 **Contrato congelado, no lo edites de paso.** El literal exacto del aviso de sesión pasiva. |
-| [`reorganizacion-modular/`](reorganizacion-modular/README.md) | **Hecha: el relevo se cerró el 2026-10-11.** El expediente de la reconstrucción de `internal/` por módulos: el método normativo ([`05`](reorganizacion-modular/05-metodo-contratos-y-tdd.md), que sigue mandando sobre cómo se escribe código nuevo), las decisiones ([`plan/DECISIONES.md`](reorganizacion-modular/plan/DECISIONES.md)) y el estado final ([`ESTADO.md`](reorganizacion-modular/ESTADO.md)). Para saber cómo es el código hoy se lee `arquitectura.md`, no esa carpeta. |
+| [`modular-reorganization.md`](modular-reorganization.md) | **Hecha: el relevo se cerró el 2026-10-11.** La ficha de la reconstrucción de `internal/` por módulos: qué se hizo, en qué commit, y dónde está archivado su expediente, que ya no vive en este repo. Las normas que dejó están en `constitucion.md` §5.1; para saber cómo es el código hoy se lee `arquitectura.md`. |
 
 ---
 
@@ -95,5 +95,5 @@ líneas); un **símbolo** (un token con la forma paquete.Símbolo, Símbolo() o 
 `.go`); una **variable** `WAPP_X` (`X` o `WAPP_X` aparece en el código, el `Makefile`, los scripts o
 `deploy/`, porque el prefijo lo compone el loader); y **ninguna ruta de un paquete que ya no existe**.
 
-No comprueba que la línea citada diga lo que se afirma —eso se mira a mano al escribir la cita— ni
-entra en `reorganizacion-modular/`. Córrelo antes de dar por bueno un cambio de documentación.
+No comprueba que la línea citada diga lo que se afirma —eso se mira a mano al escribir la cita—.
+Córrelo antes de dar por bueno un cambio de documentación.
