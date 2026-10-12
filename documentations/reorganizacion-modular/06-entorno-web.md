@@ -40,10 +40,10 @@
 
 | Skill | Para qué |
 |---|---|
-| [`contrato-tdd`](../../.claude/skills/contrato-tdd/SKILL.md) | Un fichero, de contrato sin lógica a verde |
-| [`reconstruir-modulo`](../../.claude/skills/reconstruir-modulo/SKILL.md) | Orquestar una fase entera (F0, o un módulo de F1–F8) |
+| `contrato-tdd` (retirada del repo en F10-04b) | Un fichero, de contrato sin lógica a verde |
+| `reconstruir-modulo` (retirada del repo en F10-04b) | Orquestar una fase entera (F0, o un módulo de F1–F8) |
 | [`validar-antes-de-cerrar`](../../.claude/skills/validar-antes-de-cerrar/SKILL.md) | Los gates, leídos sin engañarse |
-| [`traspaso-web-local`](../../.claude/skills/traspaso-web-local/SKILL.md) | El fichero de traspaso entre la sesión web y la local |
+| `traspaso-web-local` (retirada del repo en F10-04b) | El fichero de traspaso entre la sesión web y la local |
 | [`procesos-testcontainers`](../../.claude/skills/procesos-testcontainers/SKILL.md) | Los tests de proceso de F9, con testcontainers |
 
 Todas remiten a [`05`](05-metodo-contratos-y-tdd.md) como norma: si una skill y `05` chocan, manda
