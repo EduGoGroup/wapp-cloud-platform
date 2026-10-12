@@ -104,10 +104,10 @@ tarea, directo en `dev`, en este orden (`arquitectura.md` §3). No necesita Dock
   - **Ficheros**: `traspasos/TRASPASO-F10-relevo.md` (`CERRADO <fecha>`), `ESTADO.md`
   - **Commit**: `docs(reorganizacion-modular): relevo cerrado en el repo y en UAT`
 
-## Bloque E · fuera del repo · sesión F10-05b (✎ 2026-10-12: ficha propia) · T10.18–T10.21 · necesita la raíz de wApp y los repos hermanos
+## Bloque E · fuera del repo · sesión F10-05b (✎ 2026-10-11: ficha propia) · T10.18–T10.21 · necesita la raíz de wApp y los repos hermanos
 
 Cada tarea en **su** repo, con **su** gate, commit a `dev`. La tabla de mapeo es la de `04` §4 más D-9 y
-D-10 (`diseno.md` §3.1). ✎ 2026-10-12: «commit a `dev`» es rama y PR en cada repo (regla 6).
+D-10 (`diseno.md` §3.1). ✎ 2026-10-11: «commit a `dev`» es rama y PR en cada repo (regla 6).
 
 - [ ] **T10.18 · La documentación del ecosistema** · dep. T10.17 · cumple R10.7.b
   - **Hecho cuando**: el recuento de `diseno.md` §3.1 (1.124 menciones hoy) → 0 fuera de lo histórico; `make check-docs` de la raíz verde

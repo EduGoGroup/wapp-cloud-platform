@@ -1,6 +1,6 @@
 # F10-05b · F10 · E · fuera del repo · 💻 CLI
 
-> ✎ **2026-10-12 (F10-05)**: ficha nueva. El bloque E vivía en
+> ✎ **2026-10-11 (F10-05)**: ficha nueva. El bloque E vivía en
 > [`F10-05-cli-cierre-y-fuera-del-repo`](F10-05-cli-cierre-y-fuera-del-repo.md), que cubría D y E; al partirse, lo de E
 > se trae aquí tal cual estaba, con la regla 6 (rama y PR en cada repo) ya dicha.
 

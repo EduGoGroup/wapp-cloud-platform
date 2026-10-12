@@ -1,6 +1,6 @@
 # F10-05 · F10 · D · cierre local · 💻 CLI
 
-> ✎ **2026-10-12 (F10-05)**: esta ficha cubría los bloques D y E, decía «Entrada: T10.14 hecha» y «trabajas directo en
+> ✎ **2026-10-11 (F10-05)**: esta ficha cubría los bloques D y E, decía «Entrada: T10.14 hecha» y «trabajas directo en
 > `dev`». Las tres cosas dejaron de ser ciertas: D-F10-12 quita la dependencia de T10.14 para el bloque D, la regla 6
 > del `CLAUDE.md` manda rama y PR, y el bloque E pasa a su propia ficha,
 > [`F10-05b-cli-fuera-del-repo`](F10-05b-cli-fuera-del-repo.md). El fichero conserva su nombre para no romper enlaces.

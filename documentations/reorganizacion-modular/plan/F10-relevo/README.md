@@ -77,7 +77,7 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
 | F10-03 | **B · la prueba en UAT en sustitución** | T10.4–T10.6 | **UAT (SSH)** y ✎ 2026-10-11 **la fase [FW](../FW-whatsapp-enchufable/README.md) cerrada** (D-FW-3) | Acta de la ventana: veredicto «sigue» o «vuelta atrás», con evidencia. La ventana (≥ 24 h) es espera, no sesión: se abre (T10.4) y se relanza para cerrar (T10.5–T10.6) |
 | F10-04 | **C · el relevo en el repo** | T10.7–T10.14, T10.23 | — | `ci-local` GATE_RC=0 con un solo arranque, cero adaptadores, cero puentes (import), `Conmutados` completo, cero pendientes, doc del repo al día; un commit por tarea |
 | F10-05 | **D · cierre local** | T10.15–T10.17 | **Docker**, **UAT (SSH)** | `make test-procesos` RC=0 contra `cmd/server`; UAT desplegado desde el commit del relevo; acta `CERRADO` |
-| F10-05b (✎ 2026-10-12: ficha propia) | **E · fuera del repo** | T10.18–T10.21, T10.25 (✎ 2026-10-11: la carpeta del plan se archiva en la raíz, D-F10-9) | la raíz de wApp y los repos hermanos | Doc del ecosistema, ADR-0010, 12 comentarios hermanos, bóveda `analisis/` con las rutas nuevas |
+| F10-05b (✎ 2026-10-11: ficha propia) | **E · fuera del repo** | T10.18–T10.21 (✎ 2026-10-11, F10-05: T10.26 y T10.25 van después, cada una con su PR; D-F10-12, D-F10-14) | la raíz de wApp y los repos hermanos | Doc del ecosistema, ADR-0010, 12 comentarios hermanos, bóveda `analisis/` con las rutas nuevas |
 | F10-06 | **F · `main`** | T10.22 | **`main`**, **Docker**, UAT (SSH) | **Solo a petición expresa de Jhoan** |
 
 ## Decisiones que necesita (Jhoan)
@@ -244,8 +244,8 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
     `make test-pendiente`, `WAPP_PROCESOS_BINARIO`, «contra los dos binarios»). Es el hallazgo 21, visto desde quien las
     carga: se usaron solo los targets que existen. Lo arregla F10-04b (T10.14).
 30. **La ficha de F10-05 se partió**: decía «Entrada: T10.14 hecha», «trabajas directo en `dev`» y cubría D + E. Queda
-    solo con el bloque D, y el E pasa a [`F10-05b`](../sesiones/F10-05b-cli-fuera-del-repo.md). `reglas.md` §2 y la
-    cabecera de `tareas.md` siguen diciendo «directo en `dev`» y «sin PR»: no se tocaron (manda la regla 6 del
+    solo con el bloque D, y el E pasa a [`F10-05b`](../sesiones/F10-05b-cli-fuera-del-repo.md). `reglas.md` §2, la
+    cabecera de `tareas.md` y «Bloques de sesión» de este README siguen diciendo «directo en `dev`» y «sin PR»: no se tocaron (manda la regla 6 del
     `CLAUDE.md`).
 31. **No corrido en esta sesión**: `make ci-docker`, `make test-procesos-edge-real` y el job `integration` de `ci.yml`.
     Y 159 de los 179 paquetes de `ci-local` salieron de la caché de `go test`; el `-v` posterior los corrió todos.
