@@ -4,8 +4,8 @@
 > (localizado por símbolo ese día), la **consecuencia** (qué pasa si nadie la toca) y **cómo se
 > cerraría**. Lo que no verifiqué va marcado **NO VERIFICADO** o **sin medir**.
 >
-> **Recuento** (contando los títulos `### D-nn` de este fichero): **49** identificadores, del D-1
-> al D-49; **40 abiertos** y **9 cerrados** (D-7, D-10, D-19, D-35, D-38, D-39, D-40, D-42 y
+> **Recuento** (contando los títulos `### D-nn` de este fichero): **50** identificadores, del D-1
+> al D-50; **41 abiertos** y **9 cerrados** (D-7, D-10, D-19, D-35, D-38, D-39, D-40, D-42 y
 > D-49). Aparte, la tabla de §5 lleva seis marcas heredadas de los planes, una de ellas cerrada.
 > Un identificador cerrado no se reutiliza ni se borra.
 
@@ -660,6 +660,19 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 - Cerrada el 2026-10-11 (commit `56e699b1`, PR #80): la transacción del test se abre con un contexto que no muere con
   él (`internal/modulos/acceso/iam/infra/postgres/memberships_test.go:220`). Medido: 0 fallos en 3000 repeticiones
   con `-race`, donde antes eran 5 de 300.
+
+### D-50 · 🟡 52 literales de test y de métricas siguen nombrando rutas del árbol que se borró
+
+> Abierta el 2026-10-12, al limpiar los comentarios (PR #86). Decisión de Jhoan (D-F10-15): no se reescriben
+> durante la migración; es deuda para después del relevo. Medido con un escáner de `go/scanner` sobre los `.go`.
+
+- **Qué queda**: 24 líneas en `internal/candados/fronteras_test.go` y 15 en sus `testdata/` (los casos del candado de
+  fronteras, que prueba sus reglas sobre un árbol de mentira con los nombres de antes); 7 en tests de cableado de
+  `internal/arranque` (rutas de import prohibidas y mensajes de error); 2 en `processimports_test.go`; 1 en
+  `responsecontroller_test.go`; y los 3 textos `Help` de `/metrics`.
+- **Por qué no se tocó**: son código, no comentarios. Reescribirlos pide decidir antes qué vigila el candado de
+  fronteras ahora que ese árbol no existe (su `Mapa` está vacío en `internal/modulos/fronteras_test.go`).
+- **Veredicto**: pendiente. Los 3 `Help` cambian texto observable: van con D-36. El resto, un commit por paquete.
 
 ---
 

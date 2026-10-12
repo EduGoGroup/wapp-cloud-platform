@@ -351,6 +351,8 @@ relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
     `processimports_test.go`, 1 en `responsecontroller_test.go` y los 3 `Help` de `/metrics` (D-36). Tocarlos es tocar
     código. **T10.25 pide «0 en todo el repo»**: o su recuento excluye estos literales, o antes hay una tarea que los
     reescriba. Lo decide Jhoan.
+    ✎ 2026-10-12 · **Decidido (D-F10-15)**: el recuento de T10.25 los excluye y pasan a deuda, **D-50** de
+    `deuda.md`, para después del relevo.
 48. **`TestHuellaVieja` no es un comentario** (venía del hallazgo 36). El nombre está en un literal de
     `internal/arranque/huellatest/golden.go:43`, que es quien escribe la cabecera de `testdata/huella-vieja.golden`.
     Corregirlo es cambiar código y regenerar la dorada: no se tocó. Los otros dos del hallazgo 36, sí: la cabecera de

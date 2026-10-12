@@ -501,8 +501,9 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
 - **Efecto secundario, arreglado**: 160 citas `fichero:línea` de `documentations/*.md` re-apuntadas (`50b3c9a7`).
   🔴 Las de la documentación de la raíz de wApp se re-apuntan después de fusionar.
 - **Gates**: `make ci-local` → `GATE_RC=0`. No corrido: `make test-procesos`, `make ci-docker`.
-- **Hallazgos**: 46–52 de [`plan/F10-relevo/README.md`](plan/F10-relevo/README.md). Pide decisión el **47**: T10.25
-  exige «0 en todo el repo» y los 52 literales lo impiden.
+- **Hallazgos**: 46–52 de [`plan/F10-relevo/README.md`](plan/F10-relevo/README.md). El **47** pedía decisión (T10.25
+  exige «0 en todo el repo» y los 52 literales lo impiden): **decidido, D-F10-15** — el recuento los excluye y
+  quedan como deuda D-50.
 - **Siguiente paso: fusionar el PR #86**; después, T10.25 (la última). `main` sin tocar.
 
 **F10-05b · F10, bloque E: fuera del repo, T10.18–T10.21 (2026-10-11 → 2026-10-12, 💻, rama `reorg/f10-05b-fuera-del-repo` desde `dev` @ `7c4467bb`) — PR #85 integrado**
@@ -2314,7 +2315,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Para retomar
 
-0. ✎ 2026-10-12 · **F10-05c (T10.26): PR #86 abierto, en revisión.** Pendiente de fusionarlo; después, **T10.25** (la carpeta sale del repo), que antes necesita la decisión del hallazgo 47 de F10 (los 52 literales con ruta vieja).
+0. ✎ 2026-10-12 · **F10-05c (T10.26): PR #86 abierto, en revisión.** Pendiente de fusionarlo; después, **T10.25** (la carpeta sale del repo), ya sin decisiones pendientes: el hallazgo 47 de F10 (los 52 literales con ruta vieja) quedó decidido en D-F10-15 — el recuento los excluye y son deuda D-50.
 0. ✎ 2026-10-11 · **F10-04b hecha (T10.14, PR #84 integrado): el bloque C de F10, cerrado entero.** **Siguiente sesión: F10-05b** ([`F10-05b-cli-fuera-del-repo`](plan/sesiones/F10-05b-cli-fuera-del-repo.md), bloque E); después T10.26 y, la última, T10.25. Lo del acta §7.4 sigue sin ver: conviene verlo antes de F10-06 (`main`).
 0. ✎ 2026-10-11 · **F10-05 hecha (PR #83 integrado): el bloque D de F10, cerrado.** **Siguiente sesión: F10-04b** (T10.14, con la ficha de [`F10-04-cli-relevo`](plan/sesiones/F10-04-cli-relevo.md)), [`F10-05b`](plan/sesiones/F10-05b-cli-fuera-del-repo.md) (bloque E), T10.26 y, la última, T10.25. Quien pase por UAT con un login de administradora: lo del [acta §7.4](traspasos/TRASPASO-F10-relevo.md) sigue sin ver.
 0. ✎ 2026-10-11 · **F10-04 hecha (PR #82 integrado)**: el relevo de código hecho, T10.14 `[~]`. **Siguiente sesión: F10-05, bloque D** (T10.15–T10.17), sin esperar a F10-04b (D-F10-12); después F10-04b (T10.14), T10.26 y, la última, T10.25. F10-04b se relanza con la ficha de [`F10-04-cli-relevo`](plan/sesiones/F10-04-cli-relevo.md) acotada a T10.14. Lo que sigue es lo que se dijo antes.
