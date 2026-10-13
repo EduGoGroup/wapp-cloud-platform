@@ -1,0 +1,100 @@
+{
+  "format": "wapp.catalog_import",
+  "version": 1,
+  "source": {
+    "kind": "plantilla",
+    "hint": "ejemplo de wApp: reemplaza estas categorías y artículos por los tuyos"
+  },
+  "catalog": {
+    "categories": [
+      {
+        "code": "1",
+        "label": "Tortas",
+        "subcategories": [
+          {
+            "code": "clasicas",
+            "label": "Clásicas"
+          },
+          {
+            "code": "infantiles",
+            "label": "Infantiles"
+          }
+        ],
+        "items": [
+          {
+            "code": "1",
+            "sku": "TORTA-CHOC",
+            "label": "Torta de chocolate",
+            "price": 18000,
+            "description": "Bizcocho de chocolate con relleno de arequipe.",
+            "subcategory": "clasicas",
+            "variants": [
+              {
+                "code": "V1",
+                "label": "10-12 porciones",
+                "price": 18000
+              },
+              {
+                "code": "V2",
+                "label": "25-30 porciones",
+                "price": 32000
+              }
+            ]
+          },
+          {
+            "code": "2",
+            "sku": "TORTA-UNICORNIO",
+            "label": "Torta de unicornio",
+            "price": 26000,
+            "description": "Decorada con crema de colores y figura de azúcar.",
+            "subcategory": "infantiles",
+            "tags": [
+              "decorada",
+              "sin_lactosa"
+            ],
+            "attributes": {
+              "capas": "3",
+              "porciones": "10-12"
+            }
+          }
+        ]
+      },
+      {
+        "code": "2",
+        "label": "Salados",
+        "items": [
+          {
+            "code": "1",
+            "sku": "TEQUENOS-15",
+            "label": "Tequeños (15 unidades)",
+            "price": 26000,
+            "description": "Congelados, listos para freír."
+          },
+          {
+            "code": "2",
+            "sku": "REFRESCO-15L",
+            "label": "Refresco 1.5 L",
+            "price": 4000
+          },
+          {
+            "code": "3",
+            "sku": "COMBO-FIESTA",
+            "label": "Combo fiesta",
+            "price": 32000,
+            "description": "Se cobra como una sola línea; sus partes son informativas.",
+            "components": [
+              {
+                "sku": "TEQUENOS-15",
+                "qty": 1
+              },
+              {
+                "sku": "REFRESCO-15L",
+                "qty": 2
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

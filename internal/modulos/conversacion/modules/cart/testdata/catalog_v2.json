@@ -1,0 +1,46 @@
+{
+  "categories": [
+    {
+      "code": "01",
+      "label": "Tortas",
+      "subcategories": [
+        { "code": "01a", "label": "Infantiles" },
+        { "code": "01b", "label": "Clásicas" }
+      ],
+      "items": [
+        {
+          "code": "1",
+          "sku": "TORTA-CHOC",
+          "label": "Torta de chocolate",
+          "price": 18000,
+          "description": "Bizcocho de cacao con ganache",
+          "subcategory": "01b",
+          "tags": ["decoracion", "sin_lactosa"],
+          "attributes": { "porciones": "10-12", "sabor": "chocolate" },
+          "variants": [
+            { "code": "V1", "label": "10-12 porciones", "price": 18000 },
+            { "code": "V2", "label": "25-30 porciones", "price": 32000 }
+          ]
+        },
+        {
+          "code": "2",
+          "sku": "COMBO-1",
+          "label": "Combo hamburguesa",
+          "price": 9500,
+          "components": [
+            { "sku": "HAMB", "qty": 1 },
+            { "sku": "REFR", "qty": 1 },
+            { "sku": "PAPA", "qty": 2 }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "02",
+      "label": "Bebidas",
+      "items": [
+        { "code": "1", "sku": "CAFE", "label": "Café", "price": 2.5, "description": "Espresso doble" }
+      ]
+    }
+  ]
+}

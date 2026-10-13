@@ -8,14 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // sendStreamCaidoError es el doble del *gatewaygrpc.SendError cuando el stream de la
 // sesión murió esperando el ack: cumple los DOS contratos por duck-typing que el
 // handler consume, `interface{ CommandID() string }` e `interface{ StreamCaido() bool }`.
-// Que el Gateway real los cumpla se prueba en internal/gateway/grpc; aquí se prueba
+// Que el Gateway real los cumpla se prueba en internal/modulos/edge/grpc; aquí se prueba
 // que el handler los consume. El campo caido es configurable a propósito: un doble
 // que solo supiera decir "sí" no probaría que el handler mira el BOOL y no la mera
 // presencia del método.
@@ -107,7 +106,7 @@ func TestSendMessageHandler_504_StreamNoCaido_UsaElTextoViejo(t *testing.T) {
 // comando no llegó a salir, y esa distinción es la que sostiene todo el contrato.
 func TestSendMessageHandler_StreamCaido_NoPisaEl502DeOffline(t *testing.T) {
 	code, cuerpo := enviarAdmin(t,
-		&sendStreamCaidoError{cmdID: "cmd-off", causa: session.ErrSessionOffline, caido: true})
+		&sendStreamCaidoError{cmdID: "cmd-off", causa: httpapi.ErrSessionOffline, caido: true})
 
 	if code != http.StatusBadGateway {
 		t.Fatalf("status=%d, quiero 502: con la sesión offline el comando NO salió", code)

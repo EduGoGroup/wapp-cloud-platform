@@ -62,7 +62,7 @@ type AppConfig struct {
 	// log). Default 8s. <=0 cae al default. Env WAPP_GRPC_ACK_TIMEOUT.
 	//
 	// ⚠️ INVARIANTE: tiene que ser MENOR que el WriteTimeout del servidor HTTP
-	// (10s, internal/bootstrap/http.go). En Go el WriteTimeout NO interrumpe al
+	// (10s, internal/arranque/http.go). En Go el WriteTimeout NO interrumpe al
 	// handler ni cancela su contexto: solo hace fallar el Write posterior. Si este
 	// timeout lo igualara o superara, el 504 se generaría con el deadline de
 	// escritura ya vencido y el cliente seguiría viendo una conexión cerrada sin
@@ -91,7 +91,7 @@ type AppConfig struct {
 	// GatewayWorkTimeout es el presupuesto de tiempo de PARED de cada trabajo del
 	// carril (Plan 050 · Ola 1, ADR-0040): pasado ese plazo el trabajo se rinde y
 	// libera el carril de su sesión. Default 5s, el mismo valor ya calibrado del
-	// offlinePersistTimeout del gateway (internal/gateway/grpc/server.go). <=0 cae al
+	// offlinePersistTimeout del gateway anterior a la reconstrucción. <=0 cae al
 	// default. Env WAPP_GATEWAY_WORK_TIMEOUT.
 	//
 	// ⚠️ Subirlo cuesta TIEMPO COLGADO POR TRABAJO: el carril es serie por sesión,
@@ -104,21 +104,20 @@ type AppConfig struct {
 	// Default 1,5s. <=0 cae al default. Env WAPP_PUBLICAPI_DB_TIMEOUT.
 	//
 	// ⚠️ INVARIANTE: los relojes del envío son SECUENCIALES, no alternativos, así que
-	// contra el WriteTimeout del servidor HTTP (10s, internal/bootstrap/http.go:22)
+	// contra el WriteTimeout del servidor HTTP (10s, internal/arranque/http.go)
 	// cuenta la SUMA.
 	//
 	// 🔴 CORREGIDO (Plan 050 · Ola 5 · T5.4). Este párrafo decía «los DOS relojes» y
 	// hacía la cuenta 1,5+8 = 9,5s, concluyendo que quedaba margen. Eran TRES y la
 	// cuenta era falsa: se saltaba GRPCPushTimeout (10s, declarado en este mismo
-	// struct), que corre ENTRE los otros dos —internal/gateway/grpc/send.go:334 llama
-	// a Push y :338 a awaitAck, uno después del otro—. El peor caso real es
+	// struct), que corre ENTRE los otros dos —internal/modulos/edge/grpc/send.go llama
+	// a Push y luego a awaitAck, uno después del otro—. El peor caso real es
 	//
 	//	1,5 (guarda) + 10 (push) + 8 (ack) = 19,5s   contra un WriteTimeout de 10s
 	//
 	// es decir margen NEGATIVO por 9,5s, no positivo por 0,5s. Con el Edge saturado
 	// el POST se pasaba del deadline de escritura y el cliente veía la conexión
-	// cerrada sin cuerpo (el incidente del 2026-08-06, curl 52), reproducido en
-	// internal/publicapi/gateway_saturado_e2e_integration_test.go.
+	// cerrada sin cuerpo (el incidente del 2026-08-06, curl 52).
 	//
 	// 🔴 CÓMO SE SOSTIENE AHORA, y por qué esta cuenta ya no puede volver a mentir:
 	// NO se corrigió moviendo ninguno de los cuatro valores (INV-050.6 lo prohíbe, y
@@ -214,7 +213,7 @@ type AppConfig struct {
 	// «hasta que el Plan 044 (su LECTOR) exista; se quita entonces». El Plan 044 ·
 	// T1.6 es esa fecha, y retiró el tipo, el campo, el default y la lectura. El gate
 	// que queda es UNO y es por tenant: la feature `llm_intake`
-	// (internal/flujos/runtime/thread.go). Los nombres exactos, en git.
+	// (internal/modulos/conversacion/runtime/thread.go). Los nombres exactos, en git.
 	//
 	// ⚠️ ESTA LÁPIDA CIERRA EL STRUCT: no hay declaración detrás, así que hoy no puede
 	// fusionarse con el doc-comment de nadie. QUIEN AÑADA UN CAMPO AQUÍ DEBAJO tiene que
@@ -303,8 +302,8 @@ type DiagnosticsConfig struct {
 // después el mismo blob que el import acaba de aceptar — dos verdades sobre el
 // mismo dato. Por eso no vive en ImportConfig.
 //
-// El default es el mismo que declara internal/catalogimport, que es donde se
-// aplica; un test amarra los dos para que no puedan divergir.
+// El default es el mismo que declara internal/modulos/catalogo/catalogimport, que
+// es donde se aplica; un test amarra los dos para que no puedan divergir.
 type TenantContentConfig struct {
 	// MaxBytes es el tamaño máximo del blob crudo, en bytes. Default 1 MiB (el que
 	// PUT /api/v1/tenant-content ya tenía fijo en el código). Se aplica LEYENDO,
@@ -385,8 +384,8 @@ type LLMConfig struct {
 	// hay recarga en caliente a propósito, para que «este job corrió con este
 	// prompt» siga siendo una frase cierta.
 	//
-	// 🔴 UN DIRECTORIO MAL PUESTO NO ARRANCA. Ver internal/prompts: un fichero cuyo
-	// prefijo no es una etapa, dos que reclaman la misma, o un esquema que su propio
+	// 🔴 UN DIRECTORIO MAL PUESTO NO ARRANCA. Ver internal/modulos/inferencia/prompts:
+	// un fichero cuyo prefijo no es una etapa, dos que reclaman la misma, o un esquema que su propio
 	// validador rechaza, abortan el arranque con el nombre del fichero y el motivo.
 	// El modo de fallo que eso evita es «edité el prompt, reinicié y no cambió
 	// nada», que no deja rastro en ningún log.

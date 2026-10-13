@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/casebank"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/casebank"
 )
 
 // main_test.go — LA VÍA DE SIEMBRA REAL, BAJO TEST.
@@ -21,7 +21,7 @@ import (
 // un test. La auditoría metió dos mutaciones de UNA LÍNEA cada una y no las cazó
 // nadie: `vet` en 0 y la suite entera verde.
 //
-//	💥 M-A: construir el anonimizador SIN `casebank.NombresDelCaso()`
+//	💥 M-A: construir el anonimizador SIN `casebank.CaseNames()`
 //	        ⇒ los nombres propios se siembran EN CLARO (PII en la nube, ADR-0034).
 //	💥 M-B: `caso.Consented = true` fijo, ignorando el flag `-consentido`
 //	        ⇒ el consentimiento deja de significar nada.
@@ -34,16 +34,16 @@ import (
 // storeQueCuenta es el doble mínimo del puerto: lo único que hace falta afirmar es
 // si la escritura LLEGÓ o no. No valida nada, para no probar al doble.
 type storeQueCuenta struct {
-	insertados []casebank.Caso
+	insertados []casebank.Case
 	consultas  int
 }
 
-func (s *storeQueCuenta) Insertar(_ context.Context, c casebank.Caso) (int64, error) {
+func (s *storeQueCuenta) Insert(_ context.Context, c casebank.Case) (int64, error) {
 	s.insertados = append(s.insertados, c)
 	return int64(len(s.insertados)), nil
 }
 
-func (s *storeQueCuenta) Existe(context.Context, string, string) (bool, error) {
+func (s *storeQueCuenta) Exists(context.Context, string, string) (bool, error) {
 	s.consultas++
 	return false, nil
 }
@@ -60,7 +60,7 @@ func (s *storeQueCuenta) Existe(context.Context, string, string) (bool, error) {
 // texto. Un anonimizador construido con la lista pero con la pasada de nombres
 // rota pasaría la primera mitad y fallaría la segunda.
 //
-// 💥 Mutación (ejecutada): `casebank.NuevoAnonimizador()` sin argumentos en
+// 💥 Mutación (ejecutada): `casebank.NewAnonymizer()` sin argumentos en
 // `preparar` ⇒ caen las dos mitades.
 func TestPreparar_ElAnonimizadorLlevaLaListaDeNombres(t *testing.T) {
 	_, anon, err := preparar(peticion{tenant: "t-siembra", consentido: true})
@@ -75,7 +75,7 @@ func TestPreparar_ElAnonimizadorLlevaLaListaDeNombres(t *testing.T) {
 	// gane a «Ana»), no el orden en que se pasaron. Un `reflect.DeepEqual` aquí
 	// falla por un detalle de implementación en vez de por un nombre que falte —
 	// se comprobó al escribir este test, que cayó justo por eso.
-	got, quiero := append([]string(nil), anon.Nombres()...), casebank.NombresDelCaso()
+	got, quiero := append([]string(nil), anon.Names()...), casebank.CaseNames()
 	sort.Strings(got)
 	sort.Strings(quiero)
 	if !reflect.DeepEqual(got, quiero) {
@@ -83,14 +83,14 @@ func TestPreparar_ElAnonimizadorLlevaLaListaDeNombres(t *testing.T) {
 	}
 
 	// (b) la conducta, que es la que no se puede fingir.
-	for _, nombre := range casebank.NombresDelCaso() {
+	for _, nombre := range casebank.CaseNames() {
 		entrada := "habló con " + nombre + " ayer"
-		got := anon.Anonimizar(entrada)
+		got := anon.Anonymize(entrada)
 		if strings.Contains(got, nombre) {
 			t.Errorf("Anonimizar(%q) = %q; el nombre %q llegaría a la base EN CLARO", entrada, got, nombre)
 		}
-		if !strings.Contains(got, casebank.MarcaNombre) {
-			t.Errorf("Anonimizar(%q) = %q; falta la marca %q", entrada, got, casebank.MarcaNombre)
+		if !strings.Contains(got, casebank.MarkName) {
+			t.Errorf("Anonimizar(%q) = %q; falta la marca %q", entrada, got, casebank.MarkName)
 		}
 	}
 }
@@ -142,13 +142,13 @@ func TestPreparar_SinFlag_LaSiembraNoEscribeNADA(t *testing.T) {
 		t.Fatalf("preparar: %v", err)
 	}
 	espia := &storeQueCuenta{}
-	svc, err := casebank.NewServicio(espia, anon)
+	svc, err := casebank.NewService(espia, anon)
 	if err != nil {
 		t.Fatalf("NewServicio: %v", err)
 	}
 
-	_, sembro, err := svc.Sembrar(context.Background(), caso)
-	if !errors.Is(err, casebank.ErrSinConsentimiento) {
+	_, sembro, err := svc.Seed(context.Background(), caso)
+	if !errors.Is(err, casebank.ErrNoConsent) {
 		t.Fatalf("Sembrar devolvió %v; se esperaba ErrSinConsentimiento", err)
 	}
 	if sembro {
@@ -168,12 +168,12 @@ func TestPreparar_ConFlag_SiembraElCasoDeAmbar(t *testing.T) {
 		t.Fatalf("preparar: %v", err)
 	}
 	espia := &storeQueCuenta{}
-	svc, err := casebank.NewServicio(espia, anon)
+	svc, err := casebank.NewService(espia, anon)
 	if err != nil {
 		t.Fatalf("NewServicio: %v", err)
 	}
 
-	id, sembro, err := svc.Sembrar(context.Background(), caso)
+	id, sembro, err := svc.Seed(context.Background(), caso)
 	if err != nil || !sembro || id == 0 {
 		t.Fatalf("Sembrar devolvió (%d, %t, %v); se esperaba haber sembrado", id, sembro, err)
 	}
@@ -184,7 +184,7 @@ func TestPreparar_ConFlag_SiembraElCasoDeAmbar(t *testing.T) {
 	if got.TenantID != "t-siembra" {
 		t.Errorf("tenant_id = %q; el caso tiene que sembrarse para el tenant que pidió el operador", got.TenantID)
 	}
-	if got.SourceText != casebank.TextoCasoAmbar {
+	if got.SourceText != casebank.AmbarCaseText {
 		t.Error("el texto sembrado NO es el del caso Ambar")
 	}
 	if !strings.Contains(string(got.Expected), `"_procedencia"`) {
@@ -202,7 +202,7 @@ func TestPreparar_SinTenant_FallaSinTocarNada(t *testing.T) {
 	if caso.TenantID != "" || caso.SourceText != "" {
 		t.Errorf("devolvió un caso a medias (%+v); con error tiene que salir el cero-valor", caso)
 	}
-	if len(anon.Nombres()) != 0 {
-		t.Errorf("devolvió un anonimizador armado (%v) junto a un error", anon.Nombres())
+	if len(anon.Names()) != 0 {
+		t.Errorf("devolvió un anonimizador armado (%v) junto a un error", anon.Names())
 	}
 }

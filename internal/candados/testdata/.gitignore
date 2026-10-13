@@ -1,0 +1,4 @@
+# Los perfiles de cobertura de los árboles de prueba de los candados SÍ se
+# versionan: la raíz ignora *.out (salidas de go test), y sin ellos los casos
+# cobertura/{muerde,pasa} no existen en un clon limpio (F0 T0.5).
+!*.out

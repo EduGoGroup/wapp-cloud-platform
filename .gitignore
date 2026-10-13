@@ -13,6 +13,9 @@
 bin/
 dist/
 
+# Herramientas fijadas que instala `make tools` (el golangci-lint de LINT_VERSION del Makefile)
+/.bin/
+
 # Entornos y secretos
 .env
 .env.*
@@ -40,3 +43,6 @@ certs/
 .vscode/
 *.swp
 *.swo
+
+# Worktrees de los sub-agentes de Claude Code (copias de trabajo temporales)
+.claude/worktrees/

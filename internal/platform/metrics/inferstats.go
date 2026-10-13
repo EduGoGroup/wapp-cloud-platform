@@ -6,14 +6,15 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/inferstats"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics/inferencia"
 )
 
 // --- Telemetría de inferencia del Edge (Plan 044 · Ola 1.7 · T1.7-9) ---------
 
 // FuenteInferencia entrega el agregado de la flota EN EL MOMENTO DEL SCRAPE. Lo
-// satisface (*inferstats.Store).Agrega.
-type FuenteInferencia func() inferstats.Agregado
+// satisface (*inferstats.Store).Agrega: inferstats.Agregado es alias de
+// inferencia.Agregado (F0 · D-F0-3), y así metrics no importa el dominio.
+type FuenteInferencia func() inferencia.Agregado
 
 // RegisterInferenceStats publica la telemetría de inferencia del Edge sobre el
 // registry propio. Devuelve error solo si el registry lo rechaza por algo distinto de

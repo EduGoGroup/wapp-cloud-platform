@@ -1,16 +1,17 @@
 // Command server es el binario único de la Plataforma Cloud (monolito modular).
 //
-// Orquesta el arranque del Gateway CloudLink con DOS listeners gRPC y un HTTP:
-//   - Enrollment (TLS de servidor SOLAMENTE): el Edge enrola aquí sin cert de
-//     cliente (CSR -> código -> cert firmado por la CA).
-//   - CloudLink (mTLS estricto): el Edge conecta aquí con el cert emitido; el
-//     servidor exige y verifica el cert de cliente contra la MISMA CA.
-//   - HTTP: health (/healthz, incluye el check de BD) y admin interno de
-//     revocación de leases (/admin/leases/revoke, kill-switch).
+// Arranca CUATRO listeners, dos gRPC y dos HTTP:
+//   - Enrollment (:8102, gRPC, TLS de servidor SOLAMENTE): el Edge enrola aquí sin
+//     cert de cliente (CSR -> código -> cert firmado por la CA).
+//   - CloudLink (:8101, gRPC, mTLS estricto): el Edge conecta aquí con el cert
+//     emitido; el servidor exige y verifica el cert de cliente contra la MISMA CA.
+//   - HTTP admin/health (:8100): health (/healthz, incluye el check de BD), /metrics
+//     y el admin interno (p. ej. /admin/leases/revoke, el kill-switch).
+//   - HTTP API pública (:8103): la cara /api/v1.
 //
-// Carga la configuración, construye el logger, abre PostgreSQL, corre las
-// migraciones al arrancar, loguea la clave pública del lease (para configurar el
-// Edge) y hace graceful shutdown de los tres servidores.
+// Todo el arranque vive en internal/arranque (Ejecutar): carga la configuración,
+// construye el logger, abre PostgreSQL, corre las migraciones, construye las
+// dependencias por fases y hace graceful shutdown de los cuatro servidores.
 package main
 
 import (
@@ -19,7 +20,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/bootstrap"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/arranque"
 )
 
 func main() {
@@ -32,5 +33,5 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	return bootstrap.Run(ctx)
+	return arranque.Ejecutar(ctx)
 }

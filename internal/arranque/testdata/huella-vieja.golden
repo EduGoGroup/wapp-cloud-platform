@@ -1,0 +1,243 @@
+# Huella del arranque VIEJO de wapp-cloud-platform, congelada (F10 · T10.2).
+# La escribe SOLO TestHuellaVieja con -args -actualizar; regenerarla es cambiar un
+# contrato hacia fuera: commit propio y decisión escrita.
+# Una entrada por línea, ordenadas: perfil <TAB> clase <TAB> listener (o -) <TAB> valor
+con-m2m	metrica	-	wapp_db_idle
+con-m2m	metrica	-	wapp_db_in_use
+con-m2m	metrica	-	wapp_db_max_idle_closed
+con-m2m	metrica	-	wapp_db_max_open
+con-m2m	metrica	-	wapp_db_wait_count
+con-m2m	metrica	-	wapp_db_wait_duration_seconds
+con-m2m	metrica	-	wapp_edge_inference_reporting_edges
+con-m2m	metrica	-	wapp_flow_autoreply_streak
+con-m2m	metrica	-	wapp_flow_autoreply_streak_max
+con-m2m	metrica	-	wapp_http_request_duration_seconds
+con-m2m	metrica	-	wapp_http_requests_total
+con-m2m	rpc	:8101	wapp.cloudlink.v1.CloudLink/Connect
+con-m2m	rpc	:8102	wapp.cloudlink.v1.Enrollment/EnrollEdge
+con-m2m	ruta	:8100	/admin/crypto/rekey
+con-m2m	ruta	:8100	/admin/flows
+con-m2m	ruta	:8100	/admin/flows/start
+con-m2m	ruta	:8100	/admin/leases/revoke
+con-m2m	ruta	:8100	/admin/messages/send
+con-m2m	ruta	:8100	/healthz
+con-m2m	ruta	:8100	/metrics
+con-m2m	ruta	:8100	DELETE /admin/triggers/{id}
+con-m2m	ruta	:8100	GET /admin/access-requests
+con-m2m	ruta	:8100	GET /admin/tenants
+con-m2m	ruta	:8100	GET /admin/tenants/{id}
+con-m2m	ruta	:8100	GET /admin/tenants/{id}/installations
+con-m2m	ruta	:8100	GET /admin/triggers
+con-m2m	ruta	:8100	POST /admin/access-requests/{id}/approve
+con-m2m	ruta	:8100	POST /admin/access-requests/{id}/reject
+con-m2m	ruta	:8100	POST /admin/sessions/{id}/profile
+con-m2m	ruta	:8100	POST /admin/sessions/{id}/status
+con-m2m	ruta	:8100	POST /admin/tenants
+con-m2m	ruta	:8100	POST /admin/tenants/restore
+con-m2m	ruta	:8100	POST /admin/tenants/revoke
+con-m2m	ruta	:8100	POST /admin/tenants/{id}/enrollment-codes
+con-m2m	ruta	:8100	POST /admin/triggers
+con-m2m	ruta	:8103	/api/v1/auth/exchange
+con-m2m	ruta	:8103	/api/v1/auth/verify
+con-m2m	ruta	:8103	/api/v1/auth/whoami
+con-m2m	ruta	:8103	DELETE /api/v1/integrations
+con-m2m	ruta	:8103	DELETE /api/v1/invitations/{id}
+con-m2m	ruta	:8103	DELETE /api/v1/members/{user_id}
+con-m2m	ruta	:8103	DELETE /api/v1/members/{user_id}/grants
+con-m2m	ruta	:8103	DELETE /api/v1/members/{user_id}/roles/{role_id}
+con-m2m	ruta	:8103	DELETE /api/v1/roles/{id}/grants
+con-m2m	ruta	:8103	DELETE /api/v1/tenant-content/{ref}
+con-m2m	ruta	:8103	DELETE /api/v1/tenant-llm
+con-m2m	ruta	:8103	DELETE /api/v1/triggers/{id}
+con-m2m	ruta	:8103	GET /api/v1/audit
+con-m2m	ruta	:8103	GET /api/v1/auth/tenants
+con-m2m	ruta	:8103	GET /api/v1/catalog/import/prompt
+con-m2m	ruta	:8103	GET /api/v1/catalog/import/template
+con-m2m	ruta	:8103	GET /api/v1/conversation-events
+con-m2m	ruta	:8103	GET /api/v1/degradation-notices
+con-m2m	ruta	:8103	GET /api/v1/diagnostics/{command_id}
+con-m2m	ruta	:8103	GET /api/v1/entitlements
+con-m2m	ruta	:8103	GET /api/v1/events/telemetry
+con-m2m	ruta	:8103	GET /api/v1/flows
+con-m2m	ruta	:8103	GET /api/v1/flows/{id}
+con-m2m	ruta	:8103	GET /api/v1/intakes
+con-m2m	ruta	:8103	GET /api/v1/intakes/export
+con-m2m	ruta	:8103	GET /api/v1/intakes/summary.json
+con-m2m	ruta	:8103	GET /api/v1/intakes/{id}
+con-m2m	ruta	:8103	GET /api/v1/integrations
+con-m2m	ruta	:8103	GET /api/v1/integrations/outbox
+con-m2m	ruta	:8103	GET /api/v1/intents
+con-m2m	ruta	:8103	GET /api/v1/invitations
+con-m2m	ruta	:8103	GET /api/v1/members
+con-m2m	ruta	:8103	GET /api/v1/roles
+con-m2m	ruta	:8103	GET /api/v1/sessions
+con-m2m	ruta	:8103	GET /api/v1/tenant-content
+con-m2m	ruta	:8103	GET /api/v1/tenant-content/{ref}
+con-m2m	ruta	:8103	GET /api/v1/tenant-llm
+con-m2m	ruta	:8103	GET /api/v1/tenant-variables
+con-m2m	ruta	:8103	GET /api/v1/triggers
+con-m2m	ruta	:8103	POST /api/v1/auth/active-tenant
+con-m2m	ruta	:8103	POST /api/v1/catalog/import
+con-m2m	ruta	:8103	POST /api/v1/catalog/import/tabular
+con-m2m	ruta	:8103	POST /api/v1/conversation-events/{id}/cancel
+con-m2m	ruta	:8103	POST /api/v1/flows
+con-m2m	ruta	:8103	POST /api/v1/flows/{id}/start
+con-m2m	ruta	:8103	POST /api/v1/intakes/discard
+con-m2m	ruta	:8103	POST /api/v1/intakes/{id}/approve
+con-m2m	ruta	:8103	POST /api/v1/intakes/{id}/quote-suggestion
+con-m2m	ruta	:8103	POST /api/v1/intakes/{id}/reanalyze
+con-m2m	ruta	:8103	POST /api/v1/intakes/{id}/request-info
+con-m2m	ruta	:8103	POST /api/v1/intakes/{id}/status
+con-m2m	ruta	:8103	POST /api/v1/integrations/callback
+con-m2m	ruta	:8103	POST /api/v1/invitations
+con-m2m	ruta	:8103	POST /api/v1/invitations/accept
+con-m2m	ruta	:8103	POST /api/v1/media/upload-url
+con-m2m	ruta	:8103	POST /api/v1/members
+con-m2m	ruta	:8103	POST /api/v1/members/{user_id}/grants
+con-m2m	ruta	:8103	POST /api/v1/members/{user_id}/roles
+con-m2m	ruta	:8103	POST /api/v1/messages
+con-m2m	ruta	:8103	POST /api/v1/roles
+con-m2m	ruta	:8103	POST /api/v1/roles/{id}/grants
+con-m2m	ruta	:8103	POST /api/v1/sessions/{id}/diagnostics
+con-m2m	ruta	:8103	POST /api/v1/sessions/{id}/profile
+con-m2m	ruta	:8103	POST /api/v1/sessions/{id}/status
+con-m2m	ruta	:8103	POST /api/v1/signup
+con-m2m	ruta	:8103	POST /api/v1/tenant-content/{ref}
+con-m2m	ruta	:8103	POST /api/v1/triggers
+con-m2m	ruta	:8103	PUT /api/v1/intakes/{id}/items
+con-m2m	ruta	:8103	PUT /api/v1/integrations
+con-m2m	ruta	:8103	PUT /api/v1/intents
+con-m2m	ruta	:8103	PUT /api/v1/tenant-content/{ref}
+con-m2m	ruta	:8103	PUT /api/v1/tenant-llm
+con-m2m	ruta	:8103	PUT /api/v1/tenant-variables
+estatica	goroutine	-	arranque.gracefulStopGRPC.func
+estatica	goroutine	-	arranque.serveGRPC
+estatica	goroutine	-	arranque.serveGRPC
+estatica	goroutine	-	arranque.serveHTTP
+estatica	goroutine	-	arranque.serveHTTP
+estatica	goroutine	-	flowlifecycle.Collector.Run
+estatica	goroutine	-	intakeahead.Pool.Run
+estatica	goroutine	-	integrations.Worker.Run
+estatica	goroutine	-	pipeline.Worker.Run
+estatica	goroutine	-	runtime.IntakeAggregator.Run
+estatica	hook	-	CartMatch
+estatica	hook	-	FlowAutoreplyStreak
+estatica	hook	-	FlowEventLifecycle
+estatica	hook	-	FlowReactiveBlocked
+estatica	hook	-	InstrumentHTTP
+estatica	hook	-	InstrumentHTTP
+estatica	hook	-	LLMDegradacion
+estatica	hook	-	PromHandler
+estatica	hook	-	Receipt
+estatica	hook	-	RegisterDBStats
+estatica	hook	-	RegisterInferenceStats
+estatica	hook	-	SetFlowAutoreplyStreakMaxSource
+estatica	hook	-	WebhookDelivery
+minimo	metrica	-	wapp_db_idle
+minimo	metrica	-	wapp_db_in_use
+minimo	metrica	-	wapp_db_max_idle_closed
+minimo	metrica	-	wapp_db_max_open
+minimo	metrica	-	wapp_db_wait_count
+minimo	metrica	-	wapp_db_wait_duration_seconds
+minimo	metrica	-	wapp_edge_inference_reporting_edges
+minimo	metrica	-	wapp_flow_autoreply_streak
+minimo	metrica	-	wapp_flow_autoreply_streak_max
+minimo	metrica	-	wapp_http_request_duration_seconds
+minimo	metrica	-	wapp_http_requests_total
+minimo	rpc	:8101	wapp.cloudlink.v1.CloudLink/Connect
+minimo	rpc	:8102	wapp.cloudlink.v1.Enrollment/EnrollEdge
+minimo	ruta	:8100	/admin/crypto/rekey
+minimo	ruta	:8100	/admin/flows
+minimo	ruta	:8100	/admin/flows/start
+minimo	ruta	:8100	/admin/leases/revoke
+minimo	ruta	:8100	/admin/messages/send
+minimo	ruta	:8100	/healthz
+minimo	ruta	:8100	/metrics
+minimo	ruta	:8100	DELETE /admin/triggers/{id}
+minimo	ruta	:8100	GET /admin/access-requests
+minimo	ruta	:8100	GET /admin/tenants
+minimo	ruta	:8100	GET /admin/tenants/{id}
+minimo	ruta	:8100	GET /admin/tenants/{id}/installations
+minimo	ruta	:8100	GET /admin/triggers
+minimo	ruta	:8100	POST /admin/access-requests/{id}/approve
+minimo	ruta	:8100	POST /admin/access-requests/{id}/reject
+minimo	ruta	:8100	POST /admin/sessions/{id}/profile
+minimo	ruta	:8100	POST /admin/sessions/{id}/status
+minimo	ruta	:8100	POST /admin/tenants
+minimo	ruta	:8100	POST /admin/tenants/restore
+minimo	ruta	:8100	POST /admin/tenants/revoke
+minimo	ruta	:8100	POST /admin/tenants/{id}/enrollment-codes
+minimo	ruta	:8100	POST /admin/triggers
+minimo	ruta	:8103	/api/v1/auth/exchange
+minimo	ruta	:8103	/api/v1/auth/verify
+minimo	ruta	:8103	/api/v1/auth/whoami
+minimo	ruta	:8103	DELETE /api/v1/integrations
+minimo	ruta	:8103	DELETE /api/v1/invitations/{id}
+minimo	ruta	:8103	DELETE /api/v1/members/{user_id}
+minimo	ruta	:8103	DELETE /api/v1/members/{user_id}/grants
+minimo	ruta	:8103	DELETE /api/v1/members/{user_id}/roles/{role_id}
+minimo	ruta	:8103	DELETE /api/v1/roles/{id}/grants
+minimo	ruta	:8103	DELETE /api/v1/tenant-content/{ref}
+minimo	ruta	:8103	DELETE /api/v1/tenant-llm
+minimo	ruta	:8103	DELETE /api/v1/triggers/{id}
+minimo	ruta	:8103	GET /api/v1/audit
+minimo	ruta	:8103	GET /api/v1/auth/tenants
+minimo	ruta	:8103	GET /api/v1/catalog/import/prompt
+minimo	ruta	:8103	GET /api/v1/catalog/import/template
+minimo	ruta	:8103	GET /api/v1/conversation-events
+minimo	ruta	:8103	GET /api/v1/degradation-notices
+minimo	ruta	:8103	GET /api/v1/diagnostics/{command_id}
+minimo	ruta	:8103	GET /api/v1/entitlements
+minimo	ruta	:8103	GET /api/v1/events/telemetry
+minimo	ruta	:8103	GET /api/v1/flows
+minimo	ruta	:8103	GET /api/v1/flows/{id}
+minimo	ruta	:8103	GET /api/v1/intakes
+minimo	ruta	:8103	GET /api/v1/intakes/export
+minimo	ruta	:8103	GET /api/v1/intakes/summary.json
+minimo	ruta	:8103	GET /api/v1/intakes/{id}
+minimo	ruta	:8103	GET /api/v1/integrations
+minimo	ruta	:8103	GET /api/v1/integrations/outbox
+minimo	ruta	:8103	GET /api/v1/intents
+minimo	ruta	:8103	GET /api/v1/invitations
+minimo	ruta	:8103	GET /api/v1/members
+minimo	ruta	:8103	GET /api/v1/roles
+minimo	ruta	:8103	GET /api/v1/sessions
+minimo	ruta	:8103	GET /api/v1/tenant-content
+minimo	ruta	:8103	GET /api/v1/tenant-content/{ref}
+minimo	ruta	:8103	GET /api/v1/tenant-llm
+minimo	ruta	:8103	GET /api/v1/tenant-variables
+minimo	ruta	:8103	GET /api/v1/triggers
+minimo	ruta	:8103	POST /api/v1/auth/active-tenant
+minimo	ruta	:8103	POST /api/v1/catalog/import
+minimo	ruta	:8103	POST /api/v1/catalog/import/tabular
+minimo	ruta	:8103	POST /api/v1/conversation-events/{id}/cancel
+minimo	ruta	:8103	POST /api/v1/flows
+minimo	ruta	:8103	POST /api/v1/flows/{id}/start
+minimo	ruta	:8103	POST /api/v1/intakes/discard
+minimo	ruta	:8103	POST /api/v1/intakes/{id}/approve
+minimo	ruta	:8103	POST /api/v1/intakes/{id}/quote-suggestion
+minimo	ruta	:8103	POST /api/v1/intakes/{id}/reanalyze
+minimo	ruta	:8103	POST /api/v1/intakes/{id}/request-info
+minimo	ruta	:8103	POST /api/v1/intakes/{id}/status
+minimo	ruta	:8103	POST /api/v1/integrations/callback
+minimo	ruta	:8103	POST /api/v1/invitations
+minimo	ruta	:8103	POST /api/v1/invitations/accept
+minimo	ruta	:8103	POST /api/v1/media/upload-url
+minimo	ruta	:8103	POST /api/v1/members
+minimo	ruta	:8103	POST /api/v1/members/{user_id}/grants
+minimo	ruta	:8103	POST /api/v1/members/{user_id}/roles
+minimo	ruta	:8103	POST /api/v1/messages
+minimo	ruta	:8103	POST /api/v1/roles
+minimo	ruta	:8103	POST /api/v1/roles/{id}/grants
+minimo	ruta	:8103	POST /api/v1/sessions/{id}/diagnostics
+minimo	ruta	:8103	POST /api/v1/sessions/{id}/profile
+minimo	ruta	:8103	POST /api/v1/sessions/{id}/status
+minimo	ruta	:8103	POST /api/v1/signup
+minimo	ruta	:8103	POST /api/v1/tenant-content/{ref}
+minimo	ruta	:8103	POST /api/v1/triggers
+minimo	ruta	:8103	PUT /api/v1/intakes/{id}/items
+minimo	ruta	:8103	PUT /api/v1/integrations
+minimo	ruta	:8103	PUT /api/v1/intents
+minimo	ruta	:8103	PUT /api/v1/tenant-content/{ref}
+minimo	ruta	:8103	PUT /api/v1/tenant-llm
+minimo	ruta	:8103	PUT /api/v1/tenant-variables

@@ -24,13 +24,15 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/bootstrap"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
-	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/arranque"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll/enrollhelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet/fleethelpertest"
+	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/lease"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/lease/leasehelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/session"
 )
 
 const (
@@ -112,7 +114,7 @@ type itHarness struct {
 	connLis   *bufconn.Listener
 	gw        *gatewaygrpc.Server
 	mgr       *lease.Manager
-	fleetRepo *fleet.MemoryRepository
+	fleetRepo *fleethelpertest.Memoria
 	incoming  chan *cloudlinkv1.IncomingMessage
 }
 
@@ -135,20 +137,20 @@ func startHarness(t *testing.T) *itHarness {
 		t.Fatalf("X509KeyPair server: %v", err)
 	}
 
-	codes := enroll.NewMemoryStore()
+	codes := enrollhelpertest.NewMemoriaCodeStore()
 	codes.Add(itCode, itTenantID, time.Now().Add(time.Hour))
 	enrollSrv := enroll.NewServer(
-		enroll.NewService(codes, ca, enroll.NewMemoryEdgeCertRepository()), log)
+		enroll.NewService(codes, ca, enrollhelpertest.NewMemoriaEdgeCertRepository()), log)
 
 	priv, err := lease.GenerateDevKey()
 	if err != nil {
 		t.Fatalf("GenerateDevKey: %v", err)
 	}
-	mgr, err := lease.NewManager(priv, lease.NewMemoryRepository())
+	mgr, err := lease.NewManager(priv, leasehelpertest.NewMemoria())
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	fleetRepo := fleet.NewMemoryRepository()
+	fleetRepo := fleethelpertest.NewMemoria()
 
 	gw := gatewaygrpc.New(session.NewRegistry(), log,
 		gatewaygrpc.WithLease(mgr), gatewaygrpc.WithFleet(fleetRepo))
@@ -157,7 +159,7 @@ func startHarness(t *testing.T) *itHarness {
 
 	// Listener Enrollment: TLS de servidor SOLAMENTE (reusa el helper de main).
 	enrollLis := bufconn.Listen(itBufSize)
-	enrollGS := grpc.NewServer(grpc.Creds(bootstrap.EnrollServerCreds(serverCert)))
+	enrollGS := grpc.NewServer(grpc.Creds(arranque.EnrollServerCreds(serverCert)))
 	enrollSrv.Register(enrollGS)
 	enrollErrc := serve(enrollGS, enrollLis)
 
@@ -250,11 +252,6 @@ func (h *itHarness) connect(ctx context.Context, t *testing.T, resp *cloudlinkv1
 type edgeSim struct {
 	stream cloudlinkv1.CloudLink_ConnectClient
 
-	// sentText, si no es nil, recibe cada SendText empujado por el servidor
-	// (además de ackearlo). Lo usa el test de flujos para asertar el texto del
-	// menú y de los nodos destino. nil en los tests que no lo necesitan.
-	sentText chan *cloudlinkv1.SendText
-
 	sendMu sync.Mutex
 
 	vMu sync.Mutex
@@ -324,13 +321,7 @@ func (e *edgeSim) handle(cmd *cloudlinkv1.CloudToEdge) {
 	case cmd.GetLeaseUpdate() != nil:
 		e.applyLease(cmd.GetLeaseUpdate())
 	case cmd.GetSendText() != nil:
-		// Ackea ANTES de publicar el texto: el SendText del servidor se
-		// desbloquea con el Ack, y el texto queda disponible en el canal
-		// bufferizado para que el test lo asierte sin carrera.
 		e.ackCommand(cmd)
-		if e.sentText != nil {
-			e.sentText <- cmd.GetSendText()
-		}
 	}
 }
 
@@ -451,7 +442,7 @@ func keyToPEM(t *testing.T, key *ecdsa.PrivateKey) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
 }
 
-func waitFleetOnline(t *testing.T, repo *fleet.MemoryRepository, sessionID string) {
+func waitFleetOnline(t *testing.T, repo *fleethelpertest.Memoria, sessionID string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {

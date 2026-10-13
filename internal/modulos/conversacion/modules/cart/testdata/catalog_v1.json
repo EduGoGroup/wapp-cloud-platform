@@ -1,0 +1,19 @@
+{
+  "categories": [
+    {
+      "code": "1",
+      "label": "Bebidas",
+      "items": [
+        { "code": "1", "sku": "CAFE", "label": "Café", "price": 2.5, "description": "Espresso doble" },
+        { "code": "2", "sku": "TE", "label": "Té", "price": 2.0, "description": "Verde o negro" }
+      ]
+    },
+    {
+      "code": "2",
+      "label": "Postres",
+      "items": [
+        { "code": "1", "sku": "FLAN", "label": "Flan", "price": 3.0, "description": "Casero" }
+      ]
+    }
+  ]
+}

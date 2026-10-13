@@ -4,20 +4,18 @@
 // El criterio de la tarea (docs/plans/043-eventos-conversacionales/tasks.md
 // §T6.5) exige un consumidor de PRODUCCIÓN, no un assert de test: "T6.2 ya lee
 // la tabla desde un test y eso deja flow_events igual de write-only". El
-// registro Prometheus del listener admin (internal/bootstrap/bootstrap.go,
+// registro Prometheus del listener admin (internal/arranque/rutas_admin.go,
 // mux.Handle("/metrics", ...)) SÍ tiene un consumidor externo raspándolo ya en
 // producción — es la diferencia entre "se puede leer" y "algo la lee".
 //
 // DESACOPLO (mismo patrón que receipts.Sink e integrations.Worker): este
 // paquete NUNCA importa internal/platform/metrics ni ningún paquete de
-// internal/flujos. onCount es un callback que bootstrap.go inyecta
+// internal/modulos/conversacion. onCount es un callback que el arranque inyecta
 // (mtx.FlowEventLifecycle) — el colector no sabe que existe Prometheus, y el
 // motor de flujos no sabe que existe este colector.
 //
-// PROPIEDAD DE LA TAREA: vive bajo internal/platform/metrics/** (no bajo
-// internal/flujos/, dueño físico de la tabla flow_events) porque T6.5 tiene la
-// propiedad exclusiva de internal/publicapi/**, internal/platform/metrics/** e
-// internal/bootstrap/** mientras OTRO agente edita internal/flujos/** a la vez
+// PROPIEDAD DE LA TAREA: vive bajo internal/platform/metrics/** (no con el motor
+// de flujos, dueño físico de la tabla flow_events) por el reparto de la tarea T6.5
 // (Ola 6 del Plan 043, dos agentes en paralelo). Es SQL de solo LECTURA contra
 // una tabla PÚBLICA; no interpreta el ciclo de vida del evento ni compite con
 // el dominio de flujos por ninguna escritura.
@@ -25,8 +23,8 @@
 // ELECCIÓN DE LÍDER POR ADVISORY LOCK (T6.5, refutación multi-réplica del
 // revisor, decisión de Jhoan 2026-08-11): el cursor de arriba es UN entero EN
 // MEMORIA por proceso. Con más de una réplica del servidor —que es como este
-// repo despliega, ver internal/integrations/worker.go:~176 y
-// internal/integrations/postgres.go:~187, que documentan el MISMO problema
+// repo despliega, ver worker.go y postgres.go de
+// internal/modulos/solicitudes/integrations, que documentan el MISMO problema
 // para el worker de webhooks y por eso llevan claim+lease+SKIP LOCKED— cada
 // instancia tenía su PROPIO cursor y publicaba el conteo de las MISMAS filas:
 // medido, 2 réplicas → 6 donde había 3. Como wapp_flow_event_lifecycle_total
@@ -195,19 +193,18 @@ func NewCollector(db *sql.DB, onCount func(name, eventKind, reason string, delta
 // proceso (bootstrap.go) — mismo molde que integrations.Worker.Run: un solo
 // Ctrl+C también para este colector, sin un segundo mecanismo de shutdown.
 //
-// El advisory lock se libera SIEMPRE al salir (defer con context.Background(),
-// no con ctx: para cuando este defer corre, ctx ya está cancelado casi
-// siempre, y el unlock necesita su propio contexto vivo para tener
-// oportunidad real de ejecutarse). Un lock de sesión que no se suelta deja a
+// El advisory lock se libera SIEMPRE al salir (defer con el ctx DESACOPLADO de
+// su cancelación, context.WithoutCancel, no con ctx a secas: para cuando este
+// defer corre, ctx ya está cancelado casi siempre, y el unlock necesita un
+// contexto vivo para tener oportunidad real de ejecutarse). Un lock de sesión que no se suelta deja a
 // este colector muerto para TODO el clúster —nadie más puede ganarlo— hasta
 // que Postgres recicle esa conexión.
 func (c *Collector) Run(ctx context.Context) {
-	//nolint:contextcheck // context.Background() a propósito, igual que el defer
-	// shutdownAll de bootstrap.go: este defer corre cuando ctx YA está cancelado
-	// casi siempre (es la razón de existir de Run() saliendo), y derivar el
-	// unlock de ese mismo ctx muerto le quitaría al `SELECT pg_advisory_unlock`
-	// cualquier oportunidad real de llegar a Postgres.
-	defer c.releaseLeadership(context.Background())
+	// context.WithoutCancel a propósito, igual que el shutdownAll del arranque: este
+	// defer corre cuando ctx YA está cancelado casi siempre (es la razón de existir
+	// de Run() saliendo), y heredar la cancelación de ese ctx muerto le quitaría al
+	// `SELECT pg_advisory_unlock` cualquier oportunidad real de llegar a Postgres.
+	defer c.releaseLeadership(context.WithoutCancel(ctx))
 
 	ticker := time.NewTicker(c.pollInterval)
 	defer ticker.Stop()
