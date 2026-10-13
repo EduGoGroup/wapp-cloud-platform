@@ -5,6 +5,98 @@ y [Versionado Semántico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-12
+
+🧭 **Para quien despliega — lo que NO cambió respecto de `v0.2.0`:**
+
+- **Puertos**: los mismos cuatro listeners (`:8100` admin · `:8103` API pública · `:8101` CloudLink
+  · `:8102` enrolamiento), con los mismos defaults.
+- **Variables de entorno**: ni una nueva ni una retirada. Las 70 claves que lee `config.Load()` son
+  las mismas, nombre a nombre (más `WAPP_CONFIG_FILE`). `WAPP_TEST_DB_DSN` era solo de test.
+- **Binario**: se sigue construyendo `./cmd/server`; el relevo en UAT no tocó ni la unidad systemd
+  ni el `.env`. `go.mod` no mueve ninguna dependencia de producción.
+- **Rutas y rpc**: la reconstrucción no añade ni quita ninguna. `TestHuella` compara lo que el
+  proceso registra con una dorada del árbol anterior: 95 rutas (22 en `:8100`, 73 en `:8103`).
+- ⚠️ **El esquema SÍ cambió, y no por la reconstrucción**: `SchemaVersion` pasa de **0.46.0** a
+  **0.48.0** por dos migraciones aditivas del Plan 047 (`0085` y `0086`, en *Added*). La
+  reconstrucción modular no trae ninguna migración. UAT ya está en `0.48.0`.
+
+### Added
+
+- **Invitaciones de un solo uso** (Plan 047 · Ola A): `GET`/`POST /api/v1/invitations`,
+  `DELETE /api/v1/invitations/{id}` y `POST /api/v1/invitations/accept`. Migración
+  **`0085_tenant_invitations.sql`** (`SchemaVersion` **0.47.0**): guarda el SHA-256 del token, nunca
+  el token. El token viaja en el cuerpo, no en la URL; 404 y 410 responden el mismo cuerpo.
+- **Una persona puede pertenecer a varias empresas** (Plan 047 · Ola 5). Migración
+  **`0086_user_active_tenant.sql`** (`SchemaVersion` **0.48.0**). `POST /api/v1/auth/active-tenant`
+  elige la empresa y `GET /api/v1/auth/tenants` lista las propias (`[]`, nunca `null`). La segunda
+  membresía la gobierna el entitlement `multi_empresa`; sin él, el 409 es el de siempre.
+- **Tests de proceso de caja negra** en `test/procesos/`: arrancan `cmd/server` contra un Postgres
+  de testcontainers y lo ejercitan por sus puertos, con un Edge simulado y, aparte, con el binario
+  real del Edge y un WhatsApp falso. Targets `make test-procesos` y `make test-procesos-edge-real`
+  (piden Docker), más `vet-integracion`, `toolchain`, `tools` y `cobertura-ficheros`.
+
+### Changed
+
+- 🏗️ **`internal/` se reconstruyó por módulos de negocio** (2026-09-27 → 2026-10-11): el código vive
+  en `internal/modulos/<módulo>/` — `acceso`, `captacion`, `catalogo`, `conversacion`, `edge`,
+  `inferencia`, `solicitudes` —, con una sola cara HTTP pública (`internal/apipublica`) y un solo
+  arranque (`internal/arranque`). UAT corre este binario desde el 2026-10-11.
+- **El arranque son nueve fases**, legibles en `internal/arranque/orquestador.go`, donde antes había
+  una sola función. El log deja una línea `arranque: fase completada` por cada una.
+- 🔴 **Conducta visible que cambió a propósito.** Inventariada leyendo el código y **todavía sin
+  revisar contra los consumidores** (deuda D-36 de `documentations/deuda.md`):
+  - **Consolas y BFF** — `POST /api/v1/intakes/{id}/reanalyze`: si falla la composición del literal
+    responde **500** `no se pudo pedir el re-análisis de la solicitud` y no abre job. Antes era un
+    200 «en curso» cuyo job moría después en el worker.
+  - **Consolas y BFF** — `POST /api/v1/signup`: un correo adornado (`Ana <ana@x.com>`,
+    `ana@x.com (Ana)`) pasa de 202 a **400**; solo vale la dirección pelada. Los invisibles U+200B
+    y U+FEFF de los bordes se recortan, aquí y en el token de `POST /api/v1/invitations/accept`,
+    que con ellos pasa de 404 a **204**.
+  - **CRM** — `POST /api/v1/integrations/callback`: con el puente encendido y sin `endpoint_url`
+    pasa de 200 a **403**. Con `X-Wapp-Timestamp` muy en el futuro —el caso real es mandar
+    **milisegundos** en vez de segundos— pasa de 200 a **401**, y se queda así por decisión.
+  - **CRM y consola** — un puente sin endpoint o sin secreto ya no encola entregas: los contadores
+    de `GET /api/v1/integrations/outbox` dejan de acumular fallidas y muertas para ese tenant.
+  - **Edge** — `POST /admin/tenants/revoke` avisa en el acto también a los Edge con sesión viva que
+    la flota no lista; una sesión que reconectó antes de cerrarse su stream anterior sigue
+    recibiendo tramas; el `ConfigPush` de `PUT /api/v1/intents` sale aunque el cliente HTTP cuelgue.
+  - **Edge y cliente final** — al parar, el servidor corta el CloudLink en cuanto no hay nada en
+    vuelo, sin agotar el plazo: un entrante a medio procesar puede quedarse sin respuesta.
+  - **Datos y log** — un job de captación no pierde un intento por una parada del proceso, y al
+    apagar ya no salen los `ERROR` del barrido ni del worker del webhook.
+- **Sin cambio, y conviene saberlo** — rarezas que se conservaron y siguen abiertas:
+  `GET /api/v1/degradation-notices` da 500 y no 504 al vencer el plazo de BD (D-24); el 403 de plan
+  de `PUT /api/v1/intents` es prosa y no `feature_not_enabled` (D-30); el canje calla dos de sus
+  fallos en la bitácora (D-44); tres `Help` de `/metrics` nombran rutas ya borradas (D-50).
+
+### Fixed
+
+- **La inferencia ya no va al Edge que dijo que no puede** (Plan 057 · Ola 3): van primero los Edge
+  `READY`, después los que no declaran nada, y los `DOWN` quedan fuera. Un Edge que no declara
+  readiness no es un Edge caído. El origen vivo de la conversación sigue mandando sin condiciones.
+
+### Removed
+
+- 🔴 **El árbol anterior de `internal/`**: 28 directorios, todos menos `internal/platform`.
+- **`make test-integration`, los 91 `*_integration_test.go` y `WAPP_TEST_DB_DSN`.** El gate con base
+  de datos es `make test-procesos`; `make ci-local` sigue corriendo sin Postgres, y el job de
+  integración de `ci.yml` ya no usa service container. Ningún test apunta a un Postgres vivo.
+
+### Security
+
+- 🔒 **Dos fugas entre inquilinos cerradas** (Plan 057 · Olas 1 y 2; HS-14 y HS-15, ADR-0048). El id
+  de control `__wapp_control__`, idéntico en todos los Edge, se registraba como una sesión, sin
+  tenant y con política última-gana. Con dos Edge conectados, la respuesta de login de un operador
+  —con sus tokens dentro— podía escribirse en el socket de otra empresa, y el catálogo de
+  intenciones de una podía aplicarse en el Edge de otra. Ahora la respuesta de auth vuelve por el
+  stream que la pidió, y el canal de control no se registra, no se indexa y no recibe lease.
+  ⚠️ La verificación en campo con dos Edge conectados a la vez está a medias (Plan 057 · T4.2).
+- **`cmd/casebank` redacta tres casos de PII que dejaba en claro**: el segundo de dos JID pegados,
+  dos teléfonos seguidos en una racha de dígitos y los teléfonos con dígitos no ASCII.
+- **Un rol de empresa ya no puede asignarse con ámbito global** (Plan 047 · Ola 5): la guarda mira
+  el id fijo de `platform_admin`, no su nombre, que una dueña puede duplicar en su empresa.
+
 ## [0.2.0] - 2026-08-28
 
 ### Added
