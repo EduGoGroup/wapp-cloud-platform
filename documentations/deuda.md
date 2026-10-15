@@ -4,12 +4,12 @@
 > (localizado por símbolo ese día), la **consecuencia** (qué pasa si nadie la toca) y **cómo se
 > cerraría**. Lo que no verifiqué va marcado **NO VERIFICADO** o **sin medir**.
 >
-> **Ampliada el 2026-10-14** con D-51 a D-59: los hallazgos del laboratorio de flujos (Plan 058 de la
+> **Ampliada el 2026-10-14** con D-51 a D-62: los hallazgos del laboratorio de flujos (Plan 058 de la
 > raíz de wApp), localizados por símbolo ese día en la rama `laboratorio` (`e74925b3`). El código del
-> laboratorio que los reproduce está en los PR #89 y #90, abiertos, en revisión.
+> laboratorio que los reproduce está en los PR #89, #90 y #92, abiertos, en revisión.
 >
-> **Recuento** (contando los títulos `### D-nn` de este fichero): **59** identificadores, del D-1
-> al D-59; **50 abiertos** y **9 cerrados** (D-7, D-10, D-19, D-35, D-38, D-39, D-40, D-42 y
+> **Recuento** (contando los títulos `### D-nn` de este fichero): **62** identificadores, del D-1
+> al D-62; **53 abiertos** y **9 cerrados** (D-7, D-10, D-19, D-35, D-38, D-39, D-40, D-42 y
 > D-49). Aparte, la tabla de §5 lleva seis marcas heredadas de los planes, una de ellas cerrada.
 > Un identificador cerrado no se reutiliza ni se borra.
 >
@@ -812,7 +812,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 ### D-54 · 🔴 Expediente: con `gemma4:e2b-it-qat`, P2 tumba 12 de las 14 frases del banco
 
 > Abierta el 2026-10-14: hallazgos del laboratorio de flujos (Plan 058 de la raíz, escalones E02 y
-> E10). **Decisión de Jhoan: todavía no se arregla.** Esta ficha es un expediente de análisis: lo que
+> E10, ampliados con E14). **Decisión de Jhoan: todavía no se arregla.** Esta ficha es un expediente de análisis: lo que
 > se midió, las hipótesis abiertas y lo que falta entender antes de tocar el prompt. Mientras tanto,
 > el laboratorio sigue estudiando el flujo con un frame híbrido.
 >
@@ -891,9 +891,21 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 - Si los reintentos de calidad deberían cambiar de temperatura (D-55) antes de medir otra vez.
 - **Medir siempre contra el banco entero**: el P2 editado demostró que arreglar una frase rompe otra.
 
+**Ampliación (E14, 2026-10-14): con Gemma de punta a punta, el re-análisis empeora el borrador**
+
+Va en este expediente y no en una ficha propia: es el mismo modelo, la misma decisión de no arreglar
+todavía, y la causa no está aislada de la de arriba. Con `-frame ollama`, el borrador inicial de la
+ráfaga Ámbar pasa (como en E10). Pero el re-análisis, con la transcripción pegada («La clienta llamó por
+teléfono: la torta de chocolate que sea de 12 porciones.»), cambia lo que saca P2. La revisión 3 trae
+«torta de bizcocho de vainilla» `unmatched`, los tequeños y el envío, y **la torta de chocolate, que era
+justo la que la dueña quería corregir, desaparece**. Lo que falta entender: si el texto pegado debilita la
+evidencia de las ideas de los mensajes originales (el sobre de un re-análisis mezcla mensajes y
+transcripción, y vale lo dicho para la hipótesis 4), y cuánto pesa el match con nombres cortos (D-56).
+Una idea que P3 aísla tampoco se ve en el borrador (D-60).
+
 - **Lo reproduce**: laboratorio E02 (el script `probar-frase.sh` de la raíz) y E10
   (`laboratorio/e10-pipeline -all -frame ollama`, con `-bare` y `-prompts <dir>`) del Plan 058, PR #90,
-  abierto, en revisión.
+  abierto, en revisión. La ampliación, E14 con `-frame ollama`, PR #92, abierto, en revisión.
 
 ### D-55 · 🟡 Los reintentos del worker no sirven en P2 ni en P4
 
@@ -987,6 +999,81 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
   que la bienvenida no se mande cuando el turno no va a tener respuesta. Las dos cambian conducta
   visible.
 - **Lo reproduce**: laboratorio E06, empresa C, pasos 1 y 2 (Plan 058), PR #89, abierto, en revisión.
+
+### D-60 · 🔴 P3 aísla un ítem en silencio: el borrador sale con una línea menos y nadie lo dice
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E14). Sin
+> corregir. Reproducido igual en dos corridas.
+
+- **Dónde**: cuando P3 no consigue especificar una idea (dos fallos de calidad, a temperatura 0 y a
+  0,3), o la evidencia no aparece en el literal, o el pedido pasa del tope, la idea va a
+  `art.Isolated` (`internal/modulos/captacion/stages/p3.go:221`, y `internal/modulos/captacion/stages/cap.go:94`
+  para el tope) y solo sigue lo de `art.Items`. La cadena pasa a P4 únicamente `specs.Items`
+  (`internal/modulos/captacion/pipeline/pipeline_chain.go:192`). El comentario de `IsolatedItem`
+  promete que el ítem «queda anotado para que la bandeja lo enseñe»
+  (`internal/modulos/captacion/stages/p3.go:37`), pero nadie lo lee: no aparece `Isolated` en ningún
+  `stages/draft*.go` ni `stages/match*.go`, y ni la API ni `solicitudes` leen los `artifacts` del job.
+- **Consecuencia**: el borrador sale con una línea menos de las que pidió el cliente y la métrica
+  `intake_draft_created` dice `matched:2 unmatched:0`, sin rastro del que falta (`tally`,
+  `internal/modulos/captacion/stages/draft_events.go:225`). Solo queda en `artifacts.p3.isolated` del job
+  y en un `Warn` del log. La dueña aprueba un presupuesto incompleto sin saberlo. Pasa con cualquier
+  modelo: basta que P3 falle una idea.
+- **Cómo se cierra**: que el borrador lleve una línea (o una pregunta sugerida) por cada ítem aislado,
+  apuntando a su idea de P2, igual que ya hace con lo `unmatched`, y que la métrica cuente los aislados.
+  El texto de la idea está en `artifacts.p2.wants[IdeaPos]`, así que no hace falta guardar nada nuevo.
+- **Lo reproduce**: laboratorio E14 con `-frame hybrid -script-stages p2` (Plan 058), PR #92, abierto, en
+  revisión: en el re-análisis, Gemma falla P3 con la torta de vainilla y la revisión 3 sale con 3 líneas
+  en vez de 4.
+
+### D-61 · 🔴 `intakes.MemoryStore` no implementa `ReanalysisTargetOf`: el gemelo está incompleto
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E14). Sin
+> corregir. **Deuda de test**: no afecta a producción.
+
+- **Dónde**: el puerto del re-análisis, `reanalisis.Intakes`
+  (`internal/modulos/captacion/reanalisis/reanalisis.go:135`), pide solo `ReanalysisTargetOf`, y lo
+  satisface únicamente `*intakes.Postgres`
+  (`internal/modulos/solicitudes/intakes/postgres_reanalysis.go:52`). `intakes.MemoryStore`
+  (`internal/modulos/solicitudes/intakes/memory.go:57`) se presenta como el gemelo que «reproduce las
+  MISMAS semánticas que el store Postgres», pero no tiene ese método. Los tests del propio paquete usan
+  un doble a mano (`fakeIntakes`, en `internal/modulos/captacion/reanalisis/doubles_test.go:92`).
+- **Consecuencia**: quien quiera montar el re-análisis contra el gemelo, como hizo el laboratorio, tiene
+  que reescribir la consulta en memoria. Esa copia no la vigila ninguna suite de contrato, así que
+  puede divergir de Postgres sin que nada se ponga rojo. Las reglas de la lectura (estado normalizado,
+  `EventID` vacío en una legada, `LastRevisionNo = 0` sin revisiones, `ErrNotFound` en otro tenant) solo
+  las prueba el test de Postgres.
+- **Cómo se cierra**: implementar `ReanalysisTargetOf` en `MemoryStore` y llevar sus casos a
+  `intakeshelpertest.Contrato`, la suite que corren los dos stores.
+- **Lo reproduce**: laboratorio E14 (Plan 058), PR #92, abierto, en revisión: el laboratorio necesitó su
+  propia tabla en memoria para tener esa lectura.
+
+### D-62 · 🟡 Tres detalles de la bandeja y del re-análisis
+
+> Abierta el 2026-10-14: hallazgos del laboratorio de flujos (Plan 058 de la raíz, escalones E13 y
+> E14). Sin corregir. Van juntos porque cada uno es pequeño.
+
+- **(a) La línea de envío depende del orden de las acciones.** Solo la crea `UpdateStatus` al entrar en
+  `pending_approval` (`ensureShippingTx` con `ShippingAlways`,
+  `internal/modulos/solicitudes/intakes/postgres_status.go:92`). Un borrador del pipeline **nace** en ese
+  estado sin pasar por ahí, así que no la tiene, y la corrección de la dueña tampoco la añade. Aparece
+  cuando la dueña vuelve de `needs_info`, a precio 0. `Approve`
+  (`internal/modulos/solicitudes/intakes/approve.go:400`) la deja pasar, porque `PendingPriceLines`
+  (`:220`) solo mira la **última revisión**, que no la lleva. **Consecuencia**: el mismo pedido sale con
+  línea de envío o sin ella según el camino que siguió la dueña. Aprobado justo después de corregir, la
+  cotización no lleva envío. **Cómo se cierra**: decidir en qué momento nace la línea (al crear el
+  borrador, o siempre antes de aprobar) y que `Approve` mire las líneas vigentes y no solo la revisión.
+- **(b) El texto determinista empieza por «Hola!» sin «¡».** `renderGreeting`
+  (`internal/modulos/solicitudes/intakes/quotetext/render.go:35`) es texto que lee el cliente cuando P5
+  no contesta. Lo fijan sus tests (`render_test.go` y `fixtures_test.go` del mismo paquete). **Cómo se
+  cierra**: cambiar el literal y sus tests. Es texto observable, así que lo decide Jhoan.
+- **(c) `elapsed_ms` del re-análisis mide desde el primer mensaje del cliente**: 1 530 000 ms en E14. **No
+  es un defecto**: está decidido y escrito (`internal/modulos/captacion/stages/draft_events.go:37`). El job
+  hereda el `message_ts` original, y por eso el evento lleva `requested_by` (`:172`). Se anota para quien
+  calcule el KPI «tiempo a primer borrador»: tiene que filtrar por esa clave o lo inflará.
+- **No es deuda**: que `revenue` sume todos los estados, también un carrito abandonado, es una decisión
+  escrita en `internal/modulos/solicitudes/intakes/summary.go:55` («filtrar por dentro sería una
+  política escondida»). Se acota con `?status=`.
+- **Lo reproduce**: laboratorio E13 (a) y E14 (b, c) (Plan 058), PR #92, abierto, en revisión.
 
 ---
 
