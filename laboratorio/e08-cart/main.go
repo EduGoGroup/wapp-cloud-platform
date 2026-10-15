@@ -12,6 +12,7 @@
 //	… -script-turn 3     (con -frame script, el guion contesta usable:true value:3)
 //	… -no-resolver       (sin resolutor cableado: la Trampa T-6 del arranque)
 //	… -limiter prod      (el tope anti-bucle de producción: 3 respuestas y una cada 2 s)
+//	… -twin-shipping     (el garante de envío es el gemelo real de solicitudes: el cierre falla)
 //
 // Sale con rc=0 si el cliente recibió la confirmación del pedido; rc=1 si no.
 package main
@@ -46,6 +47,9 @@ const (
 	confirmed  = "✅ ¡Pedido confirmado! Total $5.00."
 	// confirmedPrefix es el principio de la pantalla de cierre, sea cual sea el total.
 	confirmedPrefix = "✅ ¡Pedido confirmado!"
+	// durableFailure es el aviso del runtime cuando un sink durable no materializa el efecto
+	// (runtime/incoming.go, defaultDurableSinkFailureNotice).
+	durableFailure = "No pudimos registrar tu pedido. Por favor, intenta de nuevo en unos minutos."
 )
 
 // cartCatalog es el catálogo v1 de la transcripción del carrito (cartCatalog del arnés): dos
@@ -81,6 +85,7 @@ type config struct {
 	scriptTurn int
 	noResolver bool
 	limiter    string
+	twinShip   bool
 }
 
 func main() {
@@ -89,6 +94,7 @@ func main() {
 	flag.IntVar(&cfg.scriptTurn, "script-turn", 0, "con -frame script: el valor que el guion contesta al turno (0 ⇒ no_entendido)")
 	flag.BoolVar(&cfg.noResolver, "no-resolver", false, "no cablea el resolutor de consultas en el engine")
 	flag.StringVar(&cfg.limiter, "limiter", "none", "tope de auto-respuestas: none (doble sin tope) o prod (3 y una cada 2 s)")
+	flag.BoolVar(&cfg.twinShip, "twin-shipping", false, "el garante de la línea de envío es el gemelo real de solicitudes (intakes.MemoryStore)")
 	flag.Parse()
 	if err := run(cfg); err != nil {
 		os.Exit(1)
@@ -140,8 +146,12 @@ func mount(n *common.Narrator, cfg config) (*bench.Bench, *common.SpyFrame, erro
 		n.Note("OllamaFrame contra %s; %s declara thinking: %v (si sí, viaja think:false).", cfg.flags.OllamaURL, f.Model(), think)
 	}
 	opts := bench.Options{
-		Features:   []string{entitlements.FeatureCartBasic, entitlements.FeatureLLMIntake},
-		Aggregator: true,
+		Features:     []string{entitlements.FeatureCartBasic, entitlements.FeatureLLMIntake},
+		Aggregator:   true,
+		TwinShipping: cfg.twinShip,
+	}
+	if cfg.twinShip {
+		n.Note("Garante de envío: el GEMELO real (intakes.MemoryStore), que no ve las solicitudes del gemelo de flujos (-twin-shipping).")
 	}
 	log := common.NewLog(cfg.flags.Verbose)
 	if cfg.flags.Verbose {
@@ -256,6 +266,19 @@ func confirm(n *common.Narrator, b *bench.Bench) error {
 		n.OK("la pantalla de cierre es, byte a byte, la del arnés: %q.", confirmed)
 	case seen:
 		n.OK("pedido confirmado, con otro total que el del arnés (%q): la cantidad la decidió el turno.", replies[0])
+	case len(replies) == 1 && replies[0] == durableFailure:
+		n.Fail(nil, "el sink durable no pudo materializar cart_closed y el turno se CORTÓ")
+		n.Note("El proyector cerró la solicitud (store.CloseIntake), escribió la revisión, y la línea de envío falló. El runtime")
+		n.Note("reintenta la proyección entera (reintento acotado, D-054.4) y avisa al cliente; flow_state NO se guarda (sigue en el resumen).")
+		showClose(n, b)
+		n.Step("El cliente obedece: «1» otra vez")
+		b.Turn(n, bench.Phone, "E08-9b", "1")
+		b.ShowState(n, bench.Phone)
+		showIntakes(n, b)
+		n.Note("🔴 Cada intento de la proyección llama a CloseIntake, que sin solicitud «open» crea una «closed» NUEVA: el contrato")
+		n.Note("de Postgres es el mismo (store/repository_postgres_intakes.go). Reintentar no es idempotente: pedidos duplicados.")
+		n.Note("Y el evento quedó «closed» en el primer intento: closeIfFinished va ANTES del fan-out y el corte no lo deshace.")
+		return errors.New("el cierre del pedido falló")
 	case closed:
 		n.Fail(nil, "el pedido se CERRÓ y el cliente NO recibió la confirmación")
 		n.Note("El runtime guarda el estado, escribe el hilo y alimenta la ventana ANTES de preguntar al limitador si puede")

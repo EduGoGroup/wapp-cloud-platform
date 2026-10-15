@@ -77,6 +77,10 @@ type Options struct {
 	Limiter runtime.ReplyLimiter
 	// Log recibe además todo lo que el runtime escribe (nil ⇒ solo se apunta en el LogBook).
 	Log logger.Logger
+	// TwinShipping pone de garante de la línea de envío el GEMELO real (intakes.MemoryStore),
+	// como hace el arranque con el almacén de solicitudes, en vez de ShippingRecorder. Con los dos
+	// gemelos separados el cierre del carrito falla: es el ejercicio de E08 (-twin-shipping).
+	TwinShipping bool
 }
 
 // Bench es el motor montado. Los campos son las piezas: el escalón las siembra y las lee.
@@ -150,6 +154,10 @@ func New(opts Options) *Bench {
 	if limiter == nil {
 		limiter = runtimehelpertest.NewReplyLimiter()
 	}
+	var shipping cart.ShippingEnsurer = b.Shipping
+	if opts.TwinShipping {
+		shipping = b.Intakes
+	}
 	dispatcher := events.NewDispatcher(b.Events, events.NewTriggerKindOffer(b.Rules), b.Features)
 	rtOpts := []runtime.Option{
 		runtime.WithClock(b.Clock.Now),
@@ -157,7 +165,7 @@ func New(opts Options) *Bench {
 		// flujos (sus intakes) y, para revisiones, el de solicitudes; el garante del envío es un
 		// doble: ver ShippingRecorder.
 		runtime.WithEventSink(runtime.NewPersistSink(b.Repo,
-			cart.NewProjector(b.Repo, b.Intakes, b.Shipping, b.Intakes),
+			cart.NewProjector(b.Repo, b.Intakes, shipping, b.Intakes),
 			survey.NewProjector(b.Repo)).WithDecisionThread(b.Events)),
 		runtime.WithWelcomeStore(b.Repo),
 		runtime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(b.Repo)),

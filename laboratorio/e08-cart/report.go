@@ -99,8 +99,10 @@ func showClose(n *common.Narrator, b *bench.Bench) {
 			n.Show("   revisión", fmt.Sprintf("%d · %s · %s · %s", rev.RevisionNo, rev.Kind, rev.CreatedBy, string(rev.Payload)))
 		}
 	}
-	n.Show("garante de envío (doble)", strings.Join(b.Shipping.Calls, ", "))
-	n.Note("El garante es un DOBLE: los dos gemelos en memoria no comparten la tabla intakes (ver bench.ShippingRecorder).")
+	if len(b.Shipping.Calls) > 0 {
+		n.Show("garante de envío (doble)", strings.Join(b.Shipping.Calls, ", "))
+		n.Note("El garante es un DOBLE: los dos gemelos en memoria no comparten la tabla intakes (ver bench.ShippingRecorder).")
+	}
 	threadSummary(n, b)
 	for _, j := range b.Jobs.Jobs() {
 		n.Show("intake_jobs", fmt.Sprintf("%s · %d referencias: %s", j.Status, len(j.SourceRefs), strings.Join(j.SourceRefs, ",")))
