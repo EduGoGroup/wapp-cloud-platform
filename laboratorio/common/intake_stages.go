@@ -31,6 +31,23 @@ type IntakeStages struct {
 	// envío. En producción, *intakes.Postgres, que cifra el literal; este doble lo guarda aparte
 	// y en claro, porque muere con el proceso.
 	Intakes *intakes.MemoryStore
+	// Table es la cabecera escrita en Intakes (solo con WithHeaderInIntakes; nil sin ella).
+	Table *IntakeTable
+}
+
+// StagesOption ajusta el montaje de NewIntakeStages.
+type StagesOption func(*stagesConfig)
+
+type stagesConfig struct {
+	headerInIntakes bool
+}
+
+// WithHeaderInIntakes hace que el borrador escriba la CABECERA de la solicitud en Intakes —el
+// almacén que lee la bandeja— en vez de en Flow. En producción las dos caras son la MISMA tabla
+// `intakes` de Postgres; en memoria son dos dobles, y sin esta opción la bandeja no vería la
+// solicitud que acaba de nacer (Service.Get daría ErrNotFound). Ver IntakeTable.
+func WithHeaderInIntakes() StagesOption {
+	return func(c *stagesConfig) { c.headerInIntakes = true }
 }
 
 // NewIntakeStages arma las cinco etapas sobre el selector sel (el de NewSelector) y el store de la
@@ -42,13 +59,24 @@ type IntakeStages struct {
 //   - el borrador escribe la cabecera por Flow y la revisión por Intakes, con el reloj now.
 //
 // Lo que NO lleva: el empuje al CRM (solo actúa en un re-análisis pedido por el dueño).
-func NewIntakeStages(log logger.Logger, sel stages.ProviderSelector, st intake.PipelineStore, now func() time.Time) (*IntakeStages, error) {
+func NewIntakeStages(log logger.Logger, sel stages.ProviderSelector, st intake.PipelineStore, now func() time.Time, opts ...StagesOption) (*IntakeStages, error) {
 	if now == nil {
 		now = time.Now
 	}
 	callTimeout := stages.WithCallTimeout(pipeline.CallTimeoutFloor)
 	s := &IntakeStages{Flow: store.NewMemoryRepository(), Intakes: intakes.NewMemoryStore()}
 	s.Intakes.SetClock(now)
+	cfg := stagesConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	// La cabecera de la solicitud: por defecto, el almacén de flujos (como E10 y E11); con
+	// WithHeaderInIntakes, la MISMA tabla que lee la bandeja (E13, E14).
+	var header stages.IntakeStore = s.Flow
+	if cfg.headerInIntakes {
+		s.Table = NewIntakeTable(s.Intakes, now)
+		header = s.Table
+	}
 	var err error
 	if s.P2, err = stages.NewP2(log, sel, st, callTimeout); err != nil {
 		return nil, fmt.Errorf("common: etapa P2: %w", err)
@@ -62,7 +90,7 @@ func NewIntakeStages(log logger.Logger, sel stages.ProviderSelector, st intake.P
 	if s.Match, err = stages.NewMatch(log, st); err != nil {
 		return nil, fmt.Errorf("common: etapa match: %w", err)
 	}
-	if s.Draft, err = stages.NewDraft(log, st, s.Flow, s.Intakes, s.Flow, stages.WithClock(now)); err != nil {
+	if s.Draft, err = stages.NewDraft(log, st, header, s.Intakes, s.Flow, stages.WithClock(now)); err != nil {
 		return nil, fmt.Errorf("common: etapa draft: %w", err)
 	}
 	return s, nil

@@ -29,10 +29,24 @@ Banderas comunes a todos los escalones (`common.RegisterFlags`):
 
 | Bandera | Defecto | Qué hace |
 |---|---|---|
-| `-frame` | `script` | Quién contesta la inferencia: `script` (el guion de JSON fijos del caso Ámbar, determinista) u `ollama` (el modelo de verdad) |
+| `-frame` | `script` | Quién contesta la inferencia: `script` (el guion de JSON fijos del caso Ámbar, determinista), `ollama` (el modelo de verdad) o `hybrid` (por etapa, ver abajo) |
+| `-script-stages` | `p2,p3,p4` | Con `-frame hybrid`, las etapas que contesta el **guion**; el resto va a Ollama |
 | `-model` | `gemma4:e2b-it-qat` | Modelo de Ollama. Es el del laboratorio, **no** el del producto |
 | `-ollama` | `http://127.0.0.1:11434` | URL de Ollama |
 | `-v` | apagado | Saca el log del cloud por stderr |
+
+### El frame híbrido (`-frame hybrid`)
+
+Con Gemma, el P2 real tumba 12 de 14 frases del banco (E10), y con él muere todo lo que viene
+detrás. Eso **no se arregla aquí**: queda como deuda y expediente de análisis aparte. Para poder
+seguir estudiando el flujo, `HybridFrame` (`common/frame_hybrid.go`) enruta **por etapa**
+(`common.StageOf`): las de `-script-stages` las contesta el guion y el resto el modelo.
+
+⚠️ **Es un andamio, no un arreglo.** Cada llamada se narra con quién contestó y, si fue el guion,
+por qué —`⚠️ P2 por GUION: Gemma falla aquí, ver deuda`—, y el escalón cierra con el recuento
+(`HybridFrame.Tally`). Medido el 2026-10-14 en E11: con `-script-stages p2`, Gemma hace P3 y P4 de la
+ráfaga Ámbar y el borrador sale con sus 3 líneas casadas. Para usar el modelo todo lo posible, esa es
+la combinación.
 
 ## Qué hay
 
@@ -42,9 +56,20 @@ comentarios y lo que el narrador imprime, en español. Solo el directorio `labor
 
 | Ruta | Qué es |
 |---|---|
-| `common/` | El andamio (paquete `common`): `ScriptFrame` y `OllamaFrame` (dos `local.Frame`), `SpyFrame`, `NewSelector` (el `llmvia.Selector` real en vía local), `RegisterFlags`/`FrameFromFlags`, `Clock` manual, `NewCipher` (el de la PII, real y en memoria), el caso Ámbar (`AmberCatalog`, `AmberBurst`, `AmberIntents`, `AmberP1Input`…) y el `Narrator` |
+| `common/` | El andamio (paquete `common`): `ScriptFrame`, `OllamaFrame` y `HybridFrame` (tres `local.Frame`), `SpyFrame`, `NewSelector` (el `llmvia.Selector` real en vía local), `RegisterFlags`/`FrameFromFlags`, `Clock` manual, `NewCipher` (el de la PII, real y en memoria), el caso Ámbar (`AmberCatalog`, `AmberBurst`, `AmberIntents`, `AmberP1Input`…), el banco (`LoadPhrases`, `Compare`), las cinco etapas armadas como el arranque (`NewIntakeStages`), la bandeja (`NewInbox`, con la costura `IntakeTable`) y el `Narrator` |
+| `data/` | Los datos que leen los escalones: `phrases.json`, el banco de frases de E03 (14 casos) |
 | `e00-smoke/` | Una P1 (o una P2 con `-stage p2`; otra frase con `-phrase`) por el selector real. Si sale, el andamio está sano |
-| `eNN-<nombre>/` | Un escalón por pieza (llegan en las olas siguientes del plan) |
+| `e09-window/` | **E09** · la ventana de captación sola: silencio, techo, segunda ventana, sin inferencia |
+| `e10-pipeline/` | **E10** · P2 → P3 → P4 → Match → Draft con texto directo, frente al banco (`-all`) |
+| `e11-window-to-draft/` | **E11** · ventana → compositor → worker → borrador `pending_approval` |
+| `e12-ahead/` | **E12** · el adelanto P1 (`intakeahead`): cuándo cierra la ventana antes de tiempo |
+| `e13-inbox/` | **E13** · la bandeja sin LLM: corregir, pedir información, aprobar, rechazar, descartar y exportar, con `intakes.Service` real |
+| `e14-quote-and-reanalysis/` | **E14** · P5 (`quotetext`, con el verificador de precios) y el re-análisis (`reanalisis`) recorrido por el worker |
+
+🔴 **Las costuras que no existen en producción**, y cada escalón las dice en pantalla: E11 copia la fila
+cerrada de la cola de la ventana a la máquina del worker (dos dobles de la misma `intake_jobs`), y E13
+y E14 usan `common.IntakeTable` para que el borrador y la bandeja vean la misma fila de `intakes`
+(además responde `ReanalysisTargetOf`, que `intakes.MemoryStore` no implementa).
 
 La costura es `local.Frame` (`internal/modulos/inferencia/llmvia/local/local.go`): con ella se usan los
 prompts, los techos por etapa, el plazo heredado y el parseo **reales**, y solo se sustituye el viaje

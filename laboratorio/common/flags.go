@@ -5,6 +5,7 @@ package common
 import (
 	"flag"
 	"fmt"
+	"strings"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
 )
@@ -22,6 +23,9 @@ const (
 const (
 	FrameNameScript = "script"
 	FrameNameOllama = "ollama"
+	// FrameNameHybrid enruta por etapa: las de -script-stages al guion, el resto a Ollama
+	// (HybridFrame). Es un andamio para trabajar el flujo, no un arreglo de Gemma.
+	FrameNameHybrid = "hybrid"
 )
 
 // Flags son las opciones que comparten todos los escalones.
@@ -34,6 +38,8 @@ type Flags struct {
 	OllamaURL string
 	// Verbose saca el log del cloud por stderr desde Debug.
 	Verbose bool
+	// ScriptStages son las etapas que contesta el guion con -frame hybrid («p2,p3,p4»).
+	ScriptStages string
 }
 
 // RegisterFlags registra -frame, -model, -ollama y -v en fs (nil ⇒ flag.CommandLine). El escalón
@@ -43,15 +49,16 @@ func RegisterFlags(fs *flag.FlagSet) *Flags {
 		fs = flag.CommandLine
 	}
 	b := &Flags{}
-	fs.StringVar(&b.Frame, "frame", FrameNameScript, "quién contesta la inferencia: script (el guion fijo del caso Ámbar, determinista) u ollama (el modelo de verdad)")
+	fs.StringVar(&b.Frame, "frame", FrameNameScript, "quién contesta la inferencia: script (el guion fijo del caso Ámbar, determinista), ollama (el modelo de verdad) o hybrid (por etapa: ver -script-stages)")
 	fs.StringVar(&b.Model, "model", LabModel, "modelo de Ollama (con -frame ollama)")
 	fs.StringVar(&b.OllamaURL, "ollama", LabOllamaURL, "URL base de Ollama (con -frame ollama)")
 	fs.BoolVar(&b.Verbose, "v", false, "saca el log del cloud por stderr (desde Debug)")
+	fs.StringVar(&b.ScriptStages, "script-stages", DefaultScriptStages, "con -frame hybrid, las etapas que contesta el GUION (el resto, Ollama)")
 	return b
 }
 
 // FrameFromFlags construye el frame que piden las banderas, ya envuelto en un SpyFrame. El frame
-// de dentro se recupera con Inner(): *ScriptFrame o *OllamaFrame.
+// de dentro se recupera con Inner(): *ScriptFrame, *OllamaFrame o *HybridFrame.
 func FrameFromFlags(b *Flags) (*SpyFrame, error) {
 	var f local.Frame
 	switch b.Frame {
@@ -59,8 +66,14 @@ func FrameFromFlags(b *Flags) (*SpyFrame, error) {
 		f = NewAmberScriptFrame()
 	case FrameNameOllama:
 		f = NewOllamaFrame(b.OllamaURL, b.Model)
+	case FrameNameHybrid:
+		scripted, err := ParseStages(b.ScriptStages)
+		if err != nil {
+			return nil, err
+		}
+		f = NewHybridFrame(NewAmberScriptFrame(), NewOllamaFrame(b.OllamaURL, b.Model), scripted, nil)
 	default:
-		return nil, fmt.Errorf("-frame %q: vale %s u %s", b.Frame, FrameNameScript, FrameNameOllama)
+		return nil, fmt.Errorf("-frame %q: vale %s, %s o %s", b.Frame, FrameNameScript, FrameNameOllama, FrameNameHybrid)
 	}
 	return Spy(f), nil
 }
@@ -69,6 +82,10 @@ func FrameFromFlags(b *Flags) (*SpyFrame, error) {
 func (b *Flags) Describe() string {
 	if b.Frame == FrameNameOllama {
 		return fmt.Sprintf("ollama · modelo %s en %s", b.Model, b.OllamaURL)
+	}
+	if b.Frame == FrameNameHybrid {
+		return fmt.Sprintf("hybrid · %s por el GUION; el resto, %s en %s (⚠️ andamio: el fallo de Gemma sigue sin arreglar)",
+			strings.ToUpper(b.ScriptStages), b.Model, b.OllamaURL)
 	}
 	return "script · el guion de respuestas fijas del caso Ámbar"
 }
