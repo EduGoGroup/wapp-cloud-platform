@@ -43,6 +43,7 @@ comentarios y lo que el narrador imprime, en español. Solo el directorio `labor
 | Ruta | Qué es |
 |---|---|
 | `common/` | El andamio (paquete `common`): `ScriptFrame` y `OllamaFrame` (dos `local.Frame`), `SpyFrame`, `NewSelector` (el `llmvia.Selector` real en vía local), `RegisterFlags`/`FrameFromFlags`, `Clock` manual, `NewCipher` (el de la PII, real y en memoria), el caso Ámbar (`AmberCatalog`, `AmberBurst`, `AmberIntents`, `AmberP1Input`…) y el `Narrator` |
+| `bench/` | El banco de la conversación (Bloque B, E05–E08): el motor de flujos REAL (`runtime.New` con los cables de `internal/arranque/fase7_flujos.go`) sobre los gemelos en memoria, el `Sender` doble y un `Clock` manual. Paquete aparte de `common/` para no cruzarse con los escalones de otras olas |
 | `e00-smoke/` | Una P1 (o una P2 con `-stage p2`; otra frase con `-phrase`) por el selector real. Si sale, el andamio está sano |
 | `eNN-<nombre>/` | Un escalón por pieza (llegan en las olas siguientes del plan) |
 
