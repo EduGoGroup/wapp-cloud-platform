@@ -214,6 +214,31 @@ de comandos (`make lint LINT_BIN=<ruta>`).
 activo compilas contra el árbol de al lado, no contra la versión **publicada** de
 `wapp-shared`. El gate tiene que ver lo mismo que verá el consumidor.
 
+### 3.4 · El laboratorio (`laboratorio/`), que ningún gate ve
+
+`laboratorio/` es el **laboratorio de flujos** del Plan 058: programas `main` que estudian **una
+pieza** del cloud con dobles (la ventana, el pipeline, el carrito…) y cuentan por pantalla qué pasa.
+**No es un test** y **no entra en CI ni en el binario**: todo `.go` de ahí empieza por
+`//go:build laboratorio`, así que `go build ./...`, `go vet ./...`, `go test ./...`, `ci-local`,
+`ci-docker`, golangci-lint (su `.golangci.yml` solo lleva `integracion` y `edgereal`) y los candados
+de `internal/candados` (que recorren `cmd/`, `internal/` y `test/procesos`) no lo ven. Lo único que sí
+lo toca es `fmt-check`: `gofmt -l .` no mira etiquetas.
+
+```bash
+GOTOOLCHAIN=go1.26.5 GOWORK=off go build -tags laboratorio ./laboratorio/...   # lo primero de cada sesión
+GOTOOLCHAIN=go1.26.5 GOWORK=off go run -tags laboratorio ./laboratorio/e00-smoke -frame script
+GOTOOLCHAIN=go1.26.5 GOWORK=off go run -tags laboratorio ./laboratorio/e00-smoke -frame ollama   # Gemma de verdad
+```
+
+⚠️ **Precio aceptado**: como nadie lo compila por su cuenta, un cambio del código puede romper un
+escalón sin que se note; por eso el `go build -tags laboratorio` va primero. La costura que usa es
+`local.Frame` (la vía local sin el viaje al Edge). El andamio vive en `laboratorio/common/` (paquete
+`common`: `ScriptFrame`, `OllamaFrame`, `SpyFrame`, `NewSelector`, `RegisterFlags`, `Clock`,
+`NewCipher`, el caso Ámbar y el `Narrator`), con el código en inglés y la narración en español; el
+detalle, en [`laboratorio/README.md`](../laboratorio/README.md). Las fichas del alumno viven en la
+documentación de la raíz de wApp (carpeta operacion/laboratorio de su `documentations/`), no en este
+repo.
+
 ### Estado medido el 2026-10-11 en la máquina de desarrollo
 
 ```
