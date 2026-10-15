@@ -4,12 +4,13 @@
 > (localizado por símbolo ese día), la **consecuencia** (qué pasa si nadie la toca) y **cómo se
 > cerraría**. Lo que no verifiqué va marcado **NO VERIFICADO** o **sin medir**.
 >
-> **Ampliada el 2026-10-14** con D-51 a D-62: los hallazgos del laboratorio de flujos (Plan 058 de la
+> **Ampliada el 2026-10-14** con D-51 a D-65: los hallazgos del laboratorio de flujos (Plan 058 de la
 > raíz de wApp), localizados por símbolo ese día en la rama `laboratorio` (`e74925b3`). El código del
-> laboratorio que los reproduce está en los PR #89, #90 y #92, abiertos, en revisión.
+> laboratorio que los reproduce está en los PR #89, #90 y #92, abiertos, en revisión. D-63 a D-65 salen
+> de E18, que corre el ecosistema real con la receta del nivel c de la raíz.
 >
-> **Recuento** (contando los títulos `### D-nn` de este fichero): **62** identificadores, del D-1
-> al D-62; **53 abiertos** y **9 cerrados** (D-7, D-10, D-19, D-35, D-38, D-39, D-40, D-42 y
+> **Recuento** (contando los títulos `### D-nn` de este fichero): **65** identificadores, del D-1
+> al D-65; **56 abiertos** y **9 cerrados** (D-7, D-10, D-19, D-35, D-38, D-39, D-40, D-42 y
 > D-49). Aparte, la tabla de §5 lleva seis marcas heredadas de los planes, una de ellas cerrada.
 > Un identificador cerrado no se reutiliza ni se borra.
 >
@@ -1075,6 +1076,95 @@ Una idea que P3 aísla tampoco se ve en el borrador (D-60).
   política escondida»). Se acota con `?status=`.
 - **Lo reproduce**: laboratorio E13 (a) y E14 (b, c) (Plan 058), PR #92, abierto, en revisión.
 
+### D-63 · 🔴 El carrito también abre ventana de captación cuando el plan trae `llm_intake`
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E18, el
+> ecosistema real con Gemma). Sin corregir.
+
+- **Dónde**: los tres llamantes de `observeForAggregation` (turno normal,
+  `internal/modulos/conversacion/runtime/incoming_advance.go:374`; mensaje que arranca el evento,
+  `internal/modulos/conversacion/runtime/incoming_trigger.go:227`; reinicio por reanudación,
+  `internal/modulos/conversacion/runtime/resume.go:287`) mandan **todo** entrante con evento vivo. La
+  puerta, `Observe` (`internal/modulos/conversacion/runtime/aggregator_observe.go:94`), solo mira que haya
+  evento (`acceptable`, `:156`) y la *feature* `llm_intake` (`:102`). No mira el tipo de evento ni el
+  módulo que lo atiende, y la clave de la ventana (`intake.WindowKey`) ni siquiera lo lleva.
+- **Lo que pasa después, según quién llegó antes**: el borrador pregunta por la solicitud del evento
+  antes de crear la suya (`header`, `internal/modulos/captacion/stages/draft.go:220`). Si la encuentra, le
+  cuelga la revisión `interpreted` y **no toca su estado** (D-044.46, escrito en ese comentario).
+- **Consecuencia, medida en E18** (la ventana del carrito lleva 7 referencias: `carrito`, `1`, `1`, `2`,
+  `un par`, `2`, `1`):
+  - **Carrito a medias sin línea añadida** (`carrito 1 1 2 abc`): no hay solicitud del carrito todavía,
+    así que el pipeline crea una nueva. Queda en la bandeja un borrador `pending_approval` espurio, con
+    «Café»×1 sin casar dos veces y el envío.
+  - **Carrito completo, dos veces**: P2 falla (`delivery_hint.text vino vacío`) y el job muere sin
+    superficie (D-65). Las 7 referencias se pagaron en inferencias de lote.
+- **Deducido leyendo el código, NO VERIFICADO**: si P2 pasara con el carrito cerrado, no nacería una
+  segunda solicitud. La revisión `interpreted` (con «Café» sin casar) se colgaría de la solicitud del
+  carrito ya cerrada, y la dueña vería el mismo pedido con dos versiones distintas. No miré qué enseña la
+  bandeja en ese caso. Con el carrito abierto y una línea ya añadida, la revisión se colgaría de la
+  solicitud `open` y no se vería en la bandeja.
+- **Cómo se cierra**: decidir qué eventos alimentan la ventana. El carrito ya materializa su contenido
+  durable por su propio proyector: lo natural es que su evento no observe, o que solo observe lo que el
+  carrito no entiende. Se filtraría en los llamantes, que conocen el tipo de evento, porque la clave de
+  la ventana no lo lleva. Es una decisión de producto: cambia qué ve la dueña.
+- **Lo reproduce**: laboratorio E18, arnés (a) del carrito con un plan que trae `llm_intake` (Plan 058,
+  receta del nivel c de la raíz). Sin PR de código: E18 corre el ecosistema real.
+
+### D-64 · 🔴 P2 lee el menú del negocio como si fuera el pedido
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E18). Sin
+> corregir. Medido con Gemma.
+
+- **Dónde**: el literal lo arma `ComposeSourceText`
+  (`internal/modulos/conversacion/runtime/source_composer.go:217`). Las decisiones (`KindDecision`) no
+  entran, pero los **mensajes del negocio en turno** sí, en el bloque de mensajes, con la etiqueta
+  «negocio:» (`speakerOf`, `:114`). El texto no se recorta ni se escapa: un mensaje de varias líneas
+  ocupa varias, y solo la primera lleva la etiqueta, como dice el propio contrato. El menú del bot llega
+  así (sacado de `revisions[0].payload.source_text` del borrador de E18):
+
+  ```text
+  negocio: Cuéntanos qué necesitas y te pasamos el presupuesto.
+  1) Hablar con una persona
+  ```
+
+  La opción va en una línea **sin quién la dijo**. El prompt de P2 (`wapp-shared/llm` v0.4.5,
+  `llm/prompt.go`) presenta ese bloque como «Texto del cliente» y no explica las etiquetas «cliente:» y
+  «negocio:» ni las cabeceras del sobre. Y el anclaje no lo para: busca la evidencia en el literal entero
+  (`anchor`, `internal/modulos/captacion/stages/p2.go:255`), y «Hablar con una persona» está ahí.
+- **Consecuencia**: «Hablar con una persona»×1 sale como línea del borrador en 2 de los 6 que pasaron P2
+  (`e02-empanadas` y `chocolate-variant`). En la ráfaga Ámbar, el menú se repite tres veces dentro del
+  literal, porque el bot contesta «Opción no válida» + menú a cada mensaje.
+- **Cómo se cierra** (hipótesis; cualquiera se mide contra el banco, D-54): que el compositor ponga la
+  etiqueta en cada línea de un mensaje de varias líneas, o que el texto del negocio vaya al bloque de
+  contexto; que el prompt de P2 diga que solo lo de «cliente:» es pedido; que el anclaje busque la
+  evidencia solo en las líneas del cliente. Ojo con D-32: el sobre es un contrato «byte a byte» con el
+  prompt, y tocarlo cambia la entrada del modelo.
+- **Lo reproduce**: laboratorio E18, arnés (b′) con el banco de frases por el ecosistema (Plan 058).
+
+### D-65 · 🔴 Un fallo de P2 no lo ve nadie
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E18). Sin
+> corregir.
+
+- **Dónde**: al agotar los intentos, el worker llama a `kill`
+  (`internal/modulos/captacion/pipeline/pipeline_outcome.go:155`), que deja el job `failed` (`Fail`,
+  `internal/modulos/captacion/intake/machine_postgres.go:400`) y una línea `Error` «pipeline: job
+  FAILED» (`pipeline_outcome.go:170`). Y nada más: ni solicitud, ni `flow_event`, ni métrica, ni aviso. La
+  bandeja (`GET /api/v1/intakes`) lista solicitudes, y un job muerto antes del borrador no tiene ninguna.
+- **Consecuencia**: el cliente recibió la bienvenida («…Te respondemos en unos minutos.») y el menú, y
+  nadie le contesta. La dueña no sabe que hubo un pedido. En E18 murieron así 4 de las 10 frases del
+  banco que se pasaron por el ecosistema, y los dos carritos completos de D-63, todos con
+  `causa=calidad`. Es el mismo silencio que
+  D-59, por otra puerta. Y el `attempts = 2` de la fila (D-58) despista a quien lo busque en la base.
+- **Relación**: D-54 explica por qué P2 falla con Gemma; esta entrada es que **cuando** falla, con
+  cualquier modelo, no queda rastro visible. D-15 es el mismo tipo de hueco en P5 (la lista de eventos
+  de telemetría es cerrada por diseño).
+- **Cómo se cierra**: decidirlo. Que un job muerto por calidad deje algo que la dueña vea (una solicitud
+  con el literal y sin líneas, o un aviso en la bandeja), o al menos un contador por causa y etapa. Lo
+  primero choca con INV-13 (`Fail` vacía el sobre del literal): habría que decidir qué se conserva.
+- **Lo reproduce**: laboratorio E18, arnés (b′) (`two-packages`, `short-chocolate-saturday`,
+  `bread-tomorrow` y `some-cakes-friday`) y los carritos completos del arnés (a) (Plan 058).
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes
@@ -1082,7 +1172,7 @@ Una idea que P3 aísla tampoco se ve en el borrador (D-60).
 | Marca | Dónde | Qué significa |
 |---|---|---|
 | **DEUDA-044.10** | — | ✅ Cerrada: la marca no está en el árbol desde el 2026-10-11 (`grep -rn '044\.10' --include='*.go' cmd internal test` → vacío) |
-| **DEUDA-044.11** (sin dueño) | `internal/arranque/fase5_captacion.go:219`, `internal/modulos/captacion/stages/p4.go:21` | Una decisión que hay que escribir explícitamente en vez de heredarla: el plazo por llamada y la zona horaria (UTC, porque no hay zona por tenant en ninguna parte) |
+| **DEUDA-044.11** (sin dueño) | `internal/arranque/fase5_captacion.go:219`, `internal/modulos/captacion/stages/p4.go:21` | Una decisión que hay que escribir explícitamente en vez de heredarla: el plazo por llamada y la zona horaria (UTC, porque no hay zona por tenant en ninguna parte). **Medido el 2026-10-14** (laboratorio E18, Plan 058): «en 5 días», escrito a las 22:47 −03 (ya el 15 en UTC), sale 2026-10-20, y en la hora de quien escribe sería el 19. La base de la fecha es `job.MessageTS` en la zona de la etapa (`internal/modulos/captacion/stages/p4.go:194`), y la zona es `stages.DefaultZone`, UTC (`internal/arranque/fase5_captacion.go:229`). Es el hueco que ya fija el comentario de `DefaultZone`, visto de punta a punta: no abre un `D-nn` nuevo |
 | **DEUDA-044.16** | `internal/modulos/captacion/stages/match.go:37` y `:224`, `match_lines.go:65`, `draft.go:299`, `draft_revision.go:51` y `:150`, `internal/modulos/captacion/pipeline/pipeline_chain.go:293` | Un ítem malo **no** tira el borrador: se degrada y se anota como *warning* |
 | **DEUDA-050.1** (cerrada con red) | `internal/modulos/edge/grpc/connect_session.go:230` | Carrera de la reconexión rápida (`MarkOffline` diferido, `MarkOnline` inmediato). Mitigada preguntando «¿sigue caída?» **al ejecutar** el job, no al encolarlo. El comentario declara qué **no** cubre la red |
 | **DEUDA-050.2** | `internal/platform/metrics/metrics.go:483`, `internal/arranque/fase1_infraestructura.go:42` | El cuello mudado del head-of-line al pool; `wapp_db_wait_count` existe para decidirlo |
