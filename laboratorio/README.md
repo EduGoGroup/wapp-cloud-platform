@@ -57,8 +57,13 @@ comentarios y lo que el narrador imprime, en español. Solo el directorio `labor
 | Ruta | Qué es |
 |---|---|
 | `common/` | El andamio (paquete `common`): `ScriptFrame`, `OllamaFrame` y `HybridFrame` (tres `local.Frame`), `SpyFrame`, `NewSelector` (el `llmvia.Selector` real en vía local), `RegisterFlags`/`FrameFromFlags`, `Clock` manual, `NewCipher` (el de la PII, real y en memoria), el caso Ámbar (`AmberCatalog`, `AmberBurst`, `AmberIntents`, `AmberP1Input`…), el banco (`LoadPhrases`, `Compare`), las cinco etapas armadas como el arranque (`NewIntakeStages`), la bandeja (`NewInbox`, con la costura `IntakeTable`) y el `Narrator` |
+| `bench/` | El banco de la conversación (Bloque B, E05–E08): el motor de flujos REAL (`runtime.New` con los cables de `internal/arranque/fase7_flujos.go`) sobre los gemelos en memoria, el `Sender` doble y un `Clock` manual. Paquete aparte de `common/` para no cruzarse con los escalones de otras olas |
 | `data/` | Los datos que leen los escalones: `phrases.json`, el banco de frases de E03 (14 casos) |
 | `e00-smoke/` | Una P1 (o una P2 con `-stage p2`; otra frase con `-phrase`) por el selector real. Si sale, el andamio está sano |
+| `e05-menu/` | **E05** · menú y mensaje: el estado por contacto, los nodos y `HandleIncoming` sobre el banco `bench/` |
+| `e06-trigger-event/` | **E06** · disparo y evento: `keyword` frente a `event_start`, y cuándo se abre la ventana |
+| `e07-survey/` | **E07** · la encuesta: opción inválida, repregunta y proyección a `survey_results` |
+| `e08-cart/` | **E08** · el carrito paso a paso, y el único punto con modelo: el `Turno` |
 | `e09-window/` | **E09** · la ventana de captación sola: silencio, techo, segunda ventana, sin inferencia |
 | `e10-pipeline/` | **E10** · P2 → P3 → P4 → Match → Draft con texto directo, frente al banco (`-all`) |
 | `e11-window-to-draft/` | **E11** · ventana → compositor → worker → borrador `pending_approval` |
