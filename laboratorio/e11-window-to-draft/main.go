@@ -21,6 +21,7 @@
 //
 //	GOTOOLCHAIN=go1.26.5 GOWORK=off go run -tags laboratorio ./laboratorio/e11-window-to-draft
 //	… -frame ollama                 (con Gemma: los reintentos del worker, si P2 falla, también se ven)
+//	… -frame hybrid [-script-stages p2]   (por etapa: guion donde Gemma falla, modelo en el resto)
 package main
 
 import (
@@ -113,6 +114,9 @@ func run(flags *common.Flags, breakP2 bool) error {
 	}
 	l.work()
 	l.showDraft()
+	if h, ok := l.spy.Inner().(*common.HybridFrame); ok {
+		n.Note("-frame hybrid · quién contestó: %s.", h.Tally())
+	}
 	return nil
 }
 
