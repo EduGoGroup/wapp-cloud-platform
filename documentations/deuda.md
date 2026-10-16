@@ -4,8 +4,13 @@
 > (localizado por símbolo ese día), la **consecuencia** (qué pasa si nadie la toca) y **cómo se
 > cerraría**. Lo que no verifiqué va marcado **NO VERIFICADO** o **sin medir**.
 >
-> **Recuento** (contando los títulos `### D-nn` de este fichero): **50** identificadores, del D-1
-> al D-50; **41 abiertos** y **9 cerrados** (D-7, D-10, D-19, D-35, D-38, D-39, D-40, D-42 y
+> **Ampliada el 2026-10-14** con D-51 a D-65: los hallazgos del laboratorio de flujos (Plan 058 de la
+> raíz de wApp), localizados por símbolo ese día en la rama `laboratorio` (`e74925b3`). El código del
+> laboratorio que los reproduce está en los PR #89, #90 y #92, abiertos, en revisión. D-63 a D-65 salen
+> de E18, que corre el ecosistema real con la receta del nivel c de la raíz.
+>
+> **Recuento** (contando los títulos `### D-nn` de este fichero): **65** identificadores, del D-1
+> al D-65; **56 abiertos** y **9 cerrados** (D-7, D-10, D-19, D-35, D-38, D-39, D-40, D-42 y
 > D-49). Aparte, la tabla de §5 lleva seis marcas heredadas de los planes, una de ellas cerrada.
 > Un identificador cerrado no se reutiliza ni se borra.
 >
@@ -82,6 +87,47 @@ marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡 en el propio comentario.
 - **Cómo se cierra**: fuera del código — cortafuegos y `WAPP_HTTP_ADDR=127.0.0.1:8100`. Se
   anota aquí porque el default de la variable **invita** al fallo.
 
+### D-52 · 🔴 El reintento del sink durable duplica la solicitud del carrito (medido en memoria; en Postgres, por confirmar)
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E08). Sin
+> corregir. **Medido con los gemelos en memoria. Falta confirmarlo contra Postgres** (escalón E16).
+
+- **Dónde**: la proyección del cierre del carrito, `closeIntake`
+  (`internal/modulos/conversacion/modules/cart/projection_close.go:33`), hace tres escrituras sin
+  transacción común: `store.CloseIntake` (`:37`), la revisión (`InsertRevision`, `:76`) y la línea de
+  envío (`EnsureShippingLine`, `:92`). Si falla una de las dos últimas, el despacho reintenta la
+  proyección: `retryDurableSink` (`internal/modulos/conversacion/runtime/resume.go:402`) llama a
+  `RetryProjection` (`internal/modulos/conversacion/runtime/persist_sink.go:328`), hasta
+  `durableRetryAttempts = 2` veces (`internal/modulos/conversacion/runtime/resume.go:316`). Cada intento
+  vuelve a llamar a `CloseIntake`, y su contrato dice que, sin solicitud `open`, «nace una fila 'closed'
+  con id uuid nuevo» (`internal/modulos/conversacion/store/repository_postgres_intakes.go:356`).
+- **Consecuencia, medida en memoria**: 1 + 2 = **3 solicitudes `closed · total 5`** por turno. El turno
+  se corta (`internal/modulos/conversacion/runtime/incoming_advance.go:356`) y el cliente lee «No
+  pudimos registrar tu pedido. Por favor, intenta de nuevo en unos minutos.»
+  (`defaultDurableSinkFailureNotice`). Si obedece y vuelve a fallar, ya son **6**. Además el evento
+  queda `closed` desde el primer intento: `closeIfFinished`
+  (`internal/modulos/conversacion/runtime/incoming_advance.go:320`) es una escritura aparte que va antes
+  del fan-out, y el corte no la deshace. Mientras, `flow_state` no se guarda y sigue apuntando al evento
+  como activo.
+- **Lo que cambia en Postgres (deducido leyendo el código, NO VERIFICADO)**: el gemelo en memoria
+  declara que **no** imita el índice único parcial `intakes_event_id_uidx` (cabecera de
+  `internal/modulos/conversacion/store/repository_memory_intakes.go`; el índice, en
+  `internal/platform/storage/postgres/migrations/structure/0054_evento_contenido_invertido.sql:125`).
+  En Postgres, la segunda `closed` lleva el mismo `event_id` que la primera, así que debería chocar con
+  ese índice (23505). `postgres.IsPermanentFailure` trata la clase 23 como permanente y corta sin gastar
+  más reintentos (`internal/modulos/conversacion/runtime/resume.go:405`). Si es así, en Postgres no hay
+  triplicado. Lo que queda es otro daño: el pedido **sí** quedó registrado y el cliente lee que no. Si
+  obedece, abre un pedido nuevo en otro evento, y ese duplicado lo fabrica el aviso.
+- **Relación**: D-F8-15 hizo que el reintento no duplicara `flow_events` ni el hilo, pero la proyección
+  del cierre sigue sin ser idempotente. Es vecina de D-34, que reescribe una solicitud ya cerrada.
+- **Cómo se cierra**: hacer idempotente el reintento del cierre. Hay dos caminos: que `closeIntake`
+  reconozca la solicitud que cerró en el intento anterior (por el `event_id`, que la fila ya lleva), o
+  que las tres escrituras vayan en una transacción. Además hay que decidir si el corte deshace el cierre
+  del evento, y qué aviso recibe el cliente cuando el pedido sí se guardó.
+- **Lo reproduce**: laboratorio E08 con `-twin-shipping` (Plan 058), PR #89, abierto, en revisión. En
+  el laboratorio el fallo se provoca porque los dos gemelos en memoria no comparten la tabla `intakes`.
+  En Postgres haría falta un fallo real de `InsertRevision` o de `EnsureShippingLine` después del cierre.
+
 ---
 
 ## 2 · Ramas vivas que no puede alcanzar nadie
@@ -142,6 +188,32 @@ referencia (`grep -rnw` sobre `cmd`, `internal` y `test`, medido el 2026-10-11).
   `internal/modulos/edge/filtercfg/filtercfg.go:20`, `internal/arranque/edge_config.go:105`).
   La diferencia entre las tres es arbitraria.
 - **Cómo se cierra**: documentar las tres igual, o retirar las dos que no gatean.
+
+### D-57 · 🟡 El `umbral_confianza` del catálogo de intenciones publicado no lo lee nadie
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E12). Sin
+> corregir.
+
+- **Dónde**: el campo es del contrato compartido (`UmbralConfianza` en `intents.Config` de
+  `wapp-shared/intents` v0.1.0, que lo rellena con 0,6 si viene a 0). La API lo acepta y lo valida al
+  publicar (`ParseAndValidate`, `internal/apipublica/intents.go:259`). El único lector del catálogo en
+  el Cloud es el adelanto P1 (`internal/modulos/captacion/intakeahead/intakeahead_classify.go:93`), y de
+  él solo saca las intenciones (`flatten`, `:121`) y el vocabulario. El adelanto lo decide el agregador
+  con un 0,7 fijo: `defaultIntentConfidence`
+  (`internal/modulos/conversacion/runtime/aggregator.go:78`), comparado en `intentTriggers`
+  (`internal/modulos/conversacion/runtime/aggregator_hint.go:62`). La opción que lo cambiaría,
+  `WithIntentConfidence` (`internal/modulos/conversacion/runtime/aggregator.go:318`), no tiene llamante
+  de producción (`grep -rn WithIntentConfidence internal cmd`, sin tests). Fuera de este repo, el único
+  lector es `wapp-edge-intent/classifier`, que no llama nadie.
+- **Consecuencia**: un tenant que publique `umbral_confianza: 0.9` cree que filtra y no cambia nada. Con
+  Gemma pesa más: «y eso cuánto sale?» sale `intake_request` con 0,90 y cierra la ventana al instante, y
+  el 0,7 se calibró con `qwen3:1.7b`.
+- **Cómo se cierra**: decidirlo. O el campo se declara sin efecto en la API (o se retira del contrato),
+  o el umbral viaja con la clasificación. El adelanto ya lee el catálogo del tenant al clasificar, así
+  que podría devolver su umbral junto con la intención sin añadir la consulta en línea que prohíbe
+  D-044.26. Lo segundo es una hipótesis: **no verifiqué** si cabe en el presupuesto de esa decisión.
+- **Lo reproduce**: laboratorio E12 (Plan 058), PR #90, abierto, en revisión: cambiar el umbral del
+  catálogo de 0,6 a 0,99 no mueve ninguna escena.
 
 ---
 
@@ -685,6 +757,414 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
   publicadas. Y una línea más en un dato de prueba, `internal/candados/testdata/cobertura/pasa/perfil.out`.
 - **Veredicto**: pendiente. Los 3 `Help` cambian texto observable: van con D-36. El resto, un commit por paquete.
 
+### D-51 · 🔴 Con el limitador de respuestas de producción, el carrito avanza sin que el cliente lo vea
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E08). Sin
+> corregir.
+
+- **Dónde**: `advanceLiveStep` (`internal/modulos/conversacion/runtime/incoming_advance.go:285`) sigue
+  este orden: el `Step` del motor, el fan-out de efectos (`:335`), el `Save` del estado (`:358`), el hilo
+  del turno (`persistTurnMessages`, `:365`), la ventana de captación (`observeForAggregation`, `:374`) y,
+  al final, `sendReply` (`:375`). El limitador solo se consulta dentro de `sendReply`
+  (`internal/modulos/conversacion/runtime/send.go:293`, `replyAllowed`). Sin cupo, devuelve `nil` sin
+  enviar nada. En producción el límite es de 0,5 respuestas/s con ráfaga de 3
+  (`internal/platform/config/config.go:663` y `:664`), y se cablea en
+  `internal/arranque/fase7_flujos.go:112`.
+- **Consecuencia**: cuando el limitador corta, el estado ya avanzó. El carrito cambia de pantalla, la
+  solicitud llega a `closed`, el hilo apunta como `business:message` pantallas que nunca salieron y, si
+  hubo turno acotado, la inferencia ya se pagó. Medido: el cliente vio tres pantallas y tiene un pedido
+  confirmado que no vio confirmar. Es coherente con RT-4 («Save antes de Send»,
+  `internal/modulos/conversacion/runtime/runtime_engine.go:42`), que prefiere un texto perdido a un
+  avance duplicado. Pero RT-4 piensa en un envío que **falla**, no en uno que se **suprime** a propósito.
+- **Sin medir**: cuántas veces agota un cliente humano 3 respuestas a 0,5/s. En el laboratorio los
+  mensajes entran seguidos, sin la pausa de una persona. El limitador es la red anti-loop (Plan 020), y
+  frente a un peer automático no avanzar también sería lo correcto.
+- **Cómo se cierra**: con una decisión, no con un parche. Una opción es preguntar al limitador **antes**
+  del `Step` y, sin cupo, no avanzar (el turno se descarta como un duplicado). Otra es avanzar, pero no
+  apuntar en el hilo lo que no salió y reenviar la pantalla pendiente en el siguiente turno con cupo. La
+  primera cambia la conducta anti-loop; la segunda, el hilo.
+- **Lo reproduce**: laboratorio E08 con `-limiter prod` (Plan 058), PR #89, abierto, en revisión. El
+  comentario de ese arnés que dice «el carrito no avanza» es inexacto: lo que no avanza es lo que ve el
+  cliente.
+
+### D-53 · 🔴 Al cliente le llega «dejamos el encuesta por ahora»
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E07). Sin
+> corregir.
+
+- **Dónde**: `stopNotice` (`internal/modulos/conversacion/runtime/events_switch.go:386`) escribe el
+  artículo fijo: «Listo, dejamos el %s por ahora…» (`:395`). El nombre sale de `events.KindName`
+  (`internal/modulos/conversacion/events/menu.go:262`) y del vocabulario `kindVocabulary` (`:223`):
+  `cart` → «pedido», `survey` → «encuesta», `media` → «documentos». Un tipo que no está en el
+  vocabulario se nombra con su identificador (`:244`). Sale por `event_stop` y por la opción «2» del
+  menú de salida.
+- **Consecuencia**: con encuesta, el cliente lee «dejamos el encuesta»; con documentos, «dejamos el
+  documentos». Solo concuerdan «pedido» y «menú». Es texto observable que llega a WhatsApp.
+- **Por qué no es un parche**: el literal está declarado «byte a byte» en el contrato del runtime
+  (`internal/modulos/conversacion/runtime/events.go:71`) y lo fija un test
+  (`internal/modulos/conversacion/runtime/events_switch_test.go:20`, con «pedido», el único caso que ya
+  concuerda).
+- **Cómo se cierra**: que el vocabulario dé el nombre con su artículo («el pedido», «la encuesta», «los
+  documentos»), y que el literal y su test cambien con él. Es un texto que se mide, así que lo decide
+  Jhoan.
+- **Lo reproduce**: laboratorio E07 (Plan 058), PR #89, abierto, en revisión: un cliente que falla tres
+  veces y elige «2» en el menú de salida.
+
+### D-54 · 🔴 Expediente: con `gemma4:e2b-it-qat`, P2 tumba 12 de las 14 frases del banco
+
+> Abierta el 2026-10-14: hallazgos del laboratorio de flujos (Plan 058 de la raíz, escalones E02 y
+> E10, ampliados con E14). **Decisión de Jhoan: todavía no se arregla.** Esta ficha es un expediente de análisis: lo que
+> se midió, las hipótesis abiertas y lo que falta entender antes de tocar el prompt. Mientras tanto,
+> el laboratorio sigue estudiando el flujo con un frame híbrido.
+>
+> ⚠️ **El modelo**: el producto usa `qwen3:1.7b` por defecto; Gemma es el modelo del laboratorio. Nada
+> de lo de aquí es una conclusión sobre qwen: el banco **no** se ha pasado con qwen en este plan.
+
+**Qué se midió**
+
+- **E02** (`debug_inferencia`, cuatro frases sueltas): P1 acierta las cuatro. P2 falla las dos que
+  bifurcan con «el campo obligatorio wants[0].evidence vino vacío». Gemma separa bien las ideas y copia
+  bien la pista de entrega con su evidencia, pero en `wants[]` omite `evidence`. Con la ráfaga Ámbar
+  (tres mensajes, más texto) sí la trae.
+- **E10** (P2→P3→P4→Match→Draft reales, banco de 14 frases, `-today 2026-10-14`):
+
+  | Frame | Intención | Líneas | Fecha | Los tres ejes | P2 pasa la calidad |
+  |---|---|---|---|---|---|
+  | guion (Ámbar fijo) | 10/14 | 5/14 | 10/14 | 1/14 | 14/14 |
+  | Gemma, prompts compilados | 13/14 | 0/14 | 2/14 | **0/14** | **2/14** |
+  | Gemma, texto pelado (`-bare`) | 13/14 | 2/14 | 3/14 | 2/14 | 3/14 |
+  | Gemma, P2 editado (`-prompts`) | 13/14 | 3/14 | 5/14 | 3/14 | 5/14 |
+
+- **Dos modos de fallo**, con los prompts compilados:
+
+  | Modo | Casos | La salida de Gemma |
+  |---|---|---|
+  | `wants[0].evidence vino vacío` | 10 | `{"idea": "presupuesto para 30 empanadas de carne"}`, sin `evidence` |
+  | `delivery_hint.text vino vacío` | 2 (`short-tequenos`, `chocolate-variant`) | ideas perfectas y con evidencia, y `"delivery_hint": {"text": null, "evidence": null}`, cuando el prompt dice «si el cliente no dice cuándo, omite delivery_hint» |
+
+- **Los reintentos no cambian nada**: los tres intentos de cada caso dan la misma salida byte a byte
+  (D-55).
+- **El formato del literal importa, pero no arregla**: `e02-long` pasa con el literal del compositor y
+  falla pelado, y `chocolate-variant` y `greeting` hacen lo contrario.
+- **El P2 editado** (instrucción que explica qué es `evidence` y que sin fecha no se escribe la clave
+  `delivery_hint`, «ni vacía ni con null») sube a 5/14 y elimina el fallo de `delivery_hint`… pero
+  **rompe la ráfaga Ámbar**, que antes pasaba.
+
+**Dónde vive cada pieza**
+
+- **El prompt**: `plantillaP2`, de `wapp-shared/llm` en el tag `llm/v0.4.5` que fija `go.mod` (línea 130
+  de `llm/prompt.go`). La instrucción no dice qué es «evidencia»: el esquema la muestra solo como
+  `"evidence": "..."`, y la regla de omitir `delivery_hint` va en el bloque del esquema, no en la
+  instrucción. Se ajusta por fichero con `WAPP_LLM_PROMPTS_DIR`, sin release.
+- **El validador**: `ParseMainIdeas` del mismo módulo. Una sola idea sin `evidence` tumba la salida
+  entera (`validarWants`). Y como `Hint.Text` es un `string`, un `"text": null` se lee como cadena vacía
+  y `validarHint` la rechaza: una pista **opcional** mal escrita tumba ideas buenas. Cambiarlo pide un
+  release de `wapp-shared/llm`.
+- **El lado del Cloud**: `P2.Run` (`internal/modulos/captacion/stages/p2.go:159`) parsea y después
+  ancla (`anchor`, `:255`). El anclaje descarta, **una a una**, las ideas cuya evidencia no aparece en
+  el literal, y con una pista sin respaldo se cae solo la pista. El validador compartido es estricto con
+  la salida entera; el anclaje del Cloud es tolerante, idea a idea.
+
+**Hipótesis abiertas**
+
+1. **El esquema no explica qué es `evidence`.** El modelo copia el ejemplo, y el ejemplo es `"..."`. Lo
+   apoya que el P2 editado suba de 2 a 5. Lo contradice que la ráfaga Ámbar sí la traiga sin explicación.
+2. **El validador es demasiado estricto con `delivery_hint` nulo.** Leer `{"text": null}` como «sin
+   pista» habría salvado 2 de 14 sin tocar el prompt. Es coherente con lo que ya hace el anclaje
+   («se cae solo la pista»), pero cambia el contrato compartido.
+3. **Relajar `evidence` no salvaría nada.** Si la salida pasara la calidad, el anclaje descartaría igual
+   esas ideas: `evidence.Contains` devuelve falso con una evidencia vacía
+   (`internal/modulos/captacion/evidence/evidence.go:88`). El job dejaría de morir y daría un borrador
+   sin líneas. Este modo solo se arregla consiguiendo que el modelo escriba la evidencia.
+4. **El formato del literal.** El sobre del compositor cambia qué frases pasan, en los dos sentidos. Es
+   la misma advertencia de D-32: el prompt de P2 está calibrado contra el formato actual del sobre.
+
+**Lo que falta entender antes de tocar el prompt**
+
+- Pasar el mismo banco con `qwen3:1.7b`, el modelo del producto, para separar lo que es del modelo de lo
+  que es del prompt.
+- Por qué la ráfaga Ámbar trae `evidence` y las frases cortas no: si es la longitud, el número de
+  mensajes o las cabeceras del compositor.
+- Qué salida exacta da Gemma con el P2 editado en la ráfaga Ámbar: por qué rompe la frase que antes
+  pasaba.
+- Si `{"text": null}` debe leerse como ausencia (hipótesis 2): es una decisión del contrato de
+  `wapp-shared/llm`, no del prompt.
+- Si los reintentos de calidad deberían cambiar de temperatura (D-55) antes de medir otra vez.
+- **Medir siempre contra el banco entero**: el P2 editado demostró que arreglar una frase rompe otra.
+
+**Ampliación (E14, 2026-10-14): con Gemma de punta a punta, el re-análisis empeora el borrador**
+
+Va en este expediente y no en una ficha propia: es el mismo modelo, la misma decisión de no arreglar
+todavía, y la causa no está aislada de la de arriba. Con `-frame ollama`, el borrador inicial de la
+ráfaga Ámbar pasa (como en E10). Pero el re-análisis, con la transcripción pegada («La clienta llamó por
+teléfono: la torta de chocolate que sea de 12 porciones.»), cambia lo que saca P2. La revisión 3 trae
+«torta de bizcocho de vainilla» `unmatched`, los tequeños y el envío, y **la torta de chocolate, que era
+justo la que la dueña quería corregir, desaparece**. Lo que falta entender: si el texto pegado debilita la
+evidencia de las ideas de los mensajes originales (el sobre de un re-análisis mezcla mensajes y
+transcripción, y vale lo dicho para la hipótesis 4), y cuánto pesa el match con nombres cortos (D-56).
+Una idea que P3 aísla tampoco se ve en el borrador (D-60).
+
+- **Lo reproduce**: laboratorio E02 (el script `probar-frase.sh` de la raíz) y E10
+  (`laboratorio/e10-pipeline -all -frame ollama`, con `-bare` y `-prompts <dir>`) del Plan 058, PR #90,
+  abierto, en revisión. La ampliación, E14 con `-frame ollama`, PR #92, abierto, en revisión.
+
+### D-55 · 🟡 Los reintentos del worker no sirven en P2 ni en P4
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalones E10 y
+> E11). Sin corregir.
+
+- **Dónde**: P2 y P4 piden temperatura 0 en todas sus llamadas: `llm.TemperatureGreedy`
+  (`internal/modulos/captacion/stages/p2.go:237` e `internal/modulos/captacion/stages/p4.go:253`; vale
+  0,0 en `wapp-shared/llm` v0.4.5). Ninguna de las dos reintenta por su cuenta: lo hace el worker, hasta
+  `DefaultMaxQualityAttempts = 3` (`internal/modulos/captacion/pipeline/backoff.go:148`), con el mismo
+  literal y el mismo prompt. P3 sí reintenta a otra temperatura (`llm.TemperatureRetry`,
+  `internal/modulos/captacion/stages/p3.go:262`).
+- **Consecuencia**: con temperatura 0 el modelo responde siempre lo mismo. Medido con Gemma en P2: los
+  tres intentos dan la salida idéntica byte a byte, y con `-attempts 1` el resumen del banco sale igual.
+  Los dos intentos extra no rescatan nada y retrasan la muerte del job con el backoff (≈26 s y ≈67 s en
+  una corrida de E11), además de ocupar el Edge.
+- **NO VERIFICADO**: P4 se lee en el código, no se midió. Con `qwen3:1.7b` no se ha medido.
+- **Cómo se cierra**: decidirlo. O los reintentos de calidad de P2 y P4 suben la temperatura como P3, o
+  esas dos etapas no reintentan por calidad. Lo primero cambia la salida del modelo y habría que medirlo
+  contra el banco (D-54).
+- **Lo reproduce**: laboratorio E10 con `-all -frame ollama` y con `-attempts 1`, y E11 con `-break-p2`
+  (Plan 058), PR #90, abierto, en revisión.
+
+### D-56 · 🟡 El match casa poco con los nombres que da P3 con Gemma, y P4 baraja atributos entre ítems
+
+> Abierta el 2026-10-14: hallazgos del laboratorio de flujos (Plan 058 de la raíz, escalones E10 y
+> E11). Sin corregir. **Medido solo con Gemma.**
+
+- **Dónde, el match**: `DefaultCascade`
+  (`internal/modulos/captacion/stages/match_cascade.go:77`) es `Exact → Fuzzy(0,85)`, sin zona gris.
+  Su propio comentario fija que el 0,85 no se toca (D-044.45). Con Gemma, P3 llama «torta» a las dos
+  tortas (pierde el sabor) y «tequeños» al artículo «Tequeños congelados». Ninguno de los dos llega a
+  0,85, así que salen `unmatched`.
+- **Dónde, P4**: `merge` (`internal/modulos/captacion/stages/p4.go:283`) funde por **posición**, y
+  `applyQuantities` (`:330`) copia cantidad, rango, unidad y paquete del ítem del modelo que está en el
+  mismo puesto. `llm.ParseQuantities` valida cada campo por separado, pero nada mira si el renglón tiene
+  sentido. La única señal de un reordenamiento es el aviso de producto renombrado. En la ráfaga Ámbar,
+  P4 le puso a la torta de chocolate `qty 2` y `package_size 30`, y se lo quitó a los tequeños, que eran
+  el paquete.
+- **Consecuencia**: borradores con líneas sin casar y renglones con la cantidad o el paquete de otro
+  ítem. El borrador queda en `pending_approval` y lo revisa la dueña, así que no llega al cliente sin
+  pasar por ella. Pero el trabajo de casar y corregir le cae a ella.
+- **Cómo se cierra**: con el match, cablear un tercer escalón (la zona gris existe en `textmatch` y aquí
+  está apagada) o pedir en P3 que copie el nombre del catálogo. Con P4, un validador del renglón: por
+  ejemplo, que un `package_size` aparezca en la evidencia de **su** ítem. Las dos son hipótesis, y
+  cualquiera se mide contra el banco antes de darla por buena.
+- **Lo reproduce**: laboratorio E10 (`-phrase amber-burst` y `-phrase e02-long` con `-frame ollama`) y
+  E11 con `-frame ollama` (Plan 058), PR #90, abierto, en revisión.
+
+### D-58 · 🟡 Tras morir un job por calidad, la fila dice `attempts = 2`
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E11). Sin
+> corregir.
+
+- **Dónde**: solo el reencolado suma el intento (`retrySQL`, `attempts = attempts + 1`, en
+  `internal/modulos/captacion/intake/machine_postgres.go:307`). `Fail` (`:400`, con `failSQL` en `:388`)
+  y `finishSQL` no lo tocan. El worker calcula el intento como `job.Attempts + 1`
+  (`internal/modulos/captacion/pipeline/pipeline_outcome.go:118`) y lo escribe en el motivo de la muerte
+  (`kill`, `:155`).
+- **Consecuencia**: un job que muere al tercer intento queda con `attempts = 2` y un `error` que dice
+  «agotados los 3 intentos». Uno que termina al primer intento queda con `attempts = 0`. El
+  `COMMENT ON COLUMN` de la `0078` dice «Número de intentos de pipeline ya realizados», y lo que cuenta
+  la columna son los **reintentos castigados**. Quien diagnostique desde la base lee un intento de menos.
+- **Cómo se cierra**: o `Fail` y `Finish` suman el intento final en la misma sentencia, o se cambia la
+  definición de la columna en una migración nueva (las viejas no se editan). Antes hay que mirar quién
+  lee `attempts` fuera del worker.
+- **Lo reproduce**: laboratorio E11 con `-break-p2` (Plan 058), PR #90, abierto, en revisión.
+
+### D-59 · 🟡 Con una encuesta por `keyword` y sin oferta, el cliente recibe la bienvenida y después silencio
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E06). Sin
+> corregir.
+
+- **Dónde**: la bienvenida se manda **antes** que el disparo (`welcomeIfDue` y después `handleTrigger`,
+  en `internal/modulos/conversacion/runtime/incoming.go:349` y `:350`). Un flujo durable no arranca sin
+  evento (`ErrDurableFlowNeedsEvent`, `internal/modulos/conversacion/runtime/start.go:78`), y
+  `degradeDurableStart` (`internal/modulos/conversacion/runtime/incoming_trigger.go:333`) lo degrada a
+  la oferta del despachador. Si la oferta sale vacía, deja un `WARN` (`:355`) y no responde nada.
+- **Por qué se puede llegar en producción**: la API corta el alta de un `keyword` durable con un 422,
+  pero solo si el tenant no tiene **ninguna** regla `event_start` habilitada
+  (`blocksStartWithoutEventStart`, `internal/modulos/conversacion/admin/triggers.go:345`). La oferta, en
+  cambio, solo enseña los tipos cuya *feature* trae el plan. Así que un tenant con una `event_start`
+  hacia un tipo que su plan no incluye pasa el 422 y se queda sin oferta. Es el paso 2 de E06. **NO
+  VERIFICADO por la API**: el laboratorio escribe las reglas por debajo de ella.
+- **Consecuencia**: el cliente lee «¡Hola! Recibimos tu mensaje y lo estamos procesando. Te respondemos
+  en unos minutos.» y nadie le contesta.
+- **La documentación de la raíz está desfasada**: el caso 14 de `operacion/troubleshooting.md` (en
+  `documentations/` de wApp, no en este repo) describe el estado anterior, un pedido que se cerraba en
+  el chat y se perdía en la base. Hoy lo cortan la API (422) y el runtime. Se corrige allí, no aquí.
+- **Cómo se cierra**: que el 422 mire también si la oferta saldría vacía con las *features* del plan, o
+  que la bienvenida no se mande cuando el turno no va a tener respuesta. Las dos cambian conducta
+  visible.
+- **Lo reproduce**: laboratorio E06, empresa C, pasos 1 y 2 (Plan 058), PR #89, abierto, en revisión.
+
+### D-60 · 🔴 P3 aísla un ítem en silencio: el borrador sale con una línea menos y nadie lo dice
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E14). Sin
+> corregir. Reproducido igual en dos corridas.
+
+- **Dónde**: cuando P3 no consigue especificar una idea (dos fallos de calidad, a temperatura 0 y a
+  0,3), o la evidencia no aparece en el literal, o el pedido pasa del tope, la idea va a
+  `art.Isolated` (`internal/modulos/captacion/stages/p3.go:221`, y `internal/modulos/captacion/stages/cap.go:94`
+  para el tope) y solo sigue lo de `art.Items`. La cadena pasa a P4 únicamente `specs.Items`
+  (`internal/modulos/captacion/pipeline/pipeline_chain.go:192`). El comentario de `IsolatedItem`
+  promete que el ítem «queda anotado para que la bandeja lo enseñe»
+  (`internal/modulos/captacion/stages/p3.go:37`), pero nadie lo lee: no aparece `Isolated` en ningún
+  `stages/draft*.go` ni `stages/match*.go`, y ni la API ni `solicitudes` leen los `artifacts` del job.
+- **Consecuencia**: el borrador sale con una línea menos de las que pidió el cliente y la métrica
+  `intake_draft_created` dice `matched:2 unmatched:0`, sin rastro del que falta (`tally`,
+  `internal/modulos/captacion/stages/draft_events.go:225`). Solo queda en `artifacts.p3.isolated` del job
+  y en un `Warn` del log. La dueña aprueba un presupuesto incompleto sin saberlo. Pasa con cualquier
+  modelo: basta que P3 falle una idea.
+- **Cómo se cierra**: que el borrador lleve una línea (o una pregunta sugerida) por cada ítem aislado,
+  apuntando a su idea de P2, igual que ya hace con lo `unmatched`, y que la métrica cuente los aislados.
+  El texto de la idea está en `artifacts.p2.wants[IdeaPos]`, así que no hace falta guardar nada nuevo.
+- **Lo reproduce**: laboratorio E14 con `-frame hybrid -script-stages p2` (Plan 058), PR #92, abierto, en
+  revisión: en el re-análisis, Gemma falla P3 con la torta de vainilla y la revisión 3 sale con 3 líneas
+  en vez de 4.
+
+### D-61 · 🔴 `intakes.MemoryStore` no implementa `ReanalysisTargetOf`: el gemelo está incompleto
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E14). Sin
+> corregir. **Deuda de test**: no afecta a producción.
+
+- **Dónde**: el puerto del re-análisis, `reanalisis.Intakes`
+  (`internal/modulos/captacion/reanalisis/reanalisis.go:135`), pide solo `ReanalysisTargetOf`, y lo
+  satisface únicamente `*intakes.Postgres`
+  (`internal/modulos/solicitudes/intakes/postgres_reanalysis.go:52`). `intakes.MemoryStore`
+  (`internal/modulos/solicitudes/intakes/memory.go:57`) se presenta como el gemelo que «reproduce las
+  MISMAS semánticas que el store Postgres», pero no tiene ese método. Los tests del propio paquete usan
+  un doble a mano (`fakeIntakes`, en `internal/modulos/captacion/reanalisis/doubles_test.go:92`).
+- **Consecuencia**: quien quiera montar el re-análisis contra el gemelo, como hizo el laboratorio, tiene
+  que reescribir la consulta en memoria. Esa copia no la vigila ninguna suite de contrato, así que
+  puede divergir de Postgres sin que nada se ponga rojo. Las reglas de la lectura (estado normalizado,
+  `EventID` vacío en una legada, `LastRevisionNo = 0` sin revisiones, `ErrNotFound` en otro tenant) solo
+  las prueba el test de Postgres.
+- **Cómo se cierra**: implementar `ReanalysisTargetOf` en `MemoryStore` y llevar sus casos a
+  `intakeshelpertest.Contrato`, la suite que corren los dos stores.
+- **Lo reproduce**: laboratorio E14 (Plan 058), PR #92, abierto, en revisión: el laboratorio necesitó su
+  propia tabla en memoria para tener esa lectura.
+
+### D-62 · 🟡 Tres detalles de la bandeja y del re-análisis
+
+> Abierta el 2026-10-14: hallazgos del laboratorio de flujos (Plan 058 de la raíz, escalones E13 y
+> E14). Sin corregir. Van juntos porque cada uno es pequeño.
+
+- **(a) La línea de envío depende del orden de las acciones.** Solo la crea `UpdateStatus` al entrar en
+  `pending_approval` (`ensureShippingTx` con `ShippingAlways`,
+  `internal/modulos/solicitudes/intakes/postgres_status.go:92`). Un borrador del pipeline **nace** en ese
+  estado sin pasar por ahí, así que no la tiene, y la corrección de la dueña tampoco la añade. Aparece
+  cuando la dueña vuelve de `needs_info`, a precio 0. `Approve`
+  (`internal/modulos/solicitudes/intakes/approve.go:400`) la deja pasar, porque `PendingPriceLines`
+  (`:220`) solo mira la **última revisión**, que no la lleva. **Consecuencia**: el mismo pedido sale con
+  línea de envío o sin ella según el camino que siguió la dueña. Aprobado justo después de corregir, la
+  cotización no lleva envío. **Cómo se cierra**: decidir en qué momento nace la línea (al crear el
+  borrador, o siempre antes de aprobar) y que `Approve` mire las líneas vigentes y no solo la revisión.
+- **(b) El texto determinista empieza por «Hola!» sin «¡».** `renderGreeting`
+  (`internal/modulos/solicitudes/intakes/quotetext/render.go:35`) es texto que lee el cliente cuando P5
+  no contesta. Lo fijan sus tests (`render_test.go` y `fixtures_test.go` del mismo paquete). **Cómo se
+  cierra**: cambiar el literal y sus tests. Es texto observable, así que lo decide Jhoan.
+- **(c) `elapsed_ms` del re-análisis mide desde el primer mensaje del cliente**: 1 530 000 ms en E14. **No
+  es un defecto**: está decidido y escrito (`internal/modulos/captacion/stages/draft_events.go:37`). El job
+  hereda el `message_ts` original, y por eso el evento lleva `requested_by` (`:172`). Se anota para quien
+  calcule el KPI «tiempo a primer borrador»: tiene que filtrar por esa clave o lo inflará.
+- **No es deuda**: que `revenue` sume todos los estados, también un carrito abandonado, es una decisión
+  escrita en `internal/modulos/solicitudes/intakes/summary.go:55` («filtrar por dentro sería una
+  política escondida»). Se acota con `?status=`.
+- **Lo reproduce**: laboratorio E13 (a) y E14 (b, c) (Plan 058), PR #92, abierto, en revisión.
+
+### D-63 · 🔴 El carrito también abre ventana de captación cuando el plan trae `llm_intake`
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E18, el
+> ecosistema real con Gemma). Sin corregir.
+
+- **Dónde**: los tres llamantes de `observeForAggregation` (turno normal,
+  `internal/modulos/conversacion/runtime/incoming_advance.go:374`; mensaje que arranca el evento,
+  `internal/modulos/conversacion/runtime/incoming_trigger.go:227`; reinicio por reanudación,
+  `internal/modulos/conversacion/runtime/resume.go:287`) mandan **todo** entrante con evento vivo. La
+  puerta, `Observe` (`internal/modulos/conversacion/runtime/aggregator_observe.go:94`), solo mira que haya
+  evento (`acceptable`, `:156`) y la *feature* `llm_intake` (`:102`). No mira el tipo de evento ni el
+  módulo que lo atiende, y la clave de la ventana (`intake.WindowKey`) ni siquiera lo lleva.
+- **Lo que pasa después, según quién llegó antes**: el borrador pregunta por la solicitud del evento
+  antes de crear la suya (`header`, `internal/modulos/captacion/stages/draft.go:220`). Si la encuentra, le
+  cuelga la revisión `interpreted` y **no toca su estado** (D-044.46, escrito en ese comentario).
+- **Consecuencia, medida en E18** (la ventana del carrito lleva 7 referencias: `carrito`, `1`, `1`, `2`,
+  `un par`, `2`, `1`):
+  - **Carrito a medias sin línea añadida** (`carrito 1 1 2 abc`): no hay solicitud del carrito todavía,
+    así que el pipeline crea una nueva. Queda en la bandeja un borrador `pending_approval` espurio, con
+    «Café»×1 sin casar dos veces y el envío.
+  - **Carrito completo, dos veces**: P2 falla (`delivery_hint.text vino vacío`) y el job muere sin
+    superficie (D-65). Las 7 referencias se pagaron en inferencias de lote.
+- **Deducido leyendo el código, NO VERIFICADO**: si P2 pasara con el carrito cerrado, no nacería una
+  segunda solicitud. La revisión `interpreted` (con «Café» sin casar) se colgaría de la solicitud del
+  carrito ya cerrada, y la dueña vería el mismo pedido con dos versiones distintas. No miré qué enseña la
+  bandeja en ese caso. Con el carrito abierto y una línea ya añadida, la revisión se colgaría de la
+  solicitud `open` y no se vería en la bandeja.
+- **Cómo se cierra**: decidir qué eventos alimentan la ventana. El carrito ya materializa su contenido
+  durable por su propio proyector: lo natural es que su evento no observe, o que solo observe lo que el
+  carrito no entiende. Se filtraría en los llamantes, que conocen el tipo de evento, porque la clave de
+  la ventana no lo lleva. Es una decisión de producto: cambia qué ve la dueña.
+- **Lo reproduce**: laboratorio E18, arnés (a) del carrito con un plan que trae `llm_intake` (Plan 058,
+  receta del nivel c de la raíz). Sin PR de código: E18 corre el ecosistema real.
+
+### D-64 · 🔴 P2 lee el menú del negocio como si fuera el pedido
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E18). Sin
+> corregir. Medido con Gemma.
+
+- **Dónde**: el literal lo arma `ComposeSourceText`
+  (`internal/modulos/conversacion/runtime/source_composer.go:217`). Las decisiones (`KindDecision`) no
+  entran, pero los **mensajes del negocio en turno** sí, en el bloque de mensajes, con la etiqueta
+  «negocio:» (`speakerOf`, `:114`). El texto no se recorta ni se escapa: un mensaje de varias líneas
+  ocupa varias, y solo la primera lleva la etiqueta, como dice el propio contrato. El menú del bot llega
+  así (sacado de `revisions[0].payload.source_text` del borrador de E18):
+
+  ```text
+  negocio: Cuéntanos qué necesitas y te pasamos el presupuesto.
+  1) Hablar con una persona
+  ```
+
+  La opción va en una línea **sin quién la dijo**. El prompt de P2 (`wapp-shared/llm` v0.4.5,
+  `llm/prompt.go`) presenta ese bloque como «Texto del cliente» y no explica las etiquetas «cliente:» y
+  «negocio:» ni las cabeceras del sobre. Y el anclaje no lo para: busca la evidencia en el literal entero
+  (`anchor`, `internal/modulos/captacion/stages/p2.go:255`), y «Hablar con una persona» está ahí.
+- **Consecuencia**: «Hablar con una persona»×1 sale como línea del borrador en 2 de los 6 que pasaron P2
+  (`e02-empanadas` y `chocolate-variant`). En la ráfaga Ámbar, el menú se repite tres veces dentro del
+  literal, porque el bot contesta «Opción no válida» + menú a cada mensaje.
+- **Cómo se cierra** (hipótesis; cualquiera se mide contra el banco, D-54): que el compositor ponga la
+  etiqueta en cada línea de un mensaje de varias líneas, o que el texto del negocio vaya al bloque de
+  contexto; que el prompt de P2 diga que solo lo de «cliente:» es pedido; que el anclaje busque la
+  evidencia solo en las líneas del cliente. Ojo con D-32: el sobre es un contrato «byte a byte» con el
+  prompt, y tocarlo cambia la entrada del modelo.
+- **Lo reproduce**: laboratorio E18, arnés (b′) con el banco de frases por el ecosistema (Plan 058).
+
+### D-65 · 🔴 Un fallo de P2 no lo ve nadie
+
+> Abierta el 2026-10-14: hallazgo del laboratorio de flujos (Plan 058 de la raíz, escalón E18). Sin
+> corregir.
+
+- **Dónde**: al agotar los intentos, el worker llama a `kill`
+  (`internal/modulos/captacion/pipeline/pipeline_outcome.go:155`), que deja el job `failed` (`Fail`,
+  `internal/modulos/captacion/intake/machine_postgres.go:400`) y una línea `Error` «pipeline: job
+  FAILED» (`pipeline_outcome.go:170`). Y nada más: ni solicitud, ni `flow_event`, ni métrica, ni aviso. La
+  bandeja (`GET /api/v1/intakes`) lista solicitudes, y un job muerto antes del borrador no tiene ninguna.
+- **Consecuencia**: el cliente recibió la bienvenida («…Te respondemos en unos minutos.») y el menú, y
+  nadie le contesta. La dueña no sabe que hubo un pedido. En E18 murieron así 4 de las 10 frases del
+  banco que se pasaron por el ecosistema, y los dos carritos completos de D-63, todos con
+  `causa=calidad`. Es el mismo silencio que
+  D-59, por otra puerta. Y el `attempts = 2` de la fila (D-58) despista a quien lo busque en la base.
+- **Relación**: D-54 explica por qué P2 falla con Gemma; esta entrada es que **cuando** falla, con
+  cualquier modelo, no queda rastro visible. D-15 es el mismo tipo de hueco en P5 (la lista de eventos
+  de telemetría es cerrada por diseño).
+- **Cómo se cierra**: decidirlo. Que un job muerto por calidad deje algo que la dueña vea (una solicitud
+  con el literal y sin líneas, o un aviso en la bandeja), o al menos un contador por causa y etapa. Lo
+  primero choca con INV-13 (`Fail` vacía el sobre del literal): habría que decidir qué se conserva.
+- **Lo reproduce**: laboratorio E18, arnés (b′) (`two-packages`, `short-chocolate-saturday`,
+  `bread-tomorrow` y `some-cakes-friday`) y los carritos completos del arnés (a) (Plan 058).
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes
@@ -692,7 +1172,7 @@ algo que se ve desde fuera (código HTTP, cuerpo) se corrigen con D-36, no suelt
 | Marca | Dónde | Qué significa |
 |---|---|---|
 | **DEUDA-044.10** | — | ✅ Cerrada: la marca no está en el árbol desde el 2026-10-11 (`grep -rn '044\.10' --include='*.go' cmd internal test` → vacío) |
-| **DEUDA-044.11** (sin dueño) | `internal/arranque/fase5_captacion.go:219`, `internal/modulos/captacion/stages/p4.go:21` | Una decisión que hay que escribir explícitamente en vez de heredarla: el plazo por llamada y la zona horaria (UTC, porque no hay zona por tenant en ninguna parte) |
+| **DEUDA-044.11** (sin dueño) | `internal/arranque/fase5_captacion.go:219`, `internal/modulos/captacion/stages/p4.go:21` | Una decisión que hay que escribir explícitamente en vez de heredarla: el plazo por llamada y la zona horaria (UTC, porque no hay zona por tenant en ninguna parte). **Medido el 2026-10-14** (laboratorio E18, Plan 058): «en 5 días», escrito a las 22:47 −03 (ya el 15 en UTC), sale 2026-10-20, y en la hora de quien escribe sería el 19. La base de la fecha es `job.MessageTS` en la zona de la etapa (`internal/modulos/captacion/stages/p4.go:194`), y la zona es `stages.DefaultZone`, UTC (`internal/arranque/fase5_captacion.go:229`). Es el hueco que ya fija el comentario de `DefaultZone`, visto de punta a punta: no abre un `D-nn` nuevo |
 | **DEUDA-044.16** | `internal/modulos/captacion/stages/match.go:37` y `:224`, `match_lines.go:65`, `draft.go:299`, `draft_revision.go:51` y `:150`, `internal/modulos/captacion/pipeline/pipeline_chain.go:293` | Un ítem malo **no** tira el borrador: se degrada y se anota como *warning* |
 | **DEUDA-050.1** (cerrada con red) | `internal/modulos/edge/grpc/connect_session.go:230` | Carrera de la reconexión rápida (`MarkOffline` diferido, `MarkOnline` inmediato). Mitigada preguntando «¿sigue caída?» **al ejecutar** el job, no al encolarlo. El comentario declara qué **no** cubre la red |
 | **DEUDA-050.2** | `internal/platform/metrics/metrics.go:483`, `internal/arranque/fase1_infraestructura.go:42` | El cuello mudado del head-of-line al pool; `wapp_db_wait_count` existe para decidirlo |
