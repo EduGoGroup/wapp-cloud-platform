@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "catalog": "amber",
+  "note": "Banco de frases del laboratorio (Plan 058 · E03). Cada caso dice qué debería salir: la intención de P1, las líneas casadas con el catálogo Ámbar (sku base y cantidad; qty 0 = no se mira), cuántas líneas sin casar y la fecha de entrega RELATIVA al día de la prueba. Fechas: null (sin fecha), '+Nd' (N días después), 'next:<día>' (próxima aparición estricta del día, nunca el mismo), 'nextweek:<día>' (ese día de la semana ISO siguiente). Días en inglés: monday..sunday. Las expectativas son las de una persona, no las del código: si el código dice otra cosa, eso es un hallazgo.",
+  "phrases": [
+    {
+      "id": "amber-burst",
+      "category": "easy",
+      "messages": [
+        "Hola, buenas! Te quería pedir un presupuesto para el miércoles de la semana que viene",
+        "Serían 2 tortas. Una torta sería con decoración infantil, de bizcocho húmedo de chocolate con crema de chocolate, de 10 o 12 porciones",
+        "Y la otra de bizcocho de vainilla que tenga lluvia de colores, con dulce de leche y merengue, de 25 o 30 porciones. También quería un paquete de tequeños congelados de 30"
+      ],
+      "intent": "intake_request",
+      "lines": [
+        {"sku": "TORTA-CHOC", "qty": 1},
+        {"sku": "TORTA-VAIN", "qty": 1},
+        {"sku": "TEQ-30", "qty": 1}
+      ],
+      "unmatched": 0,
+      "date": "nextweek:wednesday",
+      "why": "El caso Ámbar en sus tres mensajes: el mismo del arnés de test/procesos. Es el que el guion contesta bien."
+    },
+    {
+      "id": "e02-long",
+      "category": "package",
+      "messages": [
+        "quiero 2 tortas de chocolate y un paquete de 30 tequeños para el miércoles de la semana que viene"
+      ],
+      "intent": "intake_request",
+      "lines": [
+        {"sku": "TORTA-CHOC", "qty": 2},
+        {"sku": "TEQ-30", "qty": 1}
+      ],
+      "unmatched": 0,
+      "date": "nextweek:wednesday",
+      "why": "La frase de E02 en un solo mensaje. Con Gemma, P2 de debug_inferencia la rechazaba por evidence vacía en wants[]. «Un paquete de 30» es qty 1, no 30."
+    },
+    {
+      "id": "e02-empanadas",
+      "category": "short",
+      "messages": ["necesito presupuesto para 30 empanadas de carne"],
+      "intent": "intake_request",
+      "lines": [],
+      "unmatched": 1,
+      "date": null,
+      "why": "La otra frase de E02. Las empanadas no están en el catálogo Ámbar: el match tiene que dejar UNA línea sin casar, que el dueño precifica a mano."
+    },
+    {
+      "id": "short-tequenos",
+      "category": "package",
+      "messages": ["quiero un paquete de 30 tequeños"],
+      "intent": "intake_request",
+      "lines": [{"sku": "TEQ-30", "qty": 1}],
+      "unmatched": 0,
+      "date": null,
+      "why": "Frase corta con la regla del paquete: qty 1 con package_size 30, jamás qty 30."
+    },
+    {
+      "id": "two-packages",
+      "category": "package",
+      "messages": ["mandame dos paquetes de tequeños de 30"],
+      "intent": "intake_request",
+      "lines": [{"sku": "TEQ-30", "qty": 2}],
+      "unmatched": 0,
+      "date": null,
+      "why": "Dos paquetes son qty 2: la corrección de P4 solo actúa cuando qty es EXACTAMENTE el tamaño del paquete."
+    },
+    {
+      "id": "short-chocolate-saturday",
+      "category": "relative_date",
+      "messages": ["2 tortas de chocolate para el sábado"],
+      "intent": "intake_request",
+      "lines": [{"sku": "TORTA-CHOC", "qty": 2}],
+      "unmatched": 0,
+      "date": "next:saturday",
+      "why": "Corta, con día de la semana a secas: la próxima aparición estricta del sábado."
+    },
+    {
+      "id": "bread-tomorrow",
+      "category": "relative_date",
+      "messages": ["me separas 3 panes integrales para mañana?"],
+      "intent": "intake_request",
+      "lines": [{"sku": "PAN 2", "qty": 3}],
+      "unmatched": 0,
+      "date": "+1d",
+      "why": "«Mañana» es +1. El SKU del pan integral lleva un espacio a propósito (es uno de los adversarios del catálogo)."
+    },
+    {
+      "id": "vanilla-in-five-days",
+      "category": "relative_date",
+      "messages": ["necesito una torta de vainilla en 5 días"],
+      "intent": "intake_request",
+      "lines": [{"sku": "TORTA-VAIN", "qty": 1}],
+      "unmatched": 0,
+      "date": "+5d",
+      "why": "La regla «en N días» de la aritmética de Go."
+    },
+    {
+      "id": "chocolate-variant",
+      "category": "easy",
+      "messages": ["una torta de chocolate de 12 porciones"],
+      "intent": "intake_request",
+      "lines": [{"sku": "TORTA-CHOC", "qty": 1}],
+      "unmatched": 0,
+      "date": null,
+      "why": "Una sola cosa, con la presentación dicha: el match puede elegir la variante (TORTA-CHOC#12)."
+    },
+    {
+      "id": "some-cakes-friday",
+      "category": "ambiguous",
+      "messages": ["unas tortas de chocolate para el viernes"],
+      "intent": "intake_request",
+      "lines": [{"sku": "TORTA-CHOC", "qty": 0}],
+      "unmatched": 0,
+      "date": "next:friday",
+      "why": "«Unas» no es un número: la cantidad no se mira (qty 0), solo que la línea salga y la fecha."
+    },
+    {
+      "id": "how-much",
+      "category": "ambiguous",
+      "messages": ["y eso cuánto sale?"],
+      "intent": "desconocido",
+      "lines": [],
+      "unmatched": 0,
+      "date": null,
+      "why": "Ambigua sin contexto: no nombra producto. Con el catálogo Ámbar de intenciones debería ser la reservada «desconocido» o, como mucho, una intake_request de confianza baja."
+    },
+    {
+      "id": "greeting",
+      "category": "no_order",
+      "messages": ["hola buenas tardes"],
+      "intent": "desconocido",
+      "lines": [],
+      "unmatched": 0,
+      "date": null,
+      "why": "Un saludo no es un pedido. Pero si cae dentro de un evento con llm_intake, la ventana lo acumula igual y el pipeline corre: tiene que salir un borrador VACÍO."
+    },
+    {
+      "id": "opening-hours",
+      "category": "no_order",
+      "messages": ["¿a qué hora cierran hoy?"],
+      "intent": "consulta_horario",
+      "lines": [],
+      "unmatched": 0,
+      "date": null,
+      "why": "Pregunta de horario con un «hoy» dentro: una trampa para P2, que no debería convertirlo en pista de entrega."
+    },
+    {
+      "id": "order-status",
+      "category": "no_order",
+      "messages": ["cómo va mi pedido de ayer?"],
+      "intent": "desconocido",
+      "lines": [],
+      "unmatched": 0,
+      "date": null,
+      "why": "Consulta de estado: no hay intención para ella en el catálogo Ámbar, así que la honesta es «desconocido». Nombra «pedido» y «ayer»: no son líneas ni fecha de entrega."
+    }
+  ]
+}
